@@ -103,9 +103,11 @@ func (c *Client) doRequest(endpoint string) ([]byte, error) {
 	timeout := c.Timeout
 	c.mu.RUnlock()
 
-	// Route through claw402 if configured
+	// Route through claw402 if configured — paid per request, so cache it
 	if claw402Client != nil {
-		return claw402Client.DoRequest(endpoint)
+		return c.doRequestPaid(endpoint, func() ([]byte, error) {
+			return claw402Client.DoRequest(endpoint)
+		})
 	}
 
 	url := baseURL + endpoint

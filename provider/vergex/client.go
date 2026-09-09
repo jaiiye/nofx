@@ -11,6 +11,7 @@ import (
 	"nofx/mcp"
 	"nofx/mcp/payment"
 	"nofx/provider/hyperliquid"
+	"nofx/provider/paidcache"
 	"os"
 	"sort"
 	"strings"
@@ -185,18 +186,23 @@ func (c *Client) doGET(ctx context.Context, path string, params url.Values) ([]b
 		return req, nil
 	}
 
-	body, err := payment.DoX402Request(
-		ctx,
-		c.httpClient,
-		buildReq,
-		payment.MakeClaw402SignFunc(c.privateKey),
-		"claw402-vergex",
-		c.logger,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("vergex request failed (%s): %w", path, err)
-	}
-	return body, nil
+	// 付费请求统一经过缓存层：相同 path+params 在 TTL 内只付费一次
+	cache := GlobalCache()
+	key := paidcache.Key(path, params)
+	return cache.Do(ctx, key, CacheTTLFor(path), func(fetchCtx context.Context) ([]byte, error) {
+		body, err := payment.DoX402Request(
+			fetchCtx,
+			c.httpClient,
+			buildReq,
+			payment.MakeClaw402SignFunc(c.privateKey),
+			"claw402-vergex",
+			c.logger,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("vergex request failed (%s): %w", path, err)
+		}
+		return body, nil
+	})
 }
 
 func ParseSignalRanking(body []byte) (*SignalRankingData, error) {

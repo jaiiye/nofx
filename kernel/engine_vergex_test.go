@@ -105,3 +105,37 @@ func hasVergexDetailCandidate(candidates []vergex.Query, marketType, chain strin
 	}
 	return false
 }
+
+func TestVergexDetailCandidateOrderPrefersRememberedVariant(t *testing.T) {
+	query := vergex.Query{
+		MarketType: "all",
+		Symbol:     "xyz:ORDERMEMO",
+		Chain:      "mainnet",
+	}
+
+	// 无记忆时保持原始顺序
+	baseline := vergexDetailCandidateOrder(query)
+	if len(baseline) == 0 || baseline[0].MarketType != vergex.DefaultMarketType {
+		t.Fatalf("unexpected baseline order: %+v", baseline)
+	}
+
+	// 记住一个非首选变体后，它应排到第一位且不重复
+	vergex.RememberHeatmapVariant(query.Symbol, vergex.Query{
+		MarketType: "core_perp",
+		Symbol:     query.Symbol,
+		Chain:      "mainnet",
+	})
+	ordered := vergexDetailCandidateOrder(query)
+	if len(ordered) == 0 || ordered[0].MarketType != "core_perp" {
+		t.Fatalf("remembered variant should come first: %+v", ordered)
+	}
+	seen := 0
+	for _, c := range ordered {
+		if c.MarketType == "core_perp" && c.Chain == "mainnet" {
+			seen++
+		}
+	}
+	if seen != 1 {
+		t.Fatalf("remembered variant should appear exactly once, got %d in %+v", seen, ordered)
+	}
+}

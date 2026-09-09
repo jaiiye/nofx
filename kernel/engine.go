@@ -15,6 +15,7 @@ import (
 	"nofx/store"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -934,6 +935,19 @@ func withDefaultText(value, fallback string) string {
 	return value
 }
 
+// envInt 读取整型环境变量，解析失败或未提供时返回 fallback
+func envInt(key string, fallback int) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < 0 {
+		return fallback
+	}
+	return value
+}
+
 // ============================================================================
 // External & Quant Data
 // ============================================================================
@@ -1142,6 +1156,12 @@ func (e *StrategyEngine) FetchVergexDataBatch(ctx context.Context, symbols []str
 
 	seen := make(map[string]bool)
 	limited := make([]string, 0, store.MaxCandidateCoins)
+	// 详情数据每个标的 3 次付费请求，可通过环境变量限制每轮拉取的标的数量
+	// （默认 0 = 不限制；建议小账户设为 3~5）
+	detailLimit := store.MaxCandidateCoins + store.MaxPositions
+	if v := envInt("NOFX_VERGEX_DETAIL_MAX_SYMBOLS", 0); v > 0 && v < detailLimit {
+		detailLimit = v
+	}
 	for _, symbol := range symbols {
 		symbol = vergexDetailSymbolForLookup(marketType, symbol)
 		if symbol == "" {
@@ -1152,9 +1172,12 @@ func (e *StrategyEngine) FetchVergexDataBatch(ctx context.Context, symbols []str
 		}
 		seen[symbol] = true
 		limited = append(limited, symbol)
-		if len(limited) >= store.MaxCandidateCoins+store.MaxPositions {
+		if len(limited) >= detailLimit {
 			break
 		}
+	}
+	if detailLimit < store.MaxCandidateCoins+store.MaxPositions {
+		logger.Infof("💰 Vergex detail fetch capped at %d symbols (NOFX_VERGEX_DETAIL_MAX_SYMBOLS)", detailLimit)
 	}
 
 	type vergexAnalysisResult struct {
@@ -1222,6 +1245,10 @@ func (e *StrategyEngine) FetchVergexDataBatch(ctx context.Context, symbols []str
 		result[item.symbol] = item.analysis
 	}
 
+	if hits, misses, saved := vergex.GlobalCache().Stats(); saved > 0 {
+		logger.Infof("💰 Vergex cache: %d hit / %d miss — %d paid claw402 requests saved (total calls %d)",
+			hits, misses, saved, hits+misses)
+	}
 	logger.Infof("📊 Vergex detail data ready for %d symbols", len(result))
 	return result
 }
@@ -1283,14 +1310,17 @@ func (e *StrategyEngine) populateVergexDetailData(ctx context.Context, analysis 
 	}
 }
 
+// fetchVergexSignalLabWithFallback 按 marketType/chain 组合逐个尝试 signal-lab 接口。
+// 复用已验证成功的查询变体，避免每轮对每个标的重复探测（每次探测都是付费请求）。
 func (e *StrategyEngine) fetchVergexSignalLabWithFallback(ctx context.Context, query vergex.Query) (json.RawMessage, error) {
 	var lastErr error
-	for idx, candidate := range vergexDetailQueryCandidates(query) {
+	for idx, candidate := range vergexDetailCandidateOrder(query) {
 		body, err := e.vergexClient.GetSignalLab(ctx, candidate)
 		if err == nil {
 			if idx > 0 {
 				logger.Infof("✅ Vergex signal-lab succeeded with fallback marketType=%s chain=%s", candidate.MarketType, withDefaultText(candidate.Chain, "default"))
 			}
+			vergex.RememberHeatmapVariant(query.Symbol, candidate)
 			return body, nil
 		}
 		lastErr = err
@@ -1301,14 +1331,18 @@ func (e *StrategyEngine) fetchVergexSignalLabWithFallback(ctx context.Context, q
 	return nil, lastErr
 }
 
+// fetchVergexHeatmapWithFallback 按 marketType/chain 组合逐个尝试热力图接口。
+// 为降低 claw402 按次计费成本：优先使用上次成功的组合（每标的只探测一次），
+// 成功即记住。
 func (e *StrategyEngine) fetchVergexHeatmapWithFallback(ctx context.Context, query vergex.Query) (json.RawMessage, error) {
 	var lastErr error
-	for idx, candidate := range vergexDetailQueryCandidates(query) {
+	for idx, candidate := range vergexDetailCandidateOrder(query) {
 		body, err := e.vergexClient.GetCostLiquidationHeatmap(ctx, candidate)
 		if err == nil {
 			if idx > 0 {
 				logger.Infof("✅ Vergex heatmap succeeded with fallback marketType=%s chain=%s", candidate.MarketType, withDefaultText(candidate.Chain, "default"))
 			}
+			vergex.RememberHeatmapVariant(query.Symbol, candidate)
 			return body, nil
 		}
 		lastErr = err
@@ -1317,6 +1351,23 @@ func (e *StrategyEngine) fetchVergexHeatmapWithFallback(ctx context.Context, que
 		}
 	}
 	return nil, lastErr
+}
+
+// vergexDetailCandidateOrder 返回详情接口（signal-lab / heatmap）候选查询顺序：已验证成功的变体优先
+func vergexDetailCandidateOrder(query vergex.Query) []vergex.Query {
+	candidates := vergexDetailQueryCandidates(query)
+	if remembered, ok := vergex.LookupHeatmapVariant(query.Symbol); ok {
+		ordered := make([]vergex.Query, 0, len(candidates)+1)
+		ordered = append(ordered, remembered)
+		for _, candidate := range candidates {
+			if candidate.MarketType == remembered.MarketType && candidate.Chain == remembered.Chain {
+				continue
+			}
+			ordered = append(ordered, candidate)
+		}
+		return ordered
+	}
+	return candidates
 }
 
 func vergexDetailQueryCandidates(query vergex.Query) []vergex.Query {
