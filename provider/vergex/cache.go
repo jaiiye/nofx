@@ -14,28 +14,19 @@ import (
 // 通用实现见 nofx/provider/paidcache；这里只定义 vergex 各端点的 TTL 策略。
 // 缓存必须放在进程级：GetFullDecision 每轮会重建 StrategyEngine，
 // 实例级缓存会完全失效。
+//
+// 配置使用统一变量 NOFX_PAID_*（见 paidcache），未配置时使用下方默认值。
 // ============================================================================
 
 const (
-	// 默认成功响应 TTL
-	defaultResponseTTL = 10 * time.Minute
-	// 热力图数据变化缓慢，缓存更久
-	defaultHeatmapTTL = 15 * time.Minute
-	// signal-lab 同属慢变量
-	defaultSignalLabTTL = 15 * time.Minute
-	// 方向/信号看板决定候选币，TTL 不宜过长
-	defaultLeaderboardTTL = 5 * time.Minute
+	// 默认成功响应 TTL（30 分钟决策周期：约一个周期）
+	defaultResponseTTL = 30 * time.Minute
+	// 热力图 / signal-lab 属慢变量，缓存更久（约 1.5 个周期）
+	defaultDetailTTL = 45 * time.Minute
+	// 看板决定候选币，TTL 取半个周期
+	defaultRankingTTL = 15 * time.Minute
 	// 失败响应最长缓存时长
 	maxNegativeTTL = 10 * time.Minute
-)
-
-const (
-	envCacheEnabled = "NOFX_VERGEX_CACHE"
-	envDefaultTTL   = "NOFX_VERGEX_CACHE_TTL_MIN"
-	envHeatmapTTL   = "NOFX_VERGEX_HEATMAP_TTL_MIN"
-	envSignalLabTTL = "NOFX_VERGEX_SIGNAL_LAB_TTL_MIN"
-	envLeadTTL      = "NOFX_VERGEX_LEADERBOARD_TTL_MIN"
-	envNegativeTTL  = "NOFX_VERGEX_NEGATIVE_TTL_MIN"
 )
 
 var (
@@ -53,31 +44,36 @@ func GlobalCache() *paidcache.Cache {
 
 // vergexCachePolicy 构建 vergex 端点的缓存策略
 func vergexCachePolicy() paidcache.Policy {
-	policy := paidcache.Policy{
-		Enabled:     paidcache.EnvEnabled(envCacheEnabled, true),
-		DefaultTTL:  defaultResponseTTL,
-		NegativeTTL: paidcache.DefaultNegativeTTL,
-		PathTTL:     map[string]time.Duration{},
-	}
-	policy.PathTTL[CostLiquidationHeatmapPath] = paidcache.EnvMinutes(envHeatmapTTL, defaultHeatmapTTL)
-	policy.PathTTL[SignalLabPath] = paidcache.EnvMinutes(envSignalLabTTL, defaultSignalLabTTL)
-	policy.PathTTL[SignalRankingPath] = paidcache.EnvMinutes(envLeadTTL, defaultLeaderboardTTL)
+	detailTTL := paidcache.EnvMinutes(paidcache.EnvDetailTTLMin, defaultDetailTTL)
+	signalLabTTL := paidcache.EnvMinutes(paidcache.EnvDetailTTLMin, defaultDetailTTL)
+	rankingTTL := paidcache.EnvMinutes(paidcache.EnvRankingTTLMin, defaultRankingTTL)
 
-	if v := paidcache.EnvMinutes(envDefaultTTL, 0); v > 0 {
-		policy.DefaultTTL = v
-		// 未单独指定时，按端点 TTL 同步跟随全局设置
-		if _, ok := os.LookupEnv(envHeatmapTTL); !ok {
-			policy.PathTTL[CostLiquidationHeatmapPath] = v
+	defaultTTL := paidcache.EnvMinutes(paidcache.EnvTTLMin, defaultResponseTTL)
+	// 仅当显式设置了总时长时，未单独指定的分类时长才跟随总时长
+	if anyEnvSet(paidcache.EnvTTLMin) {
+		if !anyEnvSet(paidcache.EnvDetailTTLMin) {
+			detailTTL = defaultTTL
 		}
-		if _, ok := os.LookupEnv(envSignalLabTTL); !ok {
-			policy.PathTTL[SignalLabPath] = v
+		if !anyEnvSet(paidcache.EnvDetailTTLMin) {
+			signalLabTTL = defaultTTL
 		}
-		if _, ok := os.LookupEnv(envLeadTTL); !ok {
-			policy.PathTTL[SignalRankingPath] = minDuration(v, defaultLeaderboardTTL)
+		if !anyEnvSet(paidcache.EnvRankingTTLMin) {
+			rankingTTL = minDuration(defaultTTL, defaultRankingTTL)
 		}
 	}
-	if v := paidcache.EnvMinutes(envNegativeTTL, 0); v > 0 {
-		policy.NegativeTTL = minDuration(v, maxNegativeTTL)
+
+	policy := paidcache.Policy{
+		Enabled:     paidcache.EnvEnabled(paidcache.EnvEnable, true),
+		DefaultTTL:  defaultTTL,
+		NegativeTTL: paidcache.EnvMinutes(paidcache.EnvNegativeTTLMin, paidcache.DefaultNegativeTTL),
+		PathTTL: map[string]time.Duration{
+			CostLiquidationHeatmapPath: detailTTL,
+			SignalLabPath:              signalLabTTL,
+			SignalRankingPath:          rankingTTL,
+		},
+	}
+	if policy.NegativeTTL > maxNegativeTTL {
+		policy.NegativeTTL = maxNegativeTTL
 	}
 	return policy
 }
@@ -85,6 +81,20 @@ func vergexCachePolicy() paidcache.Policy {
 // CacheTTLFor 返回指定 vergex 端点的缓存时长
 func CacheTTLFor(path string) time.Duration {
 	return vergexCachePolicy().TTLFor(path)
+}
+
+// DetailSymbolLimit 每轮最多为多少个标的拉取付费详情（默认 5）
+func DetailSymbolLimit() int {
+	return paidcache.EnvInt(paidcache.EnvDetailSymbols, 5)
+}
+
+func anyEnvSet(keys ...string) bool {
+	for _, key := range keys {
+		if _, ok := os.LookupEnv(key); ok {
+			return true
+		}
+	}
+	return false
 }
 
 func minDuration(a, b time.Duration) time.Duration {

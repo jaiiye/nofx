@@ -23,8 +23,8 @@ import (
 // maxCacheEntries 缓存条目上限，防止长时间运行后内存无界增长
 const maxCacheEntries = 4096
 
-// DefaultNegativeTTL 失败响应的默认缓存时长
-const DefaultNegativeTTL = 3 * time.Minute
+// DefaultNegativeTTL 失败响应的默认缓存时长（30 分钟周期：短缓存以便尽快重试）
+const DefaultNegativeTTL = 5 * time.Minute
 
 // Policy 定义某个数据源的缓存策略（是否开启、各端点 TTL）
 type Policy struct {
@@ -204,6 +204,27 @@ func minDuration(a, b time.Duration) time.Duration {
 	return b
 }
 
+// ============================================================================
+// 统一环境变量（按数据类型划分，取代旧的 NOFX_VERGEX_* / NOFX_NOFXOS_*）
+//
+// 未配置时使用各数据源代码中定义的默认值。
+// ============================================================================
+
+const (
+	// EnvEnable 总开关：0/off/false 关闭全部付费响应缓存
+	EnvEnable = "NOFX_PAID_CACHE"
+	// EnvTTLMin 默认缓存时长（分钟），未单独指定分类时长时生效
+	EnvTTLMin = "NOFX_PAID_CACHE_TTL_MIN"
+	// EnvDetailTTLMin 慢变量详情数据（heatmap / signal-lab / 单币种数据）
+	EnvDetailTTLMin = "NOFX_PAID_DETAIL_TTL_MIN"
+	// EnvRankingTTLMin 排行榜类数据（信号榜 / OI / NetFlow / 涨幅榜）
+	EnvRankingTTLMin = "NOFX_PAID_RANKING_TTL_MIN"
+	// EnvNegativeTTLMin 失败响应缓存时长（分钟）
+	EnvNegativeTTLMin = "NOFX_PAID_NEGATIVE_TTL_MIN"
+	// EnvDetailSymbols 每轮最多为多少个标的拉取付费详情（0 = 不限制）
+	EnvDetailSymbols = "NOFX_PAID_DETAIL_MAX_SYMBOLS"
+)
+
 // EnvEnabled 读取布尔开关（0/false/off/no/disabled 关闭），未提供时取 defaultOn
 func EnvEnabled(key string, defaultOn bool) bool {
 	raw := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
@@ -228,4 +249,17 @@ func EnvMinutes(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return time.Duration(minutes * float64(time.Minute))
+}
+
+// EnvInt 读取整型配置，未提供或非法时取 fallback
+func EnvInt(key string, fallback int) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < 0 {
+		return fallback
+	}
+	return value
 }

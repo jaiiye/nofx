@@ -17,8 +17,8 @@ func TestHeatmapVariantMemo(t *testing.T) {
 }
 
 func TestCacheTTLForPrefersPathOverride(t *testing.T) {
-	if got := CacheTTLFor(CostLiquidationHeatmapPath); got != defaultHeatmapTTL {
-		t.Fatalf("expected heatmap TTL %v, got %v", defaultHeatmapTTL, got)
+	if got := CacheTTLFor(CostLiquidationHeatmapPath); got != defaultDetailTTL {
+		t.Fatalf("expected detail TTL %v, got %v", defaultDetailTTL, got)
 	}
 	if got := CacheTTLFor("/api/v1/vergex/unknown"); got <= 0 {
 		t.Fatalf("expected positive default TTL, got %v", got)

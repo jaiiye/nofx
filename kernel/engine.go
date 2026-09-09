@@ -15,7 +15,6 @@ import (
 	"nofx/store"
 	"os"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -935,19 +934,6 @@ func withDefaultText(value, fallback string) string {
 	return value
 }
 
-// envInt 读取整型环境变量，解析失败或未提供时返回 fallback
-func envInt(key string, fallback int) int {
-	raw := strings.TrimSpace(os.Getenv(key))
-	if raw == "" {
-		return fallback
-	}
-	value, err := strconv.Atoi(raw)
-	if err != nil || value < 0 {
-		return fallback
-	}
-	return value
-}
-
 // ============================================================================
 // External & Quant Data
 // ============================================================================
@@ -1156,10 +1142,10 @@ func (e *StrategyEngine) FetchVergexDataBatch(ctx context.Context, symbols []str
 
 	seen := make(map[string]bool)
 	limited := make([]string, 0, store.MaxCandidateCoins)
-	// 详情数据每个标的 3 次付费请求，可通过环境变量限制每轮拉取的标的数量
-	// （默认 0 = 不限制；建议小账户设为 3~5）
+	// 详情数据每个标的 2 次付费请求（signal-lab + heatmap），
+	// 可通过环境变量限制每轮拉取的标的数量（默认 5；小账户可保持或调低）
 	detailLimit := store.MaxCandidateCoins + store.MaxPositions
-	if v := envInt("NOFX_VERGEX_DETAIL_MAX_SYMBOLS", 0); v > 0 && v < detailLimit {
+	if v := vergex.DetailSymbolLimit(); v > 0 && v < detailLimit {
 		detailLimit = v
 	}
 	for _, symbol := range symbols {
@@ -1177,7 +1163,7 @@ func (e *StrategyEngine) FetchVergexDataBatch(ctx context.Context, symbols []str
 		}
 	}
 	if detailLimit < store.MaxCandidateCoins+store.MaxPositions {
-		logger.Infof("💰 Vergex detail fetch capped at %d symbols (NOFX_VERGEX_DETAIL_MAX_SYMBOLS)", detailLimit)
+		logger.Infof("💰 Vergex detail fetch capped at %d symbols (NOFX_PAID_DETAIL_MAX_SYMBOLS)", detailLimit)
 	}
 
 	type vergexAnalysisResult struct {

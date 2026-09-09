@@ -17,25 +17,19 @@ import (
 // GetCoinData 每个候选标的一次（12 次/轮）、GetOITopPositions 每轮两次、
 // OI/NetFlow/Price 排行各一次。这里复用 paidcache 统一缓存，
 // 仅在请求走 claw402 时生效（直连 nofxos.ai 不计费，不改变原行为）。
+//
+// 配置使用统一变量 NOFX_PAID_*（见 paidcache），未配置时使用下方默认值。
 // ============================================================================
 
 const (
-	// 排行榜类：分钟级更新
-	defaultRankingTTL = 10 * time.Minute
-	// 单币种数据（quant/OI 明细）：变化较慢
-	defaultCoinTTL = 15 * time.Minute
-	// 默认兜底
-	defaultNofxosTTL = 10 * time.Minute
+	// 单币种数据（quant/OI 明细）：变化较慢（约 1.5 个周期）
+	defaultCoinTTL = 45 * time.Minute
+	// 排行榜类：半个周期
+	defaultRankingTTL = 15 * time.Minute
+	// 默认兜底（约一个周期）
+	defaultNofxosTTL = 30 * time.Minute
 	// 失败响应最长缓存时长
 	maxNegativeTTL = 10 * time.Minute
-)
-
-const (
-	envCacheEnabled = "NOFX_NOFXOS_CACHE"
-	envDefaultTTL   = "NOFX_NOFXOS_CACHE_TTL_MIN"
-	envCoinTTL      = "NOFX_NOFXOS_COIN_TTL_MIN"
-	envRankingTTL   = "NOFX_NOFXOS_RANKING_TTL_MIN"
-	envNegativeTTL  = "NOFX_NOFXOS_NEGATIVE_TTL_MIN"
 )
 
 var (
@@ -53,17 +47,24 @@ func GlobalCache() *paidcache.Cache {
 
 // nofxosCachePolicy 构建 nofxos 端点的缓存策略（按 nofxos 原始路径前缀匹配）
 func nofxosCachePolicy() paidcache.Policy {
-	defaultTTL := paidcache.EnvMinutes(envDefaultTTL, defaultNofxosTTL)
-	coinTTL := paidcache.EnvMinutes(envCoinTTL, defaultCoinTTL)
-	rankingTTL := paidcache.EnvMinutes(envRankingTTL, defaultRankingTTL)
-	if _, ok := os.LookupEnv(envDefaultTTL); !ok {
-		// 未显式设置总时长时，分类默认值跟随总时长
-		coinTTL, rankingTTL = defaultTTL, defaultTTL
+	coinTTL := paidcache.EnvMinutes(paidcache.EnvDetailTTLMin, defaultCoinTTL)
+	rankingTTL := paidcache.EnvMinutes(paidcache.EnvRankingTTLMin, defaultRankingTTL)
+
+	defaultTTL := paidcache.EnvMinutes(paidcache.EnvTTLMin, defaultNofxosTTL)
+	// 仅当显式设置了总时长时，未单独指定的分类时长才跟随总时长
+	if anyEnvSet(paidcache.EnvTTLMin) {
+		if !anyEnvSet(paidcache.EnvDetailTTLMin) {
+			coinTTL = defaultTTL
+		}
+		if !anyEnvSet(paidcache.EnvRankingTTLMin) {
+			rankingTTL = defaultTTL
+		}
 	}
+
 	policy := paidcache.Policy{
-		Enabled:     paidcache.EnvEnabled(envCacheEnabled, true),
+		Enabled:     paidcache.EnvEnabled(paidcache.EnvEnable, true),
 		DefaultTTL:  defaultTTL,
-		NegativeTTL: paidcache.DefaultNegativeTTL,
+		NegativeTTL: paidcache.EnvMinutes(paidcache.EnvNegativeTTLMin, paidcache.DefaultNegativeTTL),
 		PathTTL: map[string]time.Duration{
 			"/api/coin":    coinTTL,
 			"/api/oi":      rankingTTL,
@@ -72,8 +73,8 @@ func nofxosCachePolicy() paidcache.Policy {
 			"/api/ai500":   rankingTTL,
 		},
 	}
-	if v := paidcache.EnvMinutes(envNegativeTTL, 0); v > 0 {
-		policy.NegativeTTL = minDuration(v, maxNegativeTTL)
+	if policy.NegativeTTL > maxNegativeTTL {
+		policy.NegativeTTL = maxNegativeTTL
 	}
 	return policy
 }
@@ -102,6 +103,15 @@ func cacheTTLFor(endpoint string) time.Duration {
 		}
 	}
 	return policy.DefaultTTL
+}
+
+func anyEnvSet(keys ...string) bool {
+	for _, key := range keys {
+		if _, ok := os.LookupEnv(key); ok {
+			return true
+		}
+	}
+	return false
 }
 
 func minDuration(a, b time.Duration) time.Duration {
