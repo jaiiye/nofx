@@ -927,6 +927,44 @@ func (e *StrategyEngine) DirectionalCandidates() (bullish []DirectionalCandidate
 	return bullish, bearish
 }
 
+// HasVergexSignalSnapshot reports whether a fresh Vergex signal-ranking board
+// is available. The position state machine only runs against a live board, so
+// an empty cache (transient fetch failure, or before the first refresh) leaves
+// existing positions untouched instead of liquidating them.
+func (e *StrategyEngine) HasVergexSignalSnapshot() bool {
+	return e != nil && len(e.vergexRankingCache) > 0
+}
+
+// VergexSignalBias returns the canonical current board direction for a symbol.
+// Both the queried symbol and the cached board keys are normalized through
+// vergex.QuerySymbol so exchange-style position symbols (e.g. "BTCUSDT") match
+// the canonical board entries (e.g. "BTC", "xyz:NVDA"). A present-but-neutral
+// entry reports ("neutral", true) so callers can distinguish it from an absent
+// board entry.
+func (e *StrategyEngine) VergexSignalBias(symbol string) (string, bool) {
+	if e == nil || len(e.vergexRankingCache) == 0 {
+		return "", false
+	}
+	target := vergex.QuerySymbol(symbol)
+	if target == "" {
+		return "", false
+	}
+	for cachedSymbol, item := range e.vergexRankingCache {
+		if item == nil || vergex.QuerySymbol(cachedSymbol) != target {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(item.Bias)) {
+		case "bullish", "long", "buy":
+			return "bullish", true
+		case "bearish", "short", "sell":
+			return "bearish", true
+		default:
+			return "neutral", true
+		}
+	}
+	return "", false
+}
+
 func withDefaultText(value, fallback string) string {
 	if strings.TrimSpace(value) == "" {
 		return fallback

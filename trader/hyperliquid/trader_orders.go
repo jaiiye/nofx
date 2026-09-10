@@ -373,12 +373,124 @@ func (t *HyperliquidTrader) CancelStopLossOrders(symbol string) error {
 	return t.CancelStopOrders(symbol)
 }
 
-// CancelTakeProfitOrders only cancels take profit orders (Hyperliquid cannot distinguish stop loss and take profit, cancel all)
+type directOpenOrder struct {
+	Coin       string `json:"coin"`
+	Side       string `json:"side"`
+	LimitPx    string `json:"limitPx"`
+	Oid        int64  `json:"oid"`
+	ReduceOnly bool   `json:"reduceOnly"`
+}
+
+// isTakeProfitOrder reports whether a reduce-only order sits on the profitable
+// side of the mark price (long: sell above mark; short: buy below mark),
+// which identifies it as a take-profit rather than a protective stop.
+func isTakeProfitOrder(positionSide, orderSide string, orderPrice, markPrice float64) bool {
+	if orderPrice <= 0 || markPrice <= 0 {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(positionSide)) {
+	case "long":
+		return strings.EqualFold(strings.TrimSpace(orderSide), "A") && orderPrice > markPrice
+	case "short":
+		return strings.EqualFold(strings.TrimSpace(orderSide), "B") && orderPrice < markPrice
+	default:
+		return false
+	}
+}
+
+// getDirectOpenOrders queries open orders via the raw info API so trigger
+// fields (reduce-only, side, price) are available — the SDK's OpenOrder type
+// does not expose them.
+func (t *HyperliquidTrader) getDirectOpenOrders(isXyz bool) ([]directOpenOrder, error) {
+	reqBody := map[string]interface{}{
+		"type": "openOrders",
+		"user": t.walletAddr,
+	}
+	if isXyz {
+		reqBody["dex"] = "xyz"
+	}
+	jsonBody, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal open-orders request: %w", err)
+	}
+	apiURL := "https://api.hyperliquid.xyz/info"
+	if t.isTestnet {
+		apiURL = "https://api.hyperliquid-testnet.xyz/info"
+	}
+	req, err := http.NewRequestWithContext(t.ctx, http.MethodPost, apiURL, bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create open-orders request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query open orders: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read open orders: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("openOrders API error (status %d): %s", resp.StatusCode, string(body))
+	}
+	var orders []directOpenOrder
+	if err := json.Unmarshal(body, &orders); err != nil {
+		return nil, fmt.Errorf("failed to parse open orders: %w", err)
+	}
+	return orders, nil
+}
+
+// CancelTakeProfitOrders removes only reduce-only orders on the profitable
+// side of the mark price. Protective stops remain active.
 func (t *HyperliquidTrader) CancelTakeProfitOrders(symbol string) error {
-	// Hyperliquid SDK's OpenOrder structure does not expose trigger field
-	// Cannot distinguish stop loss and take profit orders, so cancel all pending orders for this coin
-	logger.Infof("  ⚠️ Hyperliquid cannot distinguish stop loss/take profit orders, will cancel all pending orders")
-	return t.CancelStopOrders(symbol)
+	coin := convertSymbolToHyperliquid(symbol)
+	isXyz := strings.HasPrefix(coin, "xyz:")
+	positions, err := t.GetPositions()
+	if err != nil {
+		return fmt.Errorf("failed to inspect position before canceling take profit: %w", err)
+	}
+	positionSide := ""
+	markPrice := 0.0
+	for _, position := range positions {
+		positionSymbol, _ := position["symbol"].(string)
+		if convertSymbolToHyperliquid(positionSymbol) != coin {
+			continue
+		}
+		positionSide, _ = position["side"].(string)
+		markPrice, _ = position["markPrice"].(float64)
+		break
+	}
+	if positionSide == "" || markPrice <= 0 {
+		return nil
+	}
+	orders, err := t.getDirectOpenOrders(isXyz)
+	if err != nil {
+		return err
+	}
+	canceledCount := 0
+	for _, order := range orders {
+		if order.Coin != coin || !order.ReduceOnly {
+			continue
+		}
+		orderPrice, err := strconv.ParseFloat(order.LimitPx, 64)
+		if err != nil || !isTakeProfitOrder(positionSide, order.Side, orderPrice, markPrice) {
+			continue
+		}
+		if isXyz {
+			err = t.cancelXyzOrder(order.Oid)
+		} else {
+			_, err = t.exchange.Cancel(t.ctx, coin, order.Oid)
+		}
+		if err != nil {
+			return fmt.Errorf("failed to cancel take-profit order %d: %w", order.Oid, err)
+		}
+		canceledCount++
+	}
+	if canceledCount > 0 {
+		logger.Infof("  ✓ Cancelled %d fixed take-profit order(s) for signal-managed %s", canceledCount, symbol)
+	}
+	return nil
 }
 
 // CancelAllOrders cancels all pending orders for this coin

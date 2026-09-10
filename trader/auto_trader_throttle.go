@@ -10,10 +10,6 @@ import (
 )
 
 const (
-	// Anti-churn open caps: at most a couple of new positions per hour/cycle.
-	autopilotMaxOpensPerHour  = 3
-	autopilotMaxOpensPerCycle = 2
-
 	// Exit gates, validated by decision replay (2026-07-26, 4154 cycles,
 	// 3-fold robustness): gates beat no-gates by 34 pts and the old rigid
 	// 4h/8h by 16 pts of worst-fold score; the searched optimum sits at these
@@ -22,11 +18,12 @@ const (
 	autopilotNoiseCloseHoldDuration = 3 * time.Hour
 	// Re-entering a just-closed symbol was a consistent loss source: the
 	// replay's top-20 configs cluster tightly at ~4h.
-	autopilotReentryCooldown        = 4 * time.Hour
-	earlyCloseStopLossBypassPct     = -3.0
-	earlyCloseTakeProfitBypassPct   = 8.0
-	noiseCloseLossFloorPct          = -2.0
-	noiseCloseProfitCeilingPct      = 3.0
+	autopilotReentryCooldown = 4 * time.Hour
+
+	earlyCloseStopLossBypassPct   = -3.0
+	earlyCloseTakeProfitBypassPct = 8.0
+	noiseCloseLossFloorPct        = -2.0
+	noiseCloseProfitCeilingPct    = 3.0
 )
 
 // positionPricePnLPct converts the margin-based UnrealizedPnLPct reported for
@@ -85,14 +82,14 @@ func normalizedDecisionSymbol(symbol string) string {
 	return market.Normalize(strings.TrimSpace(symbol))
 }
 
-func (at *AutoTrader) tradeThrottleReason(decision kernel.Decision, ctx *kernel.Context, opensQueuedThisCycle int) string {
+func (at *AutoTrader) tradeThrottleReason(decision kernel.Decision, ctx *kernel.Context) string {
 	if ctx == nil {
 		return ""
 	}
 
 	switch {
 	case isOpenAction(decision.Action):
-		return at.openThrottleReason(decision, ctx, opensQueuedThisCycle)
+		return at.openThrottleReason(decision, ctx)
 	case isCloseAction(decision.Action):
 		return at.closeThrottleReason(decision, ctx)
 	default:
@@ -100,40 +97,36 @@ func (at *AutoTrader) tradeThrottleReason(decision kernel.Decision, ctx *kernel.
 	}
 }
 
-func (at *AutoTrader) openThrottleReason(decision kernel.Decision, ctx *kernel.Context, opensQueuedThisCycle int) string {
+func (at *AutoTrader) openThrottleReason(decision kernel.Decision, ctx *kernel.Context) string {
 	symbol := normalizedDecisionSymbol(decision.Symbol)
 	if symbol == "" {
 		return ""
-	}
-
-	if opensQueuedThisCycle >= autopilotMaxOpensPerCycle {
-		return fmt.Sprintf("trade throttle: only %d new position may be opened per cycle", autopilotMaxOpensPerCycle)
 	}
 
 	if pos := findAnyContextPosition(ctx, symbol); pos != nil {
 		return fmt.Sprintf("trade throttle: %s already has an open %s position; manage or close it before opening another side", symbol, pos.Side)
 	}
 
-	openCount, err := at.countRecentOpenOrders(time.Now().Add(-1 * time.Hour))
-	if err != nil {
-		at.logWarnf("⚠️ Trade throttle could not read recent open orders: %v", err)
-	} else if openCount >= autopilotMaxOpensPerHour {
-		return fmt.Sprintf("trade throttle: %d open order already executed in the last hour; max is %d", openCount, autopilotMaxOpensPerHour)
-	}
-
-	if order := at.findRecentCloseOrder(symbol, time.Now().Add(-autopilotReentryCooldown)); order != nil {
-		age := time.Since(time.UnixMilli(order.CreatedAt))
-		remaining := autopilotReentryCooldown - age
-		if remaining < 0 {
-			remaining = 0
+	if !at.usesVergexSignalPolicy() {
+		if order := at.findRecentCloseOrder(symbol, time.Now().Add(-autopilotReentryCooldown)); order != nil {
+			age := time.Since(time.UnixMilli(order.CreatedAt))
+			remaining := autopilotReentryCooldown - age
+			if remaining < 0 {
+				remaining = 0
+			}
+			return fmt.Sprintf("trade throttle: %s was closed %s ago; wait %s before re-entry", symbol, roundDuration(age), roundDuration(remaining))
 		}
-		return fmt.Sprintf("trade throttle: %s was closed %s ago; wait %s before re-entry", symbol, roundDuration(age), roundDuration(remaining))
 	}
 
 	return ""
 }
 
 func (at *AutoTrader) closeThrottleReason(decision kernel.Decision, ctx *kernel.Context) string {
+	// Vergex positions are closed by the direction state machine. A changed or
+	// vanished board signal must exit immediately, independent of hold duration.
+	if at.usesVergexSignalPolicy() {
+		return ""
+	}
 	symbol := normalizedDecisionSymbol(decision.Symbol)
 	side := closeActionSide(decision.Action)
 	if symbol == "" || side == "" {
@@ -228,24 +221,6 @@ func (at *AutoTrader) recentOrders(limit int) ([]*store.TraderOrder, error) {
 		return nil, nil
 	}
 	return at.store.Order().GetTraderOrders(at.id, limit)
-}
-
-func (at *AutoTrader) countRecentOpenOrders(since time.Time) (int, error) {
-	orders, err := at.recentOrders(100)
-	if err != nil {
-		return 0, err
-	}
-	sinceMs := since.UTC().UnixMilli()
-	count := 0
-	for _, order := range orders {
-		if order == nil || order.CreatedAt < sinceMs || isCanceledOrder(order) {
-			continue
-		}
-		if isOpenAction(order.OrderAction) {
-			count++
-		}
-	}
-	return count, nil
 }
 
 func (at *AutoTrader) findRecentCloseOrder(symbol string, since time.Time) *store.TraderOrder {
