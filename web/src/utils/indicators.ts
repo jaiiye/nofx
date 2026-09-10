@@ -1,4 +1,4 @@
-// Technical indicator calculation utilities
+// 技术指标计算工具
 
 export interface Kline {
   time: number
@@ -9,7 +9,7 @@ export interface Kline {
   volume?: number
 }
 
-// Simple Moving Average (SMA)
+// 简单移动平均线 (SMA)
 export function calculateSMA(data: Kline[], period: number): Array<{ time: number; value: number }> {
   const result: Array<{ time: number; value: number }> = []
 
@@ -27,12 +27,12 @@ export function calculateSMA(data: Kline[], period: number): Array<{ time: numbe
   return result
 }
 
-// Exponential Moving Average (EMA)
+// 指数移动平均线 (EMA)
 export function calculateEMA(data: Kline[], period: number): Array<{ time: number; value: number }> {
   const result: Array<{ time: number; value: number }> = []
   const multiplier = 2 / (period + 1)
 
-  // Use SMA for the first EMA value
+  // 第一个EMA值使用SMA
   let ema = 0
   for (let i = 0; i < period; i++) {
     ema += data[i].close
@@ -40,7 +40,7 @@ export function calculateEMA(data: Kline[], period: number): Array<{ time: numbe
   ema = ema / period
   result.push({ time: data[period - 1].time, value: ema })
 
-  // Subsequent EMA values
+  // 后续EMA值
   for (let i = period; i < data.length; i++) {
     ema = (data[i].close - ema) * multiplier + ema
     result.push({ time: data[i].time, value: ema })
@@ -49,7 +49,7 @@ export function calculateEMA(data: Kline[], period: number): Array<{ time: numbe
   return result
 }
 
-// MACD indicator
+// MACD 指标
 export interface MACDData {
   time: number
   macd: number
@@ -66,7 +66,7 @@ export function calculateMACD(
   const fastEMA = calculateEMA(data, fastPeriod)
   const slowEMA = calculateEMA(data, slowPeriod)
 
-  // Compute the MACD line
+  // 计算MACD线
   const macdLine: Array<{ time: number; value: number }> = []
   for (let i = 0; i < slowEMA.length; i++) {
     const fastValue = fastEMA.find(e => e.time === slowEMA[i].time)
@@ -78,10 +78,10 @@ export function calculateMACD(
     }
   }
 
-  // Compute the signal line (EMA of MACD)
+  // 计算信号线（MACD的EMA）
   const signalLine = calculateEMAFromValues(macdLine, signalPeriod)
 
-  // Build the MACD data
+  // 生成MACD数据
   const result: MACDData[] = []
   for (let i = 0; i < signalLine.length; i++) {
     const macdValue = macdLine.find(m => m.time === signalLine[i].time)
@@ -98,7 +98,7 @@ export function calculateMACD(
   return result
 }
 
-// Compute EMA from an array of values (helper function)
+// 从值数组计算EMA（辅助函数）
 function calculateEMAFromValues(
   data: Array<{ time: number; value: number }>,
   period: number
@@ -108,7 +108,7 @@ function calculateEMAFromValues(
 
   if (data.length < period) return []
 
-  // Use SMA for the first EMA value
+  // 第一个EMA值使用SMA
   let ema = 0
   for (let i = 0; i < period; i++) {
     ema += data[i].value
@@ -116,7 +116,7 @@ function calculateEMAFromValues(
   ema = ema / period
   result.push({ time: data[period - 1].time, value: ema })
 
-  // Subsequent EMA values
+  // 后续EMA值
   for (let i = period; i < data.length; i++) {
     ema = (data[i].value - ema) * multiplier + ema
     result.push({ time: data[i].time, value: ema })
@@ -125,19 +125,19 @@ function calculateEMAFromValues(
   return result
 }
 
-// RSI indicator
+// RSI 指标
 export function calculateRSI(data: Kline[], period = 14): Array<{ time: number; value: number }> {
   const result: Array<{ time: number; value: number }> = []
 
   if (data.length < period + 1) return []
 
-  // Compute price changes
+  // 计算价格变化
   const changes: number[] = []
   for (let i = 1; i < data.length; i++) {
     changes.push(data[i].close - data[i - 1].close)
   }
 
-  // Compute initial average gain/loss
+  // 计算初始平均涨跌幅
   let avgGain = 0
   let avgLoss = 0
   for (let i = 0; i < period; i++) {
@@ -150,7 +150,7 @@ export function calculateRSI(data: Kline[], period = 14): Array<{ time: number; 
   avgGain = avgGain / period
   avgLoss = avgLoss / period
 
-  // Compute RSI
+  // 计算RSI
   for (let i = period; i < changes.length; i++) {
     const currentChange = changes[i]
 
@@ -174,7 +174,7 @@ export function calculateRSI(data: Kline[], period = 14): Array<{ time: number; 
   return result
 }
 
-// Bollinger Bands
+// 布林带
 export interface BollingerBands {
   time: number
   upper: number
@@ -190,14 +190,14 @@ export function calculateBollingerBands(
   const result: BollingerBands[] = []
 
   for (let i = period - 1; i < data.length; i++) {
-    // Compute SMA
+    // 计算SMA
     let sum = 0
     for (let j = 0; j < period; j++) {
       sum += data[i - j].close
     }
     const sma = sum / period
 
-    // Compute standard deviation
+    // 计算标准差
     let variance = 0
     for (let j = 0; j < period; j++) {
       variance += Math.pow(data[i - j].close - sma, 2)

@@ -1,10 +1,10 @@
 export interface EncryptedPayload {
   wrappedKey: string // RSA-OAEP(K)
   iv: string // 12 bytes
-  ciphertext: string // AES-GCM output (includes tag)
-  aad?: string // optional: additional authenticated data
-  kid?: string // optional: server public key identifier
-  ts?: number // optional: unix seconds, used for replay protection
+  ciphertext: string // AES-GCM 输出(含 tag)
+  aad?: string // 可选：额外认证数据
+  kid?: string // 可选：服务端公钥标识
+  ts?: number // 可选：unix 秒，用于重放保护
 }
 
 export interface CryptoConfig {
@@ -64,7 +64,7 @@ export class CryptoService {
 
     const pemContents = pem
       .substring(headerIndex + pemHeader.length, footerIndex)
-      .replace(/\s+/g, '') // Remove all whitespace (including newlines, spaces, etc.)
+      .replace(/\s+/g, '') // 移除所有空白字符（包括换行符、空格等）
 
     const binaryDerString = atob(pemContents)
     const binaryDer = new Uint8Array(binaryDerString.length)
@@ -95,7 +95,7 @@ export class CryptoService {
       )
     }
 
-    // 1. Generate a 256-bit AES key
+    // 1. 生成 256-bit AES 密钥
     const aesKey = await crypto.subtle.generateKey(
       {
         name: 'AES-GCM',
@@ -105,10 +105,10 @@ export class CryptoService {
       ['encrypt']
     )
 
-    // 2. Generate a random 12-byte IV
+    // 2. 生成 12 字节随机 IV
     const iv = crypto.getRandomValues(new Uint8Array(12))
 
-    // 3. Prepare AAD (additional authenticated data)
+    // 3. 准备 AAD (额外认证数据)
     const ts = Math.floor(Date.now() / 1000)
     const aadObject = {
       userId: userId || '',
@@ -119,7 +119,7 @@ export class CryptoService {
     const aadString = JSON.stringify(aadObject)
     const aadBytes = new TextEncoder().encode(aadString)
 
-    // 4. Encrypt the data with AES-GCM
+    // 4. 使用 AES-GCM 加密数据
     const plaintextBytes = new TextEncoder().encode(plaintext)
     const ciphertext = await crypto.subtle.encrypt(
       {
@@ -132,10 +132,10 @@ export class CryptoService {
       plaintextBytes
     )
 
-    // 5. Export the AES key
+    // 5. 导出 AES 密钥
     const rawAesKey = await crypto.subtle.exportKey('raw', aesKey)
 
-    // 6. Encrypt the AES key with RSA-OAEP
+    // 6. 使用 RSA-OAEP 加密 AES 密钥
     const wrappedKey = await crypto.subtle.encrypt(
       {
         name: 'RSA-OAEP',
@@ -144,7 +144,7 @@ export class CryptoService {
       rawAesKey
     )
 
-    // 7. Encode as base64url
+    // 7. 编码为 base64url
     return {
       wrappedKey: this.arrayBufferToBase64Url(wrappedKey),
       iv: this.arrayBufferToBase64Url(iv.buffer),
@@ -187,7 +187,7 @@ export class CryptoService {
   // anti-pattern (it implied an unauthenticated decryption oracle existed).
 }
 
-// Generate an obfuscation string (used for clipboard obfuscation)
+// 生成混淆字符串（用于剪贴板混淆）
 export function generateObfuscation(): string {
   const bytes = new Uint8Array(32)
   crypto.getRandomValues(bytes)
@@ -196,7 +196,7 @@ export function generateObfuscation(): string {
   )
 }
 
-// Validate private key format
+// 验证私钥格式
 export function validatePrivateKeyFormat(
   value: string,
   expectedLength: number = 64

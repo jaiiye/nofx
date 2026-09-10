@@ -25,16 +25,19 @@ import { BeginnerOnboardingPage } from '../pages/BeginnerOnboardingPage'
 import { DataPage } from '../pages/DataPage'
 import { SettingsPage } from '../pages/SettingsPage'
 import { StrategyStudioPage } from '../pages/StrategyStudioPage'
-import { TerminalDashboard } from '../components/terminal/TerminalDashboard'
+import { TraderDashboardPage } from '../pages/TraderDashboardPage'
 import { useAuth } from '../contexts/AuthContext'
 import { useLanguage } from '../contexts/LanguageContext'
 import { useSystemConfig } from '../hooks/useSystemConfig'
 import { t } from '../i18n/translations'
 import { api } from '../lib/api'
+import { getUserMode } from '../lib/onboarding'
 import type {
   AccountInfo,
   DecisionRecord,
+  Exchange,
   Position,
+  Statistics,
   SystemStatus,
   TraderInfo,
 } from '../types'
@@ -70,7 +73,7 @@ function LoadingScreen() {
   return (
     <div
       className="min-h-screen flex items-center justify-center"
-      style={{ background: '#F1ECE2' }}
+      style={{ background: '#0B0E11' }}
     >
       <div className="text-center">
         <img
@@ -78,7 +81,7 @@ function LoadingScreen() {
           alt="NoFx Logo"
           className="w-16 h-16 mx-auto mb-4 animate-pulse"
         />
-        <p style={{ color: '#1A1813' }}>{t('loading', language)}</p>
+        <p style={{ color: '#EAECEF' }}>{t('loading', language)}</p>
       </div>
     </div>
   )
@@ -157,7 +160,7 @@ function AppChrome({
   return (
     <div
       className="min-h-screen"
-      style={{ background: '#F1ECE2', color: '#1A1813' }}
+      style={{ background: '#0B0E11', color: '#EAECEF' }}
     >
       <HeaderBar
         isLoggedIn={!!user}
@@ -223,13 +226,14 @@ function TradersRoute({
 }
 
 function DashboardRoute() {
+  const { language } = useLanguage()
   const { user, token } = useAuth()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const selectedTraderSlug = searchParams.get('trader') || undefined
   const [selectedTraderId, setSelectedTraderId] = useState<string | undefined>()
-  const [, setLastUpdate] = useState<string>('--:--:--')
-  const [decisionsLimit] = useState(5)
+  const [lastUpdate, setLastUpdate] = useState<string>('--:--:--')
+  const [decisionsLimit, setDecisionsLimit] = useState(5)
   const [accountPollOff, setAccountPollOff] = useState(false)
   const [positionsPollOff, setPositionsPollOff] = useState(false)
   const [decisionsPollOff, setDecisionsPollOff] = useState(false)
@@ -240,11 +244,20 @@ function DashboardRoute() {
     setDecisionsPollOff(false)
   }, [selectedTraderId])
 
-  const { data: traders } = useSWR<TraderInfo[]>(
+  const { data: traders, error: tradersError } = useSWR<TraderInfo[]>(
     user && token ? 'traders-dashboard' : null,
     () => api.getTraders(true),
     {
       refreshInterval: 10000,
+      shouldRetryOnError: false,
+    }
+  )
+
+  const { data: exchanges } = useSWR<Exchange[]>(
+    user && token ? 'exchanges-dashboard' : null,
+    api.getExchangeConfigs,
+    {
+      refreshInterval: 60000,
       shouldRetryOnError: false,
     }
   )
@@ -346,6 +359,16 @@ function DashboardRoute() {
     }
   )
 
+  const { data: stats } = useSWR<Statistics>(
+    selectedTraderId ? `statistics-${selectedTraderId}` : null,
+    () => api.getStatistics(selectedTraderId, true),
+    {
+      refreshInterval: 30000,
+      revalidateOnFocus: false,
+      dedupingInterval: 20000,
+    }
+  )
+
   useEffect(() => {
     if (account) {
       setLastUpdate(new Date().toLocaleTimeString())
@@ -358,13 +381,22 @@ function DashboardRoute() {
 
   return (
     <AppChrome currentPage="trader" animateContent>
-      <TerminalDashboard
+      <TraderDashboardPage
         selectedTrader={selectedTrader}
         status={status}
         account={account}
+        accountFailed={accountPollOff}
         positions={positions}
+        positionsFailed={positionsPollOff}
         decisions={decisions}
+        decisionsFailed={decisionsPollOff}
+        decisionsLimit={decisionsLimit}
+        onDecisionsLimitChange={setDecisionsLimit}
+        stats={stats}
+        lastUpdate={lastUpdate}
+        language={language}
         traders={traders}
+        tradersError={tradersError}
         selectedTraderId={selectedTraderId}
         onTraderSelect={(traderId) => {
           setSelectedTraderId(traderId)
@@ -376,6 +408,8 @@ function DashboardRoute() {
             }
           )
         }}
+        onNavigateToTraders={() => navigate(ROUTES.traders)}
+        exchanges={exchanges}
       />
     </AppChrome>
   )
@@ -445,11 +479,12 @@ export function AppRoutes() {
         <Route
           path={ROUTES.welcome}
           element={
-            // The welcome overlay is the AI-wallet deposit page (QR +
-            // auto-refreshing balance) — useful to every signed-in user, so
-            // no legacy "beginner mode" gate here.
             isAuthenticated ? (
-              <TradersRoute showBeginnerOnboarding />
+              getUserMode() === 'beginner' ? (
+                <TradersRoute showBeginnerOnboarding />
+              ) : (
+                <Navigate to={ROUTES.traders} replace />
+              )
             ) : (
               <Navigate to={ROUTES.login} replace />
             )

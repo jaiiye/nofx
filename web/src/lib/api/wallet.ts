@@ -25,10 +25,6 @@ export interface HyperliquidAccountSummary {
   totalMarginUsed: number
   unrealizedPnl: number
   openPositions: number
-  /** Spot ("main wallet") USDC balance on Hyperliquid */
-  spotUsdc: number
-  /** Spot USDC not locked by open orders, transferable to perp */
-  spotUsdcAvailable: number
   updatedAt: number
 }
 

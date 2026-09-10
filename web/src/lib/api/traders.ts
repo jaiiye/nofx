@@ -6,20 +6,13 @@ import type {
 import { API_BASE, httpClient } from './helpers'
 import { ApiError } from '../httpClient'
 
-// Create/update/start legitimately run long: stopping a live trader waits for
-// its in-flight cycle and monitors, and creation probes the exchange (~35s
-// worst case observed). The default 30s axios timeout aborts mid-operation and
-// reports a false failure, so these calls get their own generous ceiling.
-const TRADER_LIFECYCLE_TIMEOUT_MS = 120_000
-
 function throwApiError(
   message: string,
   errorKey?: string,
   errorParams?: Record<string, string>,
-  statusCode?: number,
-  errorData?: Record<string, any>
+  statusCode?: number
 ): never {
-  throw new ApiError(message, errorKey, errorParams, statusCode, errorData)
+  throw new ApiError(message, errorKey, errorParams, statusCode)
 }
 
 export const traderApi = {
@@ -39,11 +32,10 @@ export const traderApi = {
   },
 
   async createTrader(request: CreateTraderRequest): Promise<TraderInfo> {
-    const result = await httpClient.request<TraderInfo>(`${API_BASE}/traders`, {
-      method: 'POST',
-      data: request,
-      timeout: TRADER_LIFECYCLE_TIMEOUT_MS,
-    })
+    const result = await httpClient.post<TraderInfo>(
+      `${API_BASE}/traders`,
+      request
+    )
     if (!result.success) {
       throwApiError(
         result.message || 'Failed to create trader',
@@ -61,17 +53,15 @@ export const traderApi = {
   },
 
   async startTrader(traderId: string): Promise<void> {
-    const result = await httpClient.request(
-      `${API_BASE}/traders/${traderId}/start`,
-      { method: 'POST', timeout: TRADER_LIFECYCLE_TIMEOUT_MS }
+    const result = await httpClient.post(
+      `${API_BASE}/traders/${traderId}/start`
     )
     if (!result.success) {
       throwApiError(
         result.message || 'Failed to start trader',
         result.errorKey,
         result.errorParams,
-        result.statusCode,
-        result.errorData
+        result.statusCode
       )
     }
   },
@@ -109,13 +99,9 @@ export const traderApi = {
     if (!result.success) throw new Error('Failed to update custom prompt')
   },
 
-  async getTraderConfig(
-    traderId: string,
-    silent?: boolean
-  ): Promise<TraderConfigData> {
-    const result = await httpClient.request<TraderConfigData>(
-      `${API_BASE}/traders/${traderId}/config`,
-      { silent }
+  async getTraderConfig(traderId: string): Promise<TraderConfigData> {
+    const result = await httpClient.get<TraderConfigData>(
+      `${API_BASE}/traders/${traderId}/config`
     )
     if (!result.success) throw new Error('Failed to fetch trader config')
     return result.data!
@@ -125,9 +111,9 @@ export const traderApi = {
     traderId: string,
     request: CreateTraderRequest
   ): Promise<TraderInfo> {
-    const result = await httpClient.request<TraderInfo>(
+    const result = await httpClient.put<TraderInfo>(
       `${API_BASE}/traders/${traderId}`,
-      { method: 'PUT', data: request, timeout: TRADER_LIFECYCLE_TIMEOUT_MS }
+      request
     )
     if (!result.success) {
       throwApiError(
