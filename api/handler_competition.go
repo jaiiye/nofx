@@ -7,11 +7,36 @@ import (
 	"strings"
 	"time"
 
+	"nofx/auth"
 	"nofx/logger"
 	"nofx/store"
 
 	"github.com/gin-gonic/gin"
 )
+
+// optionalAuthenticatedUserID returns the caller's user ID when a valid Bearer
+// token is supplied, and "" for anonymous or invalid tokens. Public endpoints
+// use it to give owners access to their own data without turning the whole
+// endpoint into an authenticated one.
+func optionalAuthenticatedUserID(c *gin.Context) string {
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		return ""
+	}
+	parts := strings.Split(authHeader, " ")
+	if len(parts) != 2 || parts[0] != "Bearer" {
+		return ""
+	}
+	token := parts[1]
+	if auth.IsTokenBlacklisted(token) {
+		return ""
+	}
+	claims, err := auth.ValidateJWT(token)
+	if err != nil || claims == nil {
+		return ""
+	}
+	return claims.UserID
+}
 
 // handleDecisions Decision log list
 func (s *Server) handleDecisions(c *gin.Context) {
@@ -137,8 +162,13 @@ func (s *Server) handleEquityHistory(c *gin.Context) {
 	}
 	if !trader.ShowInCompetition {
 		// Do not leak that a private trader exists; report not found.
-		SafeNotFound(c, "Trader")
-		return
+		// The owner is the exception: with a valid token they may read their own
+		// equity history, which is what the dashboard equity curve renders.
+		ownerID := optionalAuthenticatedUserID(c)
+		if ownerID == "" || trader.UserID == "" || ownerID != trader.UserID {
+			SafeNotFound(c, "Trader")
+			return
+		}
 	}
 
 	// Get equity historical data from new equity table
