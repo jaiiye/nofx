@@ -76,6 +76,8 @@ type hyperliquidAgentResponse struct {
 	Agent *hyperliquidAgentInfo `json:"agent"`
 	// Agents lists every approved agent for the wallet (for visibility/cleanup).
 	Agents []hyperliquidAgentInfo `json:"agents"`
+	// BuilderApproved is live on-chain state for the configured NOFX builder.
+	BuilderApproved bool `json:"builderApproved"`
 }
 
 type hyperliquidClearinghouseState struct {
@@ -263,6 +265,13 @@ func (s *Server) handleHyperliquidAgent(c *gin.Context) {
 	}
 
 	out := hyperliquidAgentResponse{Agents: agents}
+	var maxBuilderFee json.RawMessage
+	if err := postHyperliquidInfo(c, map[string]any{
+		"type": "maxBuilderFee", "user": address, "builder": hyperliquidBuilderAddress(),
+	}, &maxBuilderFee); err == nil {
+		fee, parseErr := strconv.ParseFloat(strings.Trim(string(maxBuilderFee), "\""), 64)
+		out.BuilderApproved = parseErr == nil && fee >= 50
+	}
 	for i := range agents {
 		if strings.EqualFold(baseAgentName(agents[i].Name), nofxHyperliquidAgentName) {
 			agent := agents[i]

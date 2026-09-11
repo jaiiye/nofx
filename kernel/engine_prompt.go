@@ -184,14 +184,8 @@ func (e *StrategyEngine) usesVergexSignalPrompt() bool {
 	if e == nil || e.config == nil {
 		return false
 	}
-	coinSource := e.config.CoinSource
-	sourceType := strings.ToLower(strings.TrimSpace(coinSource.SourceType))
-	return sourceType == "vergex_signal" ||
-		sourceType == "claw402" ||
-		sourceType == "claw402_vergex" ||
-		coinSource.VergexMarketType != "" ||
-		coinSource.VergexChain != "" ||
-		coinSource.VergexLimit > 0
+	sourceType := strings.ToLower(strings.TrimSpace(e.config.CoinSource.SourceType))
+	return sourceType == "vergex_signal"
 }
 
 func (e *StrategyEngine) buildVergexSystemPrompt(accountEquity float64, variant string, lang Language, zh bool, singleSymbol bool, primarySymbol string) string {
@@ -333,7 +327,7 @@ func writeVergexHardConstraints(sb *strings.Builder, accountEquity float64, risk
 		sb.WriteString(fmt.Sprintf("- Min order size: ≥%.0f USDT\n\n", riskControl.MinPositionSize))
 		sb.WriteString("## AI guided\n")
 		sb.WriteString(fmt.Sprintf("- Leverage: every open position must use exactly %dx\n", riskControl.AltcoinMaxLeverage))
-		sb.WriteString(fmt.Sprintf("- Risk/reward: ≥1:%.1f\n", riskControl.MinRiskRewardRatio))
+		sb.WriteString("- Use a positive protective stop on every open; ordinary exits are managed by the Claw402 direction signal, not a fixed take-profit.\n")
 		sb.WriteString(fmt.Sprintf("- Min confidence to open: ≥%d\n\n", riskControl.MinConfidence))
 		sb.WriteString("# Position Sizing\n\n")
 		sb.WriteString("For every `open_long` or `open_short`, use the full max notional per position.\n")
@@ -350,7 +344,7 @@ func writeVergexHardConstraints(sb *strings.Builder, accountEquity float64, risk
 		sb.WriteString(fmt.Sprintf("- Min order size: ≥%.0f USDT\n\n", riskControl.MinPositionSize))
 		sb.WriteString("## AI guided\n")
 		sb.WriteString(fmt.Sprintf("- Leverage: every open position must use exactly %dx\n", riskControl.AltcoinMaxLeverage))
-		sb.WriteString(fmt.Sprintf("- Risk/reward: ≥1:%.1f\n", riskControl.MinRiskRewardRatio))
+		sb.WriteString("- Use a positive protective stop on every open; ordinary exits are managed by the Claw402 direction signal, not a fixed take-profit.\n")
 		sb.WriteString(fmt.Sprintf("- Min confidence to open: ≥%d\n\n", riskControl.MinConfidence))
 		sb.WriteString("# Position Sizing\n\n")
 		sb.WriteString("For every `open_long` or `open_short`, use the full max notional per position.\n")
@@ -398,10 +392,10 @@ func writeVergexOutputFormat(sb *strings.Builder, accountEquity float64, riskCon
 	sb.WriteString("<decision>\n")
 	sb.WriteString("```json\n[\n")
 	if singleSymbol {
-		sb.WriteString(fmt.Sprintf("  {\"symbol\": \"%s\", \"action\": \"open_short\", \"leverage\": %d, \"position_size_usd\": %.0f, \"stop_loss\": 0, \"take_profit\": 0, \"confidence\": 85, \"risk_usd\": 0}\n", exampleSymbol, leverage, positionSize))
+		sb.WriteString(fmt.Sprintf("  {\"symbol\": \"%s\", \"action\": \"open_short\", \"leverage\": %d, \"position_size_usd\": %.0f, \"stop_loss\": 123.45, \"take_profit\": 0, \"confidence\": 85, \"risk_usd\": 12.34}\n", exampleSymbol, leverage, positionSize))
 	} else {
-		sb.WriteString(fmt.Sprintf("  {\"symbol\": \"%s\", \"action\": \"open_long\", \"leverage\": %d, \"position_size_usd\": %.0f, \"stop_loss\": 0, \"take_profit\": 0, \"confidence\": 85, \"risk_usd\": 0},\n", exampleSymbol, leverage, positionSize))
-		sb.WriteString(fmt.Sprintf("  {\"symbol\": \"%s\", \"action\": \"open_short\", \"leverage\": %d, \"position_size_usd\": %.0f, \"stop_loss\": 0, \"take_profit\": 0, \"confidence\": 85, \"risk_usd\": 0}\n", secondSymbol, leverage, positionSize))
+		sb.WriteString(fmt.Sprintf("  {\"symbol\": \"%s\", \"action\": \"open_long\", \"leverage\": %d, \"position_size_usd\": %.0f, \"stop_loss\": 123.45, \"take_profit\": 0, \"confidence\": 85, \"risk_usd\": 12.34},\n", exampleSymbol, leverage, positionSize))
+		sb.WriteString(fmt.Sprintf("  {\"symbol\": \"%s\", \"action\": \"open_short\", \"leverage\": %d, \"position_size_usd\": %.0f, \"stop_loss\": 234.56, \"take_profit\": 0, \"confidence\": 85, \"risk_usd\": 12.34}\n", secondSymbol, leverage, positionSize))
 	}
 	sb.WriteString("]\n```\n")
 	sb.WriteString("</decision>\n\n")
@@ -411,6 +405,8 @@ func writeVergexOutputFormat(sb *strings.Builder, accountEquity float64, riskCon
 		sb.WriteString("- `action`: open_long | open_short | close_long | close_short | hold | wait\n")
 		sb.WriteString(fmt.Sprintf("- `confidence`: 0-100; recommended ≥ %d to open\n", riskControl.MinConfidence))
 		sb.WriteString("- Required when opening: leverage, position_size_usd, stop_loss, take_profit, confidence, risk_usd\n")
+		sb.WriteString("- `stop_loss` must be a positive protective price calculated from the supplied market data: below entry for `open_long`, above entry for `open_short`. Never copy the illustrative example value.\n")
+		sb.WriteString("- `take_profit` must be exactly 0 because ordinary exits are managed by the Claw402 direction signal.\n")
 		sb.WriteString("- All numeric values must be calculated numbers, not formulas.\n")
 		if singleSymbol {
 			sb.WriteString(fmt.Sprintf("- This strategy trades only `%s`; JSON symbol must match it exactly.\n", exampleSymbol))
@@ -423,6 +419,8 @@ func writeVergexOutputFormat(sb *strings.Builder, accountEquity float64, riskCon
 		sb.WriteString("- `action`: open_long | open_short | close_long | close_short | hold | wait\n")
 		sb.WriteString(fmt.Sprintf("- `confidence`: 0-100; recommended ≥ %d to open\n", riskControl.MinConfidence))
 		sb.WriteString("- Required when opening: leverage, position_size_usd, stop_loss, take_profit, confidence, risk_usd\n")
+		sb.WriteString("- `stop_loss` must be a positive protective price calculated from the supplied market data: below entry for `open_long`, above entry for `open_short`. Never copy the illustrative example value.\n")
+		sb.WriteString("- `take_profit` must be exactly 0 because ordinary exits are managed by the Claw402 direction signal.\n")
 		sb.WriteString("- All numeric values must be calculated numbers, not formulas.\n")
 		if singleSymbol {
 			sb.WriteString(fmt.Sprintf("- This strategy trades only `%s`; JSON symbol must match it exactly.\n", exampleSymbol))

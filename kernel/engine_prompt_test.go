@@ -35,6 +35,10 @@ func TestBuildSystemPromptUsesVergexClaw402Prompt(t *testing.T) {
 	if !strings.Contains(prompt, "use the full max notional per position") {
 		t.Fatalf("prompt should force full-size Claw402 opens:\n%s", prompt)
 	}
+	if !strings.Contains(prompt, "`stop_loss` must be a positive protective price") ||
+		!strings.Contains(prompt, "`take_profit` must be exactly 0") {
+		t.Fatalf("prompt must explain signal-managed exit fields:\n%s", prompt)
+	}
 	if containsCJK(prompt) {
 		t.Fatalf("system prompt must be English-only, got CJK text:\n%s", prompt)
 	}
@@ -121,4 +125,14 @@ func containsCJK(text string) bool {
 		}
 	}
 	return false
+}
+
+func TestLegacyVergexFieldsDoNotSelectSignalManagedPrompt(t *testing.T) {
+	cfg := store.GetDefaultStrategyConfig("en")
+	cfg.CoinSource.SourceType = "claw402"
+	cfg.CoinSource.VergexLimit = 5
+	cfg.CoinSource.VergexMarketType = "all"
+	if NewStrategyEngine(&cfg).usesVergexSignalPrompt() {
+		t.Fatal("legacy Vergex fields must not select the signal-managed prompt")
+	}
 }

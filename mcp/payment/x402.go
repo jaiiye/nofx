@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"golang.org/x/crypto/sha3"
 
@@ -282,16 +283,9 @@ func DoX402Request(
 
 			resp2, err := httpClient.Do(req2)
 			if err != nil {
-				if attempt < X402MaxPaymentRetries {
-					wait := X402RetryBaseWait * time.Duration(attempt)
-					logger.Warnf("⚠️  [%s] Payment request failed: %v, retrying in %v (%d/%d)...",
-						providerTag, err, wait, attempt+1, X402MaxPaymentRetries)
-					if err := x402Sleep(ctx, wait); err != nil {
-						return nil, err
-					}
-					continue
-				}
-				return nil, fmt.Errorf("failed to send payment retry: %w", err)
+				// The facilitator may have settled the signed authorization before
+				// the transport failed. Replaying it could charge the call twice.
+				return nil, fmt.Errorf("paid request outcome unknown; refusing automatic replay: %w", err)
 			}
 
 			body2, readErr := io.ReadAll(resp2.Body)
@@ -314,7 +308,7 @@ func DoX402Request(
 			lastBody = body2
 			lastStatus = resp2.StatusCode
 
-			retryable := resp2.StatusCode >= 500 || resp2.StatusCode == http.StatusPaymentRequired
+			retryable := resp2.StatusCode == http.StatusPaymentRequired
 
 			if retryable && attempt < X402MaxPaymentRetries {
 				wait := X402RetryBaseWait * time.Duration(attempt)
@@ -428,16 +422,7 @@ func DoX402RequestStream(
 
 		resp2, err := httpClient.Do(req2)
 		if err != nil {
-			if attempt < X402MaxPaymentRetries {
-				wait := X402RetryBaseWait * time.Duration(attempt)
-				logger.Warnf("⚠️  [%s] Payment request failed: %v, retrying in %v (%d/%d)...",
-					providerTag, err, wait, attempt+1, X402MaxPaymentRetries)
-				if err := x402Sleep(ctx, wait); err != nil {
-					return nil, err
-				}
-				continue
-			}
-			return nil, fmt.Errorf("failed to send payment retry: %w", err)
+			return nil, fmt.Errorf("paid request outcome unknown; refusing automatic replay: %w", err)
 		}
 
 		if resp2.StatusCode == http.StatusOK {
@@ -460,7 +445,7 @@ func DoX402RequestStream(
 		lastBody = body2
 		lastStatus = resp2.StatusCode
 
-		retryable := resp2.StatusCode >= 500 || resp2.StatusCode == http.StatusPaymentRequired
+		retryable := resp2.StatusCode == http.StatusPaymentRequired
 
 		if retryable && attempt < X402MaxPaymentRetries {
 			wait := X402RetryBaseWait * time.Duration(attempt)
@@ -582,24 +567,32 @@ func X402CallStream(c *mcp.Client, signFn X402SignFunc, tag string, systemPrompt
 	c.LastCallUsage = usage
 
 	if text != "" {
+		if sseErr != nil {
+			return "", fmt.Errorf("[%s] stream failed after partial response: %w", tag, sseErr)
+		}
 		c.Log.Infof("📡 [%s] SSE stream complete, got %d chars", tag, len(text))
 		return text, nil
 	}
 
-	// SSE yielded nothing — try JSON fallback on the buffered body.
+	// SSE yielded nothing — try JSON fallback on the buffered body. A plain JSON
+	// response naturally has no SSE completion marker, so test the documented
+	// fallback before propagating that framing error.
 	if bodyBuf.Len() > 0 {
 		c.Log.Infof("📡 [%s] SSE empty, trying JSON fallback on %d bytes", tag, bodyBuf.Len())
 		jsonText, jsonErr := c.Hooks.ParseMCPResponse(bodyBuf.Bytes())
 		if jsonErr == nil && jsonText != "" {
 			return jsonText, nil
 		}
-		c.Log.Warnf("⚠️  [%s] JSON fallback also failed: %v", tag, jsonErr)
+		diagnostic := mcp.DescribeSSEBody(bodyBuf.Bytes())
+		c.Log.Warnf("⚠️  [%s] JSON fallback also failed: %v; content_type=%q; SSE shape: %s",
+			tag, jsonErr, resp.Header.Get("Content-Type"), diagnostic)
 	}
-
 	if sseErr != nil {
 		return "", fmt.Errorf("[%s] stream failed: %w", tag, sseErr)
 	}
-	return "", fmt.Errorf("[%s] no content received (SSE empty, body %d bytes)", tag, bodyBuf.Len())
+
+	return "", fmt.Errorf("[%s] no content received (status %d, content-type %q, body %d bytes; %s)",
+		tag, resp.StatusCode, resp.Header.Get("Content-Type"), bodyBuf.Len(), mcp.DescribeSSEBody(bodyBuf.Bytes()))
 }
 
 // X402BuildRequest creates a POST request with Content-Type but no auth header.
@@ -673,6 +666,11 @@ const (
 	BaseUSDCContract       = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
 	BaseChainID      int64 = 8453
 	BaseNetwork            = "eip155:8453"
+	// One USDC is a deliberately generous hard ceiling for one inference call.
+	MaxX402PaymentMicroUSDC = int64(1_000_000)
+	// DeepSeek routes currently advertise 660 seconds; cap above that while
+	// still rejecting unbounded authorizations.
+	MaxX402PaymentTimeoutSeconds = 900
 )
 
 // EIP-712 type hashes for USDC TransferWithAuthorization (ERC-3009)
@@ -697,6 +695,33 @@ func keccak256Bytes(data ...[]byte) []byte {
 
 // SignX402Payment is the shared EIP-712 signing logic for x402 v2 on Base USDC.
 func SignX402Payment(privateKey *ecdsa.PrivateKey, senderAddr string, opt X402AcceptOption, resource *X402Resource) (string, error) {
+	if opt.Network != BaseNetwork {
+		return "", fmt.Errorf("refusing x402 payment on unexpected network %q", opt.Network)
+	}
+	if !strings.EqualFold(opt.Asset, BaseUSDCContract) {
+		return "", fmt.Errorf("refusing x402 payment for unexpected asset %q", opt.Asset)
+	}
+	if opt.Scheme != "exact" && opt.Scheme != "upto" {
+		return "", fmt.Errorf("refusing unsupported x402 scheme %q", opt.Scheme)
+	}
+	if !common.IsHexAddress(opt.PayTo) {
+		return "", fmt.Errorf("refusing invalid x402 recipient %q", opt.PayTo)
+	}
+	if opt.MaxTimeoutSeconds <= 0 || opt.MaxTimeoutSeconds > MaxX402PaymentTimeoutSeconds {
+		return "", fmt.Errorf("refusing x402 timeout %d", opt.MaxTimeoutSeconds)
+	}
+	amountBig, err := parseBigInt(opt.Amount)
+	if err != nil || amountBig.Sign() <= 0 || amountBig.Cmp(big.NewInt(MaxX402PaymentMicroUSDC)) > 0 {
+		return "", fmt.Errorf("refusing x402 amount %q above the per-call safety policy", opt.Amount)
+	}
+	if opt.Extra != nil {
+		if name := opt.Extra["name"]; name != "" && name != "USD Coin" {
+			return "", fmt.Errorf("refusing unexpected EIP-712 domain name %q", name)
+		}
+		if version := opt.Extra["version"]; version != "" && version != "2" {
+			return "", fmt.Errorf("refusing unexpected EIP-712 domain version %q", version)
+		}
+	}
 	recipient := opt.PayTo
 	amount := opt.Amount
 	network := opt.Network
@@ -747,11 +772,6 @@ func SignX402Payment(privateKey *ecdsa.PrivateKey, senderAddr string, opt X402Ac
 	domainSeparator, err := buildDomainSeparatorDynamic(domainName, domainVersion, network, asset)
 	if err != nil {
 		return "", fmt.Errorf("failed to build domain separator: %w", err)
-	}
-
-	amountBig, err := parseBigInt(amount)
-	if err != nil {
-		return "", fmt.Errorf("invalid amount: %w", err)
 	}
 
 	structHash, err := buildTransferWithAuthHashDynamic(senderAddr, recipient, amountBig, validAfter, validBefore, nonce)

@@ -588,7 +588,12 @@ func (at *AutoTrader) buildTradingContext() (*kernel.Context, error) {
 	} else {
 		coins, err := at.strategyEngine.GetCandidateCoins()
 		if err != nil {
-			// Log warning but don't fail - equity snapshot should still be saved
+			// The direction board is the sole ordinary exit authority in Vergex
+			// signal mode. With open exposure, stale/missing board data must abort
+			// the cycle rather than allowing raw AI closes through.
+			if at.usesVergexSignalPolicy() && len(positionInfos) > 0 {
+				return nil, fmt.Errorf("failed to refresh Vergex direction board with open positions: %w", err)
+			}
 			at.logWarnf("⚠️ Failed to get candidate coins: %v (will use empty list)", err)
 		} else {
 			candidateCoins = coins
