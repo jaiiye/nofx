@@ -17,10 +17,10 @@ import (
 // ============================================================================
 
 // Take-profit hint thresholds, expressed as a price-move percentage and the
-// fraction of peak profit that may be given back. The enforced signal exit in
-// the trader package uses the same basis and fraction
-// (signalGivebackExitPct / signalGivebackMinPeakPct), so the advice the AI
-// receives is never looser than the exit that is actually enforced.
+// fraction of peak profit that may be given back. The enforced drawdown exit
+// lives in the trader package's per-minute drawdown monitor
+// (drawdownClosePriceGainPct / drawdownCloseGivebackPct), so this hint is an
+// earlier advisory on the same price basis, not a second enforcement path.
 const (
 	positionTakeProfitHintPct    = 0.40
 	positionTakeProfitMinPeakPct = 3.0

@@ -197,54 +197,6 @@ func TestVergexSignalPolicyTrimsOnDecayingSignal(t *testing.T) {
 	}
 }
 
-func TestSignalGivebackProtectionClosesFadedWinner(t *testing.T) {
-	// Peak +10% price move, now back to +5% — given back half, past the 40% ceiling.
-	position := kernel.PositionInfo{
-		Symbol:           "xyz:NVDA",
-		Side:             "long",
-		Leverage:         1,
-		UnrealizedPnLPct: 5.0,
-		PeakPnLPct:       10.0,
-	}
-	action, reasoning := applySignalGivebackProtection(position, "hold", "signal intact")
-	if action != "close_long" {
-		t.Fatalf("a faded winner must be closed, got %s (%s)", action, reasoning)
-	}
-
-	// Still near the peak — protection must not fire.
-	position.UnrealizedPnLPct = 8.0
-	if action, _ := applySignalGivebackProtection(position, "hold", "signal intact"); action != "hold" {
-		t.Fatalf("a position near its peak must not be closed, got %s", action)
-	}
-
-	// A trim already in flight is left alone; the exit is not escalated.
-	if action, _ := applySignalGivebackProtection(position, "reduce_long", ""); action != "reduce_long" {
-		t.Fatalf("giveback protection must not override an existing trim, got %s", action)
-	}
-
-	// Below the arming floor a large retrace is ordinary noise, not a signal.
-	small := kernel.PositionInfo{Symbol: "xyz:NVDA", Side: "long", Leverage: 1, UnrealizedPnLPct: 0.5, PeakPnLPct: 2.5}
-	if action, _ := applySignalGivebackProtection(small, "hold", "signal intact"); action != "hold" {
-		t.Fatalf("a peak below the arming floor must not trigger protection, got %s", action)
-	}
-}
-
-func TestSignalGivebackProtectionIsLeverageAware(t *testing.T) {
-	// 10x: a peak of +30% margin is +3% price; back at +15% margin (+1.5% price)
-	// is a 50% price giveback and must fire. A margin-basis comparison would
-	// have read the same numbers backwards (15 > 30*0.6 is false).
-	position := kernel.PositionInfo{
-		Symbol:           "BTC",
-		Side:             "long",
-		Leverage:         10,
-		UnrealizedPnLPct: 15.0,
-		PeakPnLPct:       30.0,
-	}
-	if action, reasoning := applySignalGivebackProtection(position, "hold", ""); action != "close_long" {
-		t.Fatalf("expected a leverage-adjusted giveback exit, got %s (%s)", action, reasoning)
-	}
-}
-
 func TestVergexSignalPolicyAllowsOnlyMatchingEntries(t *testing.T) {
 	decisions := []kernel.Decision{
 		{Symbol: "xyz:NVDA", Action: "open_long"},
@@ -298,10 +250,12 @@ func TestVergexSignalPolicyRequiresStrongSignalToOpen(t *testing.T) {
 	}
 }
 
-func TestVergexSignalPolicyDoesNotRebuildAfterGivebackExit(t *testing.T) {
-	// The signal is still strong (no trim is due) but the price gave back most
-	// of its peak, so the giveback protection closes the position. The next
-	// cycle the AI tries to re-open on that same strong signal.
+func TestVergexSignalPolicyIgnoresPriceGiveback(t *testing.T) {
+	// A position that has given back most of its peak is still held while the
+	// board signal is strong: price-drawdown exits are the drawdown monitor's
+	// job (auto_trader_risk.go, per-minute and peak-cache-clearing), not the
+	// signal state machine's. This prevents the double-exit and stale-peak
+	// re-trigger loop the two overlapping mechanisms used to cause.
 	positions := []kernel.PositionInfo{{
 		Symbol: "xyz:NVDA", Side: "long", Leverage: 1,
 		UnrealizedPnLPct: 5.0, PeakPnLPct: 10.0,
@@ -311,25 +265,8 @@ func TestVergexSignalPolicyDoesNotRebuildAfterGivebackExit(t *testing.T) {
 	strong := func(string) (float64, bool) { return signalStrongScore + 0.5, true }
 
 	got, _ := applyVergexSignalPolicy(nil, positions, bias, strong, at)
-	if len(got) != 1 || got[0].Action != "close_long" {
-		t.Fatalf("expected the giveback exit, got %+v", got)
-	}
-
-	// A strong signal is allowed to re-enter. This is the accepted trade-off of
-	// a strength-only gate (no time cooldown): the same strong signal that
-	// justified the position may justify rebuilding it once the exit has fired.
-	reopen := []kernel.Decision{{Symbol: "xyz:NVDA", Action: "open_long"}}
-	got, blocked := applyVergexSignalPolicy(reopen, nil, bias, strong, at)
-	if len(got) != 1 || len(blocked) != 0 {
-		t.Fatalf("a strong signal may re-enter without a cooldown, got %+v blocked %+v", got, blocked)
-	}
-
-	// A faded signal must not rebuild the position, so the exit is not undone
-	// by a weak re-entry in the following cycle.
-	faded := func(string) (float64, bool) { return signalStrongScore - 0.1, true }
-	got, blocked = applyVergexSignalPolicy(reopen, nil, bias, faded, at)
-	if len(got) != 0 || len(blocked) != 1 {
-		t.Fatalf("a faded signal must not rebuild the position after exit, got %+v blocked %+v", got, blocked)
+	if len(got) != 1 || got[0].Action != "hold" {
+		t.Fatalf("price giveback alone must not exit a strong-signal position, got %+v", got)
 	}
 }
 

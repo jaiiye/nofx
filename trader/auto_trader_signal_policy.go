@@ -156,15 +156,6 @@ const (
 	// consecutive board cycles a symbol may be absent before it is closed, so a
 	// pure ranking drop-out does not trigger an immediate exit
 	signalAbsentGraceCycles = 2
-	// a position given back this fraction of its peak profit exits regardless of
-	// the board, so a faded winner is not held through a full round trip. Kept
-	// in step with the prompt-side take-profit hint (see
-	// positionTakeProfitHintPct) so the enforced exit is no looser than the
-	// advice the AI already receives.
-	signalGivebackExitPct = 0.40
-	// minimum peak price-move profit before giveback protection arms; below this
-	// a 40% retrace is inside ordinary noise and would exit on nothing
-	signalGivebackMinPeakPct = 3.0
 )
 
 // reduceQuantity converts a fraction of a held quantity into the quantity to
@@ -204,38 +195,6 @@ func (at *AutoTrader) clearSignalAbsence(symbol string) {
 		return
 	}
 	delete(at.signalAbsentCycles, key)
-}
-
-// applySignalGivebackProtection closes a position that has given back most of
-// its peak profit, independent of the board. It is the price-aware exit the
-// signal state machine otherwise lacks: a signal that is still present but has
-// faded must not hand back the whole move while the AI waits on hold decisions.
-func applySignalGivebackProtection(position kernel.PositionInfo, action, reasoning string) (string, string) {
-	if isReduceAction(action) {
-		return action, reasoning
-	}
-	side := strings.ToLower(strings.TrimSpace(position.Side))
-	if side != "long" && side != "short" {
-		return action, reasoning
-	}
-	peak := positionPeakPriceMovePct(&position)
-	if peak < signalGivebackMinPeakPct {
-		return action, reasoning
-	}
-	current := positionPricePnLPct(&position)
-	if current > 0 && current > peak*(1-signalGivebackExitPct) {
-		return action, reasoning
-	}
-	switch side {
-	case "long":
-		action = "close_long"
-	case "short":
-		action = "close_short"
-	}
-	return action, fmt.Sprintf(
-		"Price gave back %.0f%% of the %.2f%% peak (now %.2f%%); exit to protect profit",
-		signalGivebackExitPct*100, peak, current,
-	)
 }
 
 // enforceVergexSignalPolicy turns the current direction board into a strict
@@ -338,7 +297,10 @@ func applyVergexSignalPolicy(
 
 	// Existing positions are managed solely by the current board signal. A
 	// matching strong signal holds; a decaying signal trims; a changed signal
-	// closes. Price-aware giveback protection can close on its own.
+	// closes. Price-drawdown protection is intentionally NOT handled here: the
+	// per-minute drawdown monitor in auto_trader_risk.go already covers it for
+	// every strategy (and clears the peak cache on close), so duplicating it in
+	// this state machine caused double exits and stale-peak re-trigger loops.
 	for _, position := range positions {
 		base := universeBaseKey(position.Symbol)
 		bias, present := biasFor(position.Symbol)
@@ -352,7 +314,7 @@ func applyVergexSignalPolicy(
 			state = at.signalExitFor(position, bias, present, strength)
 		}
 
-		action, reasoning := applySignalGivebackProtection(position, state.action, state.reasoning)
+		action, reasoning := state.action, state.reasoning
 		reducePct := 0.0
 		if isReduceAction(action) {
 			reducePct = state.reducePct
