@@ -154,10 +154,14 @@ const (
 	// pure ranking drop-out does not trigger an immediate exit
 	signalAbsentGraceCycles = 2
 	// a position given back this fraction of its peak profit exits regardless of
-	// the board, so a faded winner is not held through a full round trip
-	signalGivebackExitPct = 0.60
-	// minimum peak price-move profit before giveback protection arms
-	signalGivebackMinPeakPct = 2.0
+	// the board, so a faded winner is not held through a full round trip. Kept
+	// in step with the prompt-side take-profit hint (see
+	// positionTakeProfitHintPct) so the enforced exit is no looser than the
+	// advice the AI already receives.
+	signalGivebackExitPct = 0.40
+	// minimum peak price-move profit before giveback protection arms; below this
+	// a 40% retrace is inside ordinary noise and would exit on nothing
+	signalGivebackMinPeakPct = 3.0
 )
 
 // reduceQuantity converts a fraction of a held quantity into the quantity to
@@ -211,10 +215,7 @@ func applySignalGivebackProtection(position kernel.PositionInfo, action, reasoni
 	if side != "long" && side != "short" {
 		return action, reasoning
 	}
-	peak := positionPricePnLPct(&kernel.PositionInfo{
-		UnrealizedPnLPct: position.PeakPnLPct,
-		Leverage:         position.Leverage,
-	})
+	peak := positionPeakPriceMovePct(&position)
 	if peak < signalGivebackMinPeakPct {
 		return action, reasoning
 	}

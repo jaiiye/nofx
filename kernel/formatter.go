@@ -16,6 +16,50 @@ import (
 // understands the data regardless of language.
 // ============================================================================
 
+// Take-profit hint thresholds, expressed as a price-move percentage and the
+// fraction of peak profit that may be given back. The enforced signal exit in
+// the trader package uses the same basis and fraction
+// (signalGivebackExitPct / signalGivebackMinPeakPct), so the advice the AI
+// receives is never looser than the exit that is actually enforced.
+const (
+	positionTakeProfitHintPct    = 0.40
+	positionTakeProfitMinPeakPct = 3.0
+)
+
+// positionPriceMovePct is the price-move basis of a position's unrealized PnL.
+// UnrealizedPnLPct is reported on margin, so it is de-leveraged here.
+func positionPriceMovePct(pos *PositionInfo) float64 {
+	if pos == nil {
+		return 0
+	}
+	if pos.Leverage > 1 {
+		return pos.UnrealizedPnLPct / float64(pos.Leverage)
+	}
+	return pos.UnrealizedPnLPct
+}
+
+// positionPeakPriceMovePct is the price-move basis of a position's peak profit.
+// PeakPnLPct is tracked in the same margin basis as UnrealizedPnLPct.
+func positionPeakPriceMovePct(pos *PositionInfo) float64 {
+	if pos == nil {
+		return 0
+	}
+	return positionPriceMovePct(&PositionInfo{
+		UnrealizedPnLPct: pos.PeakPnLPct,
+		Leverage:         pos.Leverage,
+	})
+}
+
+// positionTakeProfitHintDue reports whether the take-profit hint should be
+// emitted: the position has banked a meaningful price move and has since given
+// back more than positionTakeProfitHintPct of it.
+func positionTakeProfitHintDue(peakPriceMove, currentPriceMove, priceDrawdown float64) bool {
+	if peakPriceMove < positionTakeProfitMinPeakPct || currentPriceMove <= 0 {
+		return false
+	}
+	return priceDrawdown < -positionTakeProfitHintPct*peakPriceMove
+}
+
 // FormatContextForAI formats trading context into AI-readable text (including schema)
 func FormatContextForAI(ctx *Context, lang Language) string {
 	var sb strings.Builder
@@ -229,8 +273,10 @@ func formatCurrentPositionsZH(ctx *Context) string {
 	sb.WriteString("## Current Positions\n\n")
 
 	for i, pos := range ctx.Positions {
-		// Calculate drawdown
-		drawdown := pos.UnrealizedPnLPct - pos.PeakPnLPct
+		// Calculate drawdown on the price-move basis so the hint does not scale
+		// with leverage (a 30% margin retrace is only 3% of price at 10x).
+		peakPriceMove := positionPeakPriceMovePct(&pos)
+		drawdown := positionPriceMovePct(&pos) - peakPriceMove
 
 		sb.WriteString(fmt.Sprintf("%d. %s %s | ", i+1, pos.Symbol, strings.ToUpper(pos.Side)))
 		sb.WriteString(fmt.Sprintf("Entry %.4f Current %.4f | ", pos.EntryPrice, pos.MarkPrice))
@@ -244,9 +290,9 @@ func formatCurrentPositionsZH(ctx *Context) string {
 		sb.WriteString(fmt.Sprintf("Liq Price %.4f\n", pos.LiquidationPrice))
 
 		// Add analysis hints
-		if drawdown < -0.30*pos.PeakPnLPct && pos.PeakPnLPct > 0.02 {
+		if positionTakeProfitHintDue(peakPriceMove, positionPriceMovePct(&pos), drawdown) {
 			sb.WriteString(fmt.Sprintf("   ⚠️ **Take-Profit Hint**: Current PnL retraced from peak %.2f%% to %.2f%%, drawdown %.2f%%, consider taking profit\n",
-				pos.PeakPnLPct, pos.UnrealizedPnLPct, (drawdown/pos.PeakPnLPct)*100))
+				pos.PeakPnLPct, pos.UnrealizedPnLPct, (drawdown/peakPriceMove)*100))
 		}
 
 		if pos.UnrealizedPnLPct < -4.0 {
@@ -496,7 +542,9 @@ func formatCurrentPositionsEN(ctx *Context) string {
 	sb.WriteString("## Current Positions\n\n")
 
 	for i, pos := range ctx.Positions {
-		drawdown := pos.UnrealizedPnLPct - pos.PeakPnLPct
+		// Price-move basis, matching the ZH variant and the enforced exit.
+		peakPriceMove := positionPeakPriceMovePct(&pos)
+		drawdown := positionPriceMovePct(&pos) - peakPriceMove
 
 		sb.WriteString(fmt.Sprintf("%d. %s %s | ", i+1, pos.Symbol, strings.ToUpper(pos.Side)))
 		sb.WriteString(fmt.Sprintf("Entry %.4f Current %.4f | ", pos.EntryPrice, pos.MarkPrice))
@@ -510,9 +558,9 @@ func formatCurrentPositionsEN(ctx *Context) string {
 		sb.WriteString(fmt.Sprintf("Liq Price %.4f\n", pos.LiquidationPrice))
 
 		// Analysis hints
-		if drawdown < -0.30*pos.PeakPnLPct && pos.PeakPnLPct > 0.02 {
+		if positionTakeProfitHintDue(peakPriceMove, positionPriceMovePct(&pos), drawdown) {
 			sb.WriteString(fmt.Sprintf("   ⚠️ **Take Profit Alert**: PnL dropped from peak %.2f%% to %.2f%%, drawdown %.2f%%, consider taking profit\n",
-				pos.PeakPnLPct, pos.UnrealizedPnLPct, (drawdown/pos.PeakPnLPct)*100))
+				pos.PeakPnLPct, pos.UnrealizedPnLPct, (drawdown/peakPriceMove)*100))
 		}
 
 		if pos.UnrealizedPnLPct < -4.0 {

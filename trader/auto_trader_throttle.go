@@ -38,6 +38,19 @@ func positionPricePnLPct(pos *kernel.PositionInfo) float64 {
 	return pos.UnrealizedPnLPct
 }
 
+// positionPeakPriceMovePct is the price-move basis of a position's peak profit.
+// PeakPnLPct is tracked in the same margin basis as UnrealizedPnLPct, so it must
+// be de-leveraged before it is compared with a price-move threshold.
+func positionPeakPriceMovePct(pos *kernel.PositionInfo) float64 {
+	if pos == nil {
+		return 0
+	}
+	return positionPricePnLPct(&kernel.PositionInfo{
+		UnrealizedPnLPct: pos.PeakPnLPct,
+		Leverage:         pos.Leverage,
+	})
+}
+
 func isOpenAction(action string) bool {
 	switch strings.ToLower(strings.TrimSpace(action)) {
 	case "open_long", "open_short":

@@ -198,12 +198,12 @@ func TestVergexSignalPolicyTrimsOnDecayingSignal(t *testing.T) {
 }
 
 func TestSignalGivebackProtectionClosesFadedWinner(t *testing.T) {
-	// Peak +10% price move, now back to +3% — beyond the 60% giveback ceiling.
+	// Peak +10% price move, now back to +5% — given back half, past the 40% ceiling.
 	position := kernel.PositionInfo{
 		Symbol:           "xyz:NVDA",
 		Side:             "long",
 		Leverage:         1,
-		UnrealizedPnLPct: 3.0,
+		UnrealizedPnLPct: 5.0,
 		PeakPnLPct:       10.0,
 	}
 	action, reasoning := applySignalGivebackProtection(position, "hold", "signal intact")
@@ -212,7 +212,7 @@ func TestSignalGivebackProtectionClosesFadedWinner(t *testing.T) {
 	}
 
 	// Still near the peak — protection must not fire.
-	position.UnrealizedPnLPct = 9.0
+	position.UnrealizedPnLPct = 8.0
 	if action, _ := applySignalGivebackProtection(position, "hold", "signal intact"); action != "hold" {
 		t.Fatalf("a position near its peak must not be closed, got %s", action)
 	}
@@ -220,6 +220,28 @@ func TestSignalGivebackProtectionClosesFadedWinner(t *testing.T) {
 	// A trim already in flight is left alone; the exit is not escalated.
 	if action, _ := applySignalGivebackProtection(position, "reduce_long", ""); action != "reduce_long" {
 		t.Fatalf("giveback protection must not override an existing trim, got %s", action)
+	}
+
+	// Below the arming floor a large retrace is ordinary noise, not a signal.
+	small := kernel.PositionInfo{Symbol: "xyz:NVDA", Side: "long", Leverage: 1, UnrealizedPnLPct: 0.5, PeakPnLPct: 2.5}
+	if action, _ := applySignalGivebackProtection(small, "hold", "signal intact"); action != "hold" {
+		t.Fatalf("a peak below the arming floor must not trigger protection, got %s", action)
+	}
+}
+
+func TestSignalGivebackProtectionIsLeverageAware(t *testing.T) {
+	// 10x: a peak of +30% margin is +3% price; back at +15% margin (+1.5% price)
+	// is a 50% price giveback and must fire. A margin-basis comparison would
+	// have read the same numbers backwards (15 > 30*0.6 is false).
+	position := kernel.PositionInfo{
+		Symbol:           "BTC",
+		Side:             "long",
+		Leverage:         10,
+		UnrealizedPnLPct: 15.0,
+		PeakPnLPct:       30.0,
+	}
+	if action, reasoning := applySignalGivebackProtection(position, "hold", ""); action != "close_long" {
+		t.Fatalf("expected a leverage-adjusted giveback exit, got %s (%s)", action, reasoning)
 	}
 }
 
