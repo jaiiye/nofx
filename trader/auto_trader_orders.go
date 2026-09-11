@@ -170,7 +170,10 @@ func (at *AutoTrader) executeOpenLongWithRecord(decision *kernel.Decision, actio
 		actionRecord.TakeProfit = 0
 		logger.Infof("  ✓ Fixed take profit skipped: Claw402 direction signal manages ordinary exits")
 	} else if err := at.trader.SetTakeProfit(decision.Symbol, "LONG", quantity, decision.TakeProfit); err != nil {
-		return at.closeUnprotectedPosition(decision.Symbol, "long", quantity, fmt.Errorf("failed to set mandatory take profit: %w", err))
+		// A failed fixed take-profit is not hard-risk exposure — the protective
+		// stop loss is already on the exchange. Warn and keep a sound entry
+		// open instead of emergency-closing it over a failed TP order.
+		logger.Infof("  ⚠ Failed to set take profit: %v", err)
 	}
 
 	return nil
@@ -292,7 +295,10 @@ func (at *AutoTrader) executeOpenShortWithRecord(decision *kernel.Decision, acti
 		actionRecord.TakeProfit = 0
 		logger.Infof("  ✓ Fixed take profit skipped: Claw402 direction signal manages ordinary exits")
 	} else if err := at.trader.SetTakeProfit(decision.Symbol, "SHORT", quantity, decision.TakeProfit); err != nil {
-		return at.closeUnprotectedPosition(decision.Symbol, "short", quantity, fmt.Errorf("failed to set mandatory take profit: %w", err))
+		// A failed fixed take-profit is not hard-risk exposure — the protective
+		// stop loss is already on the exchange. Warn and keep a sound entry
+		// open instead of emergency-closing it over a failed TP order.
+		logger.Infof("  ⚠ Failed to set take profit: %v", err)
 	}
 
 	return nil
