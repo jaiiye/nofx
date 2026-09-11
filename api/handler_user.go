@@ -262,7 +262,7 @@ func (s *Server) createDefaultStrategies(userID string, lang string) error {
 		c.CoinSource.VergexLimit = 10
 		c.CoinSource.VergexMarketType = "all"
 		c.CoinSource.VergexChain = "hyperliquid"
-		c.RiskControl.MaxPositions = 2
+		c.RiskControl.MaxPositions = store.AutopilotDefaultMaxPositions
 		c.RiskControl.BTCETHMaxLeverage = 10
 		c.RiskControl.AltcoinMaxLeverage = 10
 		// Few, concentrated positions held for big moves. 10x leverage keeps a
@@ -347,12 +347,32 @@ func (s *Server) createDefaultStrategies(userID string, lang string) error {
 		}
 
 		for _, strategy := range strategies {
-			var existing int64
-			if err := tx.Model(&store.Strategy{}).Where("user_id = ? AND name = ?", userID, strategy.Name).Count(&existing).Error; err != nil {
-				return fmt.Errorf("failed to check strategy %q: %w", strategy.Name, err)
-			}
-			if existing > 0 {
+			var existing store.Strategy
+			query := tx.Where("user_id = ? AND name = ?", userID, strategy.Name).First(&existing)
+			if query.Error == nil {
+				// A strategy with this name already exists (deleting a trader keeps
+				// its strategy). Migrate a legacy Autopilot book forward instead of
+				// leaving the stale slot count in place.
+				config, err := existing.ParseConfig()
+				if err != nil {
+					return fmt.Errorf("failed to parse existing strategy %q: %w", strategy.Name, err)
+				}
+				if store.MigrateLegacyAutopilotRiskDefaults(config) {
+					config.ClampLimits()
+					if err := existing.SetConfig(config); err != nil {
+						return fmt.Errorf("failed to serialize migrated strategy %q: %w", strategy.Name, err)
+					}
+					if err := tx.Model(&store.Strategy{}).
+						Where("id = ? AND user_id = ?", existing.ID, userID).
+						Updates(map[string]interface{}{"config": existing.Config, "updated_at": time.Now().UTC()}).Error; err != nil {
+						return fmt.Errorf("failed to migrate strategy %q: %w", strategy.Name, err)
+					}
+					logger.Infof("  ✓ Migrated default strategy to the %d-position Autopilot book: %s", store.AutopilotDefaultMaxPositions, strategy.Name)
+				}
 				continue
+			}
+			if query.Error != gorm.ErrRecordNotFound {
+				return fmt.Errorf("failed to check strategy %q: %w", strategy.Name, query.Error)
 			}
 			if activeCount > 0 {
 				strategy.IsActive = false

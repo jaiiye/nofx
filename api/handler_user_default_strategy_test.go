@@ -54,8 +54,8 @@ func TestCreateDefaultStrategiesUsesOneReadyToRunClaw402Preset(t *testing.T) {
 	if trendCfg.CoinSource.SourceType != "vergex_signal" || trendCfg.CoinSource.VergexLimit != 10 || trendCfg.CoinSource.VergexMarketType != "all" {
 		t.Fatalf("default strategy should use the Claw402/Vergex all-market signal ranking, got %+v", trendCfg.CoinSource)
 	}
-	if trendCfg.CoinSource.UseAI500 || trendCfg.RiskControl.MaxPositions != 2 {
-		t.Fatalf("default strategy should be Claw402/Vergex native with a 2-position concentrated book, got coin=%+v risk=%+v", trendCfg.CoinSource, trendCfg.RiskControl)
+	if trendCfg.CoinSource.UseAI500 || trendCfg.RiskControl.MaxPositions != store.AutopilotDefaultMaxPositions {
+		t.Fatalf("default strategy should be Claw402/Vergex native with the %d-position concentrated book, got coin=%+v risk=%+v", store.AutopilotDefaultMaxPositions, trendCfg.CoinSource, trendCfg.RiskControl)
 	}
 	if trendCfg.RiskControl.BTCETHMaxLeverage != 10 || trendCfg.RiskControl.AltcoinMaxLeverage != 10 {
 		t.Fatalf("default strategy should use 10x leverage for all Claw402 opens, got risk=%+v", trendCfg.RiskControl)

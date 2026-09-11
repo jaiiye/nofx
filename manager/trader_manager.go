@@ -651,12 +651,25 @@ func (tm *TraderManager) addTraderFromStore(traderCfg *store.Trader, aiModelCfg 
 		if err != nil {
 			return fmt.Errorf("failed to load strategy %s for trader %s: %w", traderCfg.StrategyID, traderCfg.Name, err)
 		}
-		strategyConfigRaw = strategy.Config
 		// Parse JSON config
 		strategyConfig, err = strategy.ParseConfig()
 		if err != nil {
 			return fmt.Errorf("failed to parse strategy config for trader %s: %w", traderCfg.Name, err)
 		}
+		// Migrate a legacy Autopilot book forward before clamping, so a strategy
+		// saved by an older release picks up the current slot count instead of
+		// running on the stale limit the user never chose.
+		if store.MigrateLegacyAutopilotRiskDefaults(strategyConfig) {
+			if err := strategy.SetConfig(strategyConfig); err != nil {
+				return fmt.Errorf("failed to serialize migrated strategy config for trader %s: %w", traderCfg.Name, err)
+			}
+			if err := st.Strategy().Update(strategy); err != nil {
+				logger.Warnf("⚠️ Failed to persist %d-position Autopilot migration for trader %s: %v", store.AutopilotDefaultMaxPositions, traderCfg.Name, err)
+			} else {
+				logger.Infof("✓ Migrated trader %s to the %d-position Autopilot book", traderCfg.Name, store.AutopilotDefaultMaxPositions)
+			}
+		}
+		strategyConfigRaw = strategy.Config
 		strategyConfig.ClampLimits()
 		// Sizing comes from the strategy's own RiskControl (a hardcoded
 		// 6-position × equity×1.2 override used to live here, silently ignoring

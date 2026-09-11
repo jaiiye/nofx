@@ -32,6 +32,52 @@ const (
 	MaxConfidence     = 100
 )
 
+// Autopilot book sizing. The Autopilot (vergex_signal) book is intentionally
+// small and concentrated; these are the values new strategies are created with
+// and the target of the legacy-config migration below.
+const (
+	// AutopilotDefaultMaxPositions is the slot count for the Autopilot book.
+	AutopilotDefaultMaxPositions = 3
+	// AutopilotMaxPositionValueRatio is the hard per-position notional cap
+	// (equity x ratio). It is a safety bound, not an allocation target: the
+	// Autopilot distributes its margin budget across the configured slots.
+	AutopilotMaxPositionValueRatio = 5.0
+)
+
+// legacyAutopilotPositionRatio is the per-position ratio older releases wrote
+// for non-Code-aligned books; it identifies configs worth migrating.
+const legacyAutopilotPositionRatio = 2.4
+
+// MigrateLegacyAutopilotRiskDefaults upgrades NOFX Autopilot books saved by
+// older releases to the current three-position defaults. Trader deletion
+// intentionally keeps strategies, so without this a newly created trader would
+// bind to the same stale strategy and keep using the old limit.
+func MigrateLegacyAutopilotRiskDefaults(config *StrategyConfig) bool {
+	if config == nil {
+		return false
+	}
+
+	config.NormalizeProductSchema()
+	if config.CoinSource.SourceType != "vergex_signal" {
+		return false
+	}
+
+	risk := &config.RiskControl
+	// Older Autopilot books were created with 2 or 4 slots and a per-position
+	// ratio of 2.4 (a quarter of buying power) or 5.0 (full book).
+	legacyBook := (risk.MaxPositions == 2 || risk.MaxPositions == 4) &&
+		(risk.BTCETHMaxPositionValueRatio == 5.0 || risk.BTCETHMaxPositionValueRatio == legacyAutopilotPositionRatio) &&
+		(risk.AltcoinMaxPositionValueRatio == 5.0 || risk.AltcoinMaxPositionValueRatio == legacyAutopilotPositionRatio)
+	if !legacyBook {
+		return false
+	}
+
+	risk.MaxPositions = AutopilotDefaultMaxPositions
+	risk.BTCETHMaxPositionValueRatio = AutopilotMaxPositionValueRatio
+	risk.AltcoinMaxPositionValueRatio = AutopilotMaxPositionValueRatio
+	return true
+}
+
 // ClampLimits enforces product-level limits on strategy config to prevent token overflow.
 func (c *StrategyConfig) ClampLimits() {
 	c.NormalizeProductSchema()
@@ -77,6 +123,9 @@ func (c *StrategyConfig) ClampLimits() {
 	}
 	if c.RiskControl.MaxPositions > MaxPositions {
 		c.RiskControl.MaxPositions = MaxPositions
+	}
+	if c.CoinSource.SourceType == "vergex_signal" && c.RiskControl.MaxPositions > AutopilotDefaultMaxPositions {
+		c.RiskControl.MaxPositions = AutopilotDefaultMaxPositions
 	}
 
 	// Clamp leverage limits to the same bounds as the manual config UI.
@@ -1014,15 +1063,15 @@ func GetDefaultStrategyConfig(lang string) StrategyConfig {
 			PriceRankingLimit:      10,
 		},
 		RiskControl: RiskControlConfig{
-			MaxPositions:                 2,   // Few, concentrated positions held for big moves (CODE ENFORCED)
-			BTCETHMaxLeverage:            10,  // Moderate leverage: a wide (-5%) stop is ~-50% margin, survivable, not an instant liquidation
-			AltcoinMaxLeverage:           10,  // Moderate leverage: a wide (-5%) stop is ~-50% margin, survivable, not an instant liquidation
-			BTCETHMaxPositionValueRatio:  5.0, // Per-position notional = equity × 5; 2 positions = 10x total (full margin at 10x, ~10% liquidation cushion)
-			AltcoinMaxPositionValueRatio: 5.0, // Per-position notional = equity × 5; 2 positions = 10x total (full margin at 10x, ~10% liquidation cushion)
-			MaxMarginUsage:               1.0, // Claw402 Autopilot intentionally uses full margin when opening
-			MinPositionSize:              12,  // Min 12 USDT per position (CODE ENFORCED)
-			MinRiskRewardRatio:           3.0, // Min 3:1 profit/loss ratio (AI guided)
-			MinConfidence:                78,  // Min 78% confidence (AI guided)
+			MaxPositions:                 AutopilotDefaultMaxPositions,   // Three, concentrated positions held for big moves (CODE ENFORCED)
+			BTCETHMaxLeverage:            10,                             // Moderate leverage: a wide (-5%) stop is ~-50% margin, survivable, not an instant liquidation
+			AltcoinMaxLeverage:           10,                             // Moderate leverage: a wide (-5%) stop is ~-50% margin, survivable, not an instant liquidation
+			BTCETHMaxPositionValueRatio:  AutopilotMaxPositionValueRatio, // Per-position hard cap = equity × 5; the Autopilot allocates across slots
+			AltcoinMaxPositionValueRatio: AutopilotMaxPositionValueRatio, // Per-position hard cap = equity × 5; the Autopilot allocates across slots
+			MaxMarginUsage:               1.0,                            // Claw402 Autopilot intentionally uses full margin when opening
+			MinPositionSize:              12,                             // Min 12 USDT per position (CODE ENFORCED)
+			MinRiskRewardRatio:           3.0,                            // Min 3:1 profit/loss ratio (AI guided)
+			MinConfidence:                78,                             // Min 78% confidence (AI guided)
 		},
 	}
 
