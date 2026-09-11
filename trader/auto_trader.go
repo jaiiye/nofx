@@ -189,6 +189,7 @@ type AutoTrader struct {
 	callCount             int                // AI call count
 	positionFirstSeenTime map[string]int64   // Position first seen time (symbol_side -> timestamp in milliseconds)
 	signalTPCleared       map[string]bool    // Symbols whose legacy fixed take-profits were already removed under signal-managed exits (base symbol -> true)
+	signalAbsentCycles    map[string]int     // Consecutive board absences per base symbol, used to confirm a real exit before closing
 	stopMonitorCh         chan struct{}      // Used to stop monitoring goroutine
 	monitorWg             sync.WaitGroup     // Used to wait for monitoring goroutine to finish
 	peakPnLCache          map[string]float64 // Peak profit cache (symbol -> peak P&L percentage)
@@ -408,6 +409,7 @@ func NewAutoTrader(config AutoTraderConfig, st *store.Store, userID string) (*Au
 		isRunning:             false,
 		positionFirstSeenTime: make(map[string]int64),
 		signalTPCleared:       make(map[string]bool),
+		signalAbsentCycles:    make(map[string]int),
 		stopMonitorCh:         make(chan struct{}),
 		monitorWg:             sync.WaitGroup{},
 		peakPnLCache:          make(map[string]float64),

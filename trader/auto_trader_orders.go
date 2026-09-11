@@ -34,6 +34,10 @@ func (at *AutoTrader) executeDecisionWithRecord(decision *kernel.Decision, actio
 		return at.executeCloseLongWithRecord(decision, actionRecord)
 	case "close_short":
 		return at.executeCloseShortWithRecord(decision, actionRecord)
+	case "reduce_long":
+		return at.executeCloseLongWithRecord(decision, actionRecord)
+	case "reduce_short":
+		return at.executeCloseShortWithRecord(decision, actionRecord)
 	case "hold":
 		if at.needsSignalTPCleanup(decision.Symbol) {
 			if err := at.trader.CancelTakeProfitOrders(decision.Symbol); err != nil {
@@ -340,8 +344,18 @@ func (at *AutoTrader) executeCloseLongWithRecord(decision *kernel.Decision, acti
 		logger.Infof("  📊 Using exchange position data: qty=%.8f, entry=%.2f", quantity, entryPrice)
 	}
 
-	// Close position
-	order, err := at.trader.CloseLong(decision.Symbol, 0) // 0 = close all
+	// Close the position. A "reduce_long" decision closes only the requested
+	// fraction; quantity 0 means close all.
+	closeQty := 0.0
+	closeLabel := "close_long"
+	if isReduceAction(decision.Action) {
+		closeQty = reduceQuantity(quantity, decision.ReducePct)
+		if closeQty <= 0 {
+			return fmt.Errorf("reduce_long %s: no quantity to close (held %.8f)", decision.Symbol, quantity)
+		}
+		closeLabel = "reduce_long"
+	}
+	order, err := at.trader.CloseLong(decision.Symbol, closeQty)
 	if err != nil {
 		return fmt.Errorf("failed to close long position for %s: %w", decision.Symbol, err)
 	}
@@ -352,9 +366,13 @@ func (at *AutoTrader) executeCloseLongWithRecord(decision *kernel.Decision, acti
 	}
 
 	// Record order to database and poll for confirmation
-	at.recordAndConfirmOrder(order, decision.Symbol, "close_long", quantity, marketData.CurrentPrice, 0, entryPrice)
+	at.recordAndConfirmOrder(order, decision.Symbol, closeLabel, closeQty, marketData.CurrentPrice, 0, entryPrice)
 
-	logger.Infof("  ✓ Position closed successfully")
+	if closeLabel == "reduce_long" {
+		logger.Infof("  ✓ Reduced long position by %.2f%%", decision.ReducePct*100)
+	} else {
+		logger.Infof("  ✓ Position closed successfully")
+	}
 	return nil
 }
 
@@ -404,8 +422,18 @@ func (at *AutoTrader) executeCloseShortWithRecord(decision *kernel.Decision, act
 		logger.Infof("  📊 Using exchange position data: qty=%.8f, entry=%.2f", quantity, entryPrice)
 	}
 
-	// Close position
-	order, err := at.trader.CloseShort(decision.Symbol, 0) // 0 = close all
+	// Close the position. A "reduce_short" decision closes only the requested
+	// fraction; quantity 0 means close all.
+	closeQty := 0.0
+	closeLabel := "close_short"
+	if isReduceAction(decision.Action) {
+		closeQty = reduceQuantity(quantity, decision.ReducePct)
+		if closeQty <= 0 {
+			return fmt.Errorf("reduce_short %s: no quantity to close (held %.8f)", decision.Symbol, quantity)
+		}
+		closeLabel = "reduce_short"
+	}
+	order, err := at.trader.CloseShort(decision.Symbol, closeQty)
 	if err != nil {
 		return fmt.Errorf("failed to close short position for %s: %w", decision.Symbol, err)
 	}
@@ -416,8 +444,12 @@ func (at *AutoTrader) executeCloseShortWithRecord(decision *kernel.Decision, act
 	}
 
 	// Record order to database and poll for confirmation
-	at.recordAndConfirmOrder(order, decision.Symbol, "close_short", quantity, marketData.CurrentPrice, 0, entryPrice)
+	at.recordAndConfirmOrder(order, decision.Symbol, closeLabel, closeQty, marketData.CurrentPrice, 0, entryPrice)
 
-	logger.Infof("  ✓ Position closed successfully")
+	if closeLabel == "reduce_short" {
+		logger.Infof("  ✓ Reduced short position by %.2f%%", decision.ReducePct*100)
+	} else {
+		logger.Infof("  ✓ Position closed successfully")
+	}
 	return nil
 }

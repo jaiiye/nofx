@@ -25,16 +25,25 @@ func validateDecision(d *Decision, accountEquity float64, btcEthLeverage, altcoi
 
 func validateDecisionForMode(d *Decision, accountEquity float64, btcEthLeverage, altcoinLeverage int, btcEthPosRatio, altcoinPosRatio float64, signalManagedExit bool) error {
 	validActions := map[string]bool{
-		"open_long":   true,
-		"open_short":  true,
-		"close_long":  true,
-		"close_short": true,
-		"hold":        true,
-		"wait":        true,
+		"open_long":    true,
+		"open_short":   true,
+		"close_long":   true,
+		"close_short":  true,
+		"reduce_long":  true,
+		"reduce_short": true,
+		"hold":         true,
+		"wait":         true,
 	}
 
 	if !validActions[d.Action] {
 		return fmt.Errorf("invalid action: %s", d.Action)
+	}
+
+	if d.Action == "reduce_long" || d.Action == "reduce_short" {
+		if d.ReducePct < 0 || d.ReducePct > 1 {
+			return fmt.Errorf("reduce percentage must be within (0,1]: %.4f", d.ReducePct)
+		}
+		return nil
 	}
 
 	if d.Action == "open_long" || d.Action == "open_short" {

@@ -57,6 +57,23 @@ func testSignalBias(values map[string]string) func(string) (string, bool) {
 	}
 }
 
+// testSignalStrength reports a strong (non-decaying) score for every symbol the
+// bias map knows about, so legacy tests exercise the hold/close paths rather
+// than the decay trims.
+func testSignalStrength(values map[string]string) func(string) (float64, bool) {
+	return func(symbol string) (float64, bool) {
+		_, ok := values[universeBaseKey(symbol)]
+		return signalStrongScore, ok
+	}
+}
+
+// testSignalPolicy runs the pure state machine with a throwaway AutoTrader and
+// matching bias/strength maps, keeping the tests focused on outcomes.
+func testSignalPolicy(decisions []kernel.Decision, positions []kernel.PositionInfo, values map[string]string) ([]kernel.Decision, []kernel.Decision) {
+	at := &AutoTrader{signalAbsentCycles: make(map[string]int)}
+	return applyVergexSignalPolicy(decisions, positions, testSignalBias(values), testSignalStrength(values), at)
+}
+
 func TestVergexSignalPolicyHoldsWhileDirectionIsUnchanged(t *testing.T) {
 	decisions := []kernel.Decision{
 		{Symbol: "xyz:NVDA", Action: "close_long"},
@@ -67,10 +84,10 @@ func TestVergexSignalPolicyHoldsWhileDirectionIsUnchanged(t *testing.T) {
 		{Symbol: "BTC", Side: "short"},
 	}
 
-	got, blocked := applyVergexSignalPolicy(decisions, positions, testSignalBias(map[string]string{
+	got, blocked := testSignalPolicy(decisions, positions, map[string]string{
 		"NVDA": "bullish",
 		"BTC":  "bearish",
-	}))
+	})
 	if len(got) != 2 || got[0].Action != "hold" || got[1].Action != "hold" ||
 		got[0].Confidence != 100 || got[1].Confidence != 100 {
 		t.Fatalf("unchanged long and short signals must force hold, got %+v", got)
@@ -84,7 +101,7 @@ func TestVergexSignalPolicyDoesNotFlagMatchingAIHoldAsConflict(t *testing.T) {
 	decisions := []kernel.Decision{{Symbol: "xyz:NVDA", Action: "hold"}}
 	positions := []kernel.PositionInfo{{Symbol: "xyz:NVDA", Side: "long"}}
 
-	got, blocked := applyVergexSignalPolicy(decisions, positions, testSignalBias(map[string]string{"NVDA": "bullish"}))
+	got, blocked := testSignalPolicy(decisions, positions, map[string]string{"NVDA": "bullish"})
 	if len(got) != 1 || got[0].Action != "hold" {
 		t.Fatalf("unchanged bullish signal must hold, got %+v", got)
 	}
@@ -104,15 +121,105 @@ func TestVergexSignalPolicyClosesWhenDirectionChangesOrDisappears(t *testing.T) 
 		{Symbol: "ETH", Side: "long"},
 	}
 
-	got, blocked := applyVergexSignalPolicy(decisions, positions, testSignalBias(map[string]string{
+	got, blocked := testSignalPolicy(decisions, positions, map[string]string{
 		"NVDA": "bearish",
 		"ETH":  "neutral",
-	}))
-	if len(got) != 3 || got[0].Action != "close_long" || got[1].Action != "close_short" || got[2].Action != "close_long" {
-		t.Fatalf("changed or absent signals must close positions, got %+v", got)
+	})
+	if len(got) != 3 {
+		t.Fatalf("every held position must yield a decision, got %+v", got)
+	}
+	if got[0].Action != "close_long" {
+		t.Fatalf("a reversed direction must close the position (no same-cycle flip), got %+v", got[0])
+	}
+	if got[2].Action != "close_long" {
+		t.Fatalf("a neutral direction must close the position, got %+v", got[2])
+	}
+	// An absent symbol is only trimmed on the first board cycle, not closed —
+	// a pure ranking drop-out must be confirmed before it becomes a full exit.
+	if got[1].Action != "reduce_short" || got[1].ReducePct <= 0 {
+		t.Fatalf("a board-absent symbol must be trimmed while confirming, got %+v", got[1])
 	}
 	if len(blocked) != 2 {
 		t.Fatalf("a reversed position must close without flipping in the same cycle, blocked=%+v", blocked)
+	}
+}
+
+func TestVergexSignalPolicyClosesAfterAbsenceGracePeriod(t *testing.T) {
+	positions := []kernel.PositionInfo{{Symbol: "BTC", Side: "short"}}
+
+	at := &AutoTrader{signalAbsentCycles: make(map[string]int)}
+	run := func() []kernel.Decision {
+		got, _ := applyVergexSignalPolicy(nil, positions, testSignalBias(map[string]string{}), testSignalStrength(map[string]string{}), at)
+		return got
+	}
+
+	// Each call is one board cycle with the symbol absent.
+	for cycle := 1; cycle <= signalAbsentGraceCycles; cycle++ {
+		got := run()
+		if len(got) != 1 || !isReduceAction(got[0].Action) {
+			t.Fatalf("cycle %d: absence within the grace period must trim, not close, got %+v", cycle, got)
+		}
+	}
+	got := run()
+	if len(got) != 1 || got[0].Action != "close_short" {
+		t.Fatalf("absence beyond the grace period must close the position, got %+v", got)
+	}
+}
+
+func TestVergexSignalPolicyTrimsOnDecayingSignal(t *testing.T) {
+	positions := []kernel.PositionInfo{{Symbol: "xyz:NVDA", Side: "long"}}
+
+	strength := func(score float64) func(string) (float64, bool) {
+		return func(string) (float64, bool) { return score, true }
+	}
+
+	cases := []struct {
+		name       string
+		score      float64
+		wantAction string
+	}{
+		{"strong holds", signalStrongScore + 0.1, "hold"},
+		{"medium trims a third", (signalStrongScore + signalWeakScore) / 2, "reduce_long"},
+		{"weak trims two thirds", signalWeakScore - 0.1, "reduce_long"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			at := &AutoTrader{signalAbsentCycles: make(map[string]int)}
+			got, _ := applyVergexSignalPolicy(nil, positions,
+				testSignalBias(map[string]string{"NVDA": "bullish"}), strength(tc.score), at)
+			if len(got) != 1 || got[0].Action != tc.wantAction {
+				t.Fatalf("score %.2f: want %s, got %+v", tc.score, tc.wantAction, got)
+			}
+			if tc.wantAction == "reduce_long" && got[0].ReducePct <= 0 {
+				t.Fatalf("score %.2f: a trim must carry a reduce fraction, got %+v", tc.score, got[0])
+			}
+		})
+	}
+}
+
+func TestSignalGivebackProtectionClosesFadedWinner(t *testing.T) {
+	// Peak +10% price move, now back to +3% — beyond the 60% giveback ceiling.
+	position := kernel.PositionInfo{
+		Symbol:           "xyz:NVDA",
+		Side:             "long",
+		Leverage:         1,
+		UnrealizedPnLPct: 3.0,
+		PeakPnLPct:       10.0,
+	}
+	action, reasoning := applySignalGivebackProtection(position, "hold", "signal intact")
+	if action != "close_long" {
+		t.Fatalf("a faded winner must be closed, got %s (%s)", action, reasoning)
+	}
+
+	// Still near the peak — protection must not fire.
+	position.UnrealizedPnLPct = 9.0
+	if action, _ := applySignalGivebackProtection(position, "hold", "signal intact"); action != "hold" {
+		t.Fatalf("a position near its peak must not be closed, got %s", action)
+	}
+
+	// A trim already in flight is left alone; the exit is not escalated.
+	if action, _ := applySignalGivebackProtection(position, "reduce_long", ""); action != "reduce_long" {
+		t.Fatalf("giveback protection must not override an existing trim, got %s", action)
 	}
 }
 
@@ -129,7 +236,7 @@ func TestVergexSignalPolicyAllowsOnlyMatchingEntries(t *testing.T) {
 		"ETH":  "bearish",
 	}
 
-	got, blocked := applyVergexSignalPolicy(decisions, nil, testSignalBias(biases))
+	got, blocked := testSignalPolicy(decisions, nil, biases)
 	if len(got) != 2 || got[0].Symbol != "xyz:NVDA" || got[1].Symbol != "BTC" {
 		t.Fatalf("only direction-matched entries should pass, got %+v", got)
 	}

@@ -47,9 +47,19 @@ func isOpenAction(action string) bool {
 	}
 }
 
+// isReduceAction reports whether the action partially closes a position.
+func isReduceAction(action string) bool {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "reduce_long", "reduce_short":
+		return true
+	default:
+		return false
+	}
+}
+
 func isCloseAction(action string) bool {
 	switch strings.ToLower(strings.TrimSpace(action)) {
-	case "close_long", "close_short":
+	case "close_long", "close_short", "reduce_long", "reduce_short":
 		return true
 	default:
 		return false
@@ -58,9 +68,9 @@ func isCloseAction(action string) bool {
 
 func closeActionSide(action string) string {
 	switch strings.ToLower(strings.TrimSpace(action)) {
-	case "close_long":
+	case "close_long", "reduce_long":
 		return "long"
-	case "close_short":
+	case "close_short", "reduce_short":
 		return "short"
 	default:
 		return ""

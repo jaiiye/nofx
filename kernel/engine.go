@@ -118,7 +118,7 @@ type Context struct {
 // Decision AI trading decision
 type Decision struct {
 	Symbol string `json:"symbol"`
-	Action string `json:"action"` // Standard: "open_long", "open_short", "close_long", "close_short", "hold", "wait"
+	Action string `json:"action"` // Standard: "open_long", "open_short", "close_long", "close_short", "reduce_long", "reduce_short", "hold", "wait"
 	// Grid actions: "place_buy_limit", "place_sell_limit", "cancel_order", "cancel_all_orders", "pause_grid", "resume_grid", "adjust_grid"
 
 	// Opening position parameters
@@ -126,6 +126,12 @@ type Decision struct {
 	PositionSizeUSD float64 `json:"position_size_usd,omitempty"`
 	StopLoss        float64 `json:"stop_loss,omitempty"`
 	TakeProfit      float64 `json:"take_profit,omitempty"`
+
+	// ReducePct is the fraction (0,1] of the current position to close for a
+	// "reduce_long" / "reduce_short" action. Only meaningful for partial exits;
+	// the signal state machine sets it when the direction signal decays instead
+	// of reversing. Zero or >=1 for a reduce action is treated as a full close.
+	ReducePct float64 `json:"reduce_pct,omitempty"`
 
 	// Grid trading parameters
 	Price      float64 `json:"price,omitempty"`       // Limit order price (for grid)
@@ -942,12 +948,31 @@ func (e *StrategyEngine) HasVergexSignalSnapshot() bool {
 // entry reports ("neutral", true) so callers can distinguish it from an absent
 // board entry.
 func (e *StrategyEngine) VergexSignalBias(symbol string) (string, bool) {
+	bias, _, present := e.vergexSignalFor(symbol)
+	return bias, present
+}
+
+// VergexSignalStrength returns the board strength of a symbol's current signal
+// as the absolute z-score, together with whether the symbol is on the board.
+// Callers use it to distinguish a strong hold from a decaying signal, so an
+// absent symbol reports (0, false).
+func (e *StrategyEngine) VergexSignalStrength(symbol string) (float64, bool) {
+	_, score, present := e.vergexSignalFor(symbol)
+	if score < 0 {
+		return -score, present
+	}
+	return score, present
+}
+
+// vergexSignalFor resolves a symbol against the board cache, returning the
+// normalized bias, the signed board z-score and whether the symbol was found.
+func (e *StrategyEngine) vergexSignalFor(symbol string) (string, float64, bool) {
 	if e == nil || len(e.vergexRankingCache) == 0 {
-		return "", false
+		return "", 0, false
 	}
 	target := vergex.QuerySymbol(symbol)
 	if target == "" {
-		return "", false
+		return "", 0, false
 	}
 	for cachedSymbol, item := range e.vergexRankingCache {
 		if item == nil || vergex.QuerySymbol(cachedSymbol) != target {
@@ -955,14 +980,14 @@ func (e *StrategyEngine) VergexSignalBias(symbol string) (string, bool) {
 		}
 		switch strings.ToLower(strings.TrimSpace(item.Bias)) {
 		case "bullish", "long", "buy":
-			return "bullish", true
+			return "bullish", item.Score, true
 		case "bearish", "short", "sell":
-			return "bearish", true
+			return "bearish", item.Score, true
 		default:
-			return "neutral", true
+			return "neutral", item.Score, true
 		}
 	}
-	return "", false
+	return "", 0, false
 }
 
 func withDefaultText(value, fallback string) string {

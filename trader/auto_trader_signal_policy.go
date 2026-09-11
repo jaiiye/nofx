@@ -138,6 +138,102 @@ func getFreshPositions(tr types.Trader) ([]map[string]interface{}, error) {
 	return tr.GetPositions()
 }
 
+// Signal-strength thresholds, in absolute board z-score. The values mirror the
+// tuned floors this fork already used for forced coverage: |z| below the weak
+// floor was noise, and 0.75 was the strong-signal gate. They only ever scale an
+// existing directional signal down; they never flip or open a direction.
+const (
+	// at or above this the direction is treated as intact
+	signalStrongScore = 0.75
+	// below this the signal is treated as decayed and the position is trimmed
+	signalWeakScore = 0.40
+	// fractions of the current position closed at each decay tier
+	signalTrimMediumPct = 1.0 / 3.0
+	signalTrimWeakPct   = 2.0 / 3.0
+	// consecutive board cycles a symbol may be absent before it is closed, so a
+	// pure ranking drop-out does not trigger an immediate exit
+	signalAbsentGraceCycles = 2
+	// a position given back this fraction of its peak profit exits regardless of
+	// the board, so a faded winner is not held through a full round trip
+	signalGivebackExitPct = 0.60
+	// minimum peak price-move profit before giveback protection arms
+	signalGivebackMinPeakPct = 2.0
+)
+
+// reduceQuantity converts a fraction of a held quantity into the quantity to
+// close. A non-positive or >=1 fraction means "close everything" (0), which is
+// the exchange-level convention for a full close.
+func reduceQuantity(held, pct float64) float64 {
+	if held <= 0 || pct <= 0 || pct >= 1 {
+		return 0
+	}
+	return held * pct
+}
+
+// signalAbsentBudget returns how many consecutive board absences are tolerated
+// for a symbol before it is closed.
+func (at *AutoTrader) signalAbsentBudget() int {
+	return signalAbsentGraceCycles
+}
+
+// countSignalAbsence records that a held symbol was missing from this board
+// snapshot and reports the new consecutive-absence count.
+func (at *AutoTrader) countSignalAbsence(symbol string) int {
+	key := universeBaseKey(symbol)
+	if key == "" {
+		return 0
+	}
+	if at.signalAbsentCycles == nil {
+		at.signalAbsentCycles = make(map[string]int)
+	}
+	at.signalAbsentCycles[key]++
+	return at.signalAbsentCycles[key]
+}
+
+// clearSignalAbsence resets the absence streak once a symbol is back on the board.
+func (at *AutoTrader) clearSignalAbsence(symbol string) {
+	key := universeBaseKey(symbol)
+	if key == "" || at.signalAbsentCycles == nil {
+		return
+	}
+	delete(at.signalAbsentCycles, key)
+}
+
+// applySignalGivebackProtection closes a position that has given back most of
+// its peak profit, independent of the board. It is the price-aware exit the
+// signal state machine otherwise lacks: a signal that is still present but has
+// faded must not hand back the whole move while the AI waits on hold decisions.
+func applySignalGivebackProtection(position kernel.PositionInfo, action, reasoning string) (string, string) {
+	if isReduceAction(action) {
+		return action, reasoning
+	}
+	side := strings.ToLower(strings.TrimSpace(position.Side))
+	if side != "long" && side != "short" {
+		return action, reasoning
+	}
+	peak := positionPricePnLPct(&kernel.PositionInfo{
+		UnrealizedPnLPct: position.PeakPnLPct,
+		Leverage:         position.Leverage,
+	})
+	if peak < signalGivebackMinPeakPct {
+		return action, reasoning
+	}
+	current := positionPricePnLPct(&position)
+	if current > 0 && current > peak*(1-signalGivebackExitPct) {
+		return action, reasoning
+	}
+	switch side {
+	case "long":
+		action = "close_long"
+	case "short":
+		action = "close_short"
+	}
+	return action, fmt.Sprintf(
+		"Price gave back %.0f%% of the %.2f%% peak (now %.2f%%); exit to protect profit",
+		signalGivebackExitPct*100, peak, current,
+	)
+}
+
 // enforceVergexSignalPolicy turns the current direction board into a strict
 // position state machine. Detail data can explain a signal, but cannot reverse
 // or prematurely exit it.
@@ -150,6 +246,8 @@ func (at *AutoTrader) enforceVergexSignalPolicy(decisions []kernel.Decision, ctx
 		decisions,
 		ctx.Positions,
 		at.strategyEngine.VergexSignalBias,
+		at.strategyEngine.VergexSignalStrength,
+		at,
 	)
 	for _, decision := range blocked {
 		at.logWarnf("🧭 Blocked %s %s: action conflicts with the current Claw402 direction signal", decision.Symbol, decision.Action)
@@ -157,44 +255,112 @@ func (at *AutoTrader) enforceVergexSignalPolicy(decisions []kernel.Decision, ctx
 	return filtered
 }
 
+// signalExitState is the board-driven disposition of a held position.
+type signalExitState struct {
+	action    string
+	reducePct float64
+	reasoning string
+}
+
+// signalExitFor decides how a held position reacts to the current board. The
+// direction is never flipped here: a reversed signal closes the position and a
+// decayed-but-still-matching signal trims it, which keeps the exit progressive
+// instead of binary.
+func (at *AutoTrader) signalExitFor(position kernel.PositionInfo, bias string, present bool, strength float64) signalExitState {
+	side := strings.ToLower(strings.TrimSpace(position.Side))
+	if side != "long" && side != "short" {
+		return signalExitState{action: "hold"}
+	}
+	closeAction := "close_long"
+	reduceAction := "reduce_long"
+	if side == "short" {
+		closeAction = "close_short"
+		reduceAction = "reduce_short"
+	}
+
+	matches := present &&
+		((side == "long" && bias == "bullish") || (side == "short" && bias == "bearish"))
+
+	if present {
+		if !matches {
+			return signalExitState{action: closeAction, reasoning: fmt.Sprintf("Claw402 direction changed to %s", bias)}
+		}
+		if at != nil {
+			at.clearSignalAbsence(position.Symbol)
+		}
+		switch {
+		case strength >= signalStrongScore:
+			return signalExitState{action: "hold", reasoning: fmt.Sprintf("Claw402 direction remains %s (strength %.2f); hold the existing %s position", bias, strength, side)}
+		case strength >= signalWeakScore:
+			return signalExitState{
+				action:    reduceAction,
+				reducePct: signalTrimMediumPct,
+				reasoning: fmt.Sprintf("Claw402 direction %s is decaying (strength %.2f < %.2f); trim %.0f%%", bias, strength, signalStrongScore, signalTrimMediumPct*100),
+			}
+		default:
+			return signalExitState{
+				action:    reduceAction,
+				reducePct: signalTrimWeakPct,
+				reasoning: fmt.Sprintf("Claw402 direction %s is weak (strength %.2f < %.2f); trim %.0f%%", bias, strength, signalWeakScore, signalTrimWeakPct*100),
+			}
+		}
+	}
+
+	// Absent from the board. A pure ranking drop-out looks identical to a real
+	// exit, so tolerate a couple of cycles before closing.
+	absent := 0
+	if at != nil {
+		absent = at.countSignalAbsence(position.Symbol)
+	}
+	if at != nil && absent > at.signalAbsentBudget() {
+		return signalExitState{action: closeAction, reasoning: "Symbol is no longer present on the current Claw402 direction board"}
+	}
+	return signalExitState{
+		action:    reduceAction,
+		reducePct: signalTrimMediumPct,
+		reasoning: fmt.Sprintf("Symbol is missing from the Claw402 board (absence %d/%d); trimming %.0f%% while confirming", absent, signalAbsentGraceCycles, signalTrimMediumPct*100),
+	}
+}
+
 func applyVergexSignalPolicy(
 	decisions []kernel.Decision,
 	positions []kernel.PositionInfo,
 	biasFor func(string) (string, bool),
+	strengthFor func(string) (float64, bool),
+	at *AutoTrader,
 ) (filtered []kernel.Decision, blocked []kernel.Decision) {
 	positionActions := make(map[string]string, len(positions))
 	filtered = make([]kernel.Decision, 0, len(decisions)+len(positions))
 
-	// Existing positions are managed only by the current board direction.
-	// A matching signal always holds; a changed, neutral, or absent signal exits.
+	// Existing positions are managed solely by the current board signal. A
+	// matching strong signal holds; a decaying signal trims; a changed signal
+	// closes. Price-aware giveback protection can close on its own.
 	for _, position := range positions {
 		base := universeBaseKey(position.Symbol)
 		bias, present := biasFor(position.Symbol)
-		side := strings.ToLower(strings.TrimSpace(position.Side))
-		matches := (side == "long" && present && bias == "bullish") ||
-			(side == "short" && present && bias == "bearish")
-
-		action := "hold"
-		reasoning := fmt.Sprintf("Claw402 direction remains %s; hold the existing %s position", bias, side)
-		if !matches {
-			switch side {
-			case "long":
-				action = "close_long"
-			case "short":
-				action = "close_short"
-			}
-			if !present {
-				reasoning = "Symbol is no longer present on the current Claw402 direction board"
-			} else {
-				reasoning = fmt.Sprintf("Claw402 direction changed to %s", bias)
-			}
+		strength := 0.0
+		if strengthFor != nil {
+			strength, _ = strengthFor(position.Symbol)
 		}
+
+		state := signalExitState{action: "hold"}
+		if at != nil {
+			state = at.signalExitFor(position, bias, present, strength)
+		}
+
+		action, reasoning := applySignalGivebackProtection(position, state.action, state.reasoning)
+		reducePct := 0.0
+		if isReduceAction(action) {
+			reducePct = state.reducePct
+		}
+
 		if base != "" {
 			positionActions[base] = action
 		}
 		filtered = append(filtered, kernel.Decision{
 			Symbol:     position.Symbol,
 			Action:     action,
+			ReducePct:  reducePct,
 			Confidence: 100,
 			Reasoning:  reasoning,
 		})
