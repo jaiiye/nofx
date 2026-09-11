@@ -34,7 +34,9 @@ func (pb *PositionBuilder) ProcessTrade(
 ) error {
 	if strings.HasPrefix(action, "open_") {
 		return pb.handleOpen(traderID, exchangeID, exchangeType, symbol, side, quantity, price, fee, tradeTimeMs, orderID)
-	} else if strings.HasPrefix(action, "close_") {
+	} else if strings.HasPrefix(action, "close_") || strings.HasPrefix(action, "reduce_") {
+		// reduce_* is a partial close: handleClose already reduces the quantity
+		// by the traded amount and only marks CLOSED when it reaches zero.
 		return pb.handleClose(traderID, exchangeID, exchangeType, symbol, side, quantity, price, fee, realizedPnL, tradeTimeMs, orderID)
 	}
 	return nil

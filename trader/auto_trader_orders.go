@@ -351,17 +351,12 @@ func (at *AutoTrader) executeCloseLongWithRecord(decision *kernel.Decision, acti
 	}
 
 	// Close the position. A "reduce_long" decision closes only the requested
-	// fraction; quantity 0 means close all.
-	closeQty := 0.0
-	closeLabel := "close_long"
-	if isReduceAction(decision.Action) {
-		closeQty = reduceQuantity(quantity, decision.ReducePct)
-		if closeQty <= 0 {
-			return fmt.Errorf("reduce_long %s: no quantity to close (held %.8f)", decision.Symbol, quantity)
-		}
-		closeLabel = "reduce_long"
+	// fraction; the plan keeps full closes and dust escalations straight.
+	plan, err := planClose(decision.Action, decision.Symbol, quantity, decision.ReducePct, marketData.CurrentPrice)
+	if err != nil {
+		return err
 	}
-	order, err := at.trader.CloseLong(decision.Symbol, closeQty)
+	order, err := at.trader.CloseLong(decision.Symbol, plan.exchangeQty)
 	if err != nil {
 		return fmt.Errorf("failed to close long position for %s: %w", decision.Symbol, err)
 	}
@@ -372,11 +367,14 @@ func (at *AutoTrader) executeCloseLongWithRecord(decision *kernel.Decision, acti
 	}
 
 	// Record order to database and poll for confirmation
-	at.recordAndConfirmOrder(order, decision.Symbol, closeLabel, closeQty, marketData.CurrentPrice, 0, entryPrice)
+	at.recordAndConfirmOrder(order, decision.Symbol, decision.Action, plan.recordQty, marketData.CurrentPrice, 0, entryPrice)
 
-	if closeLabel == "reduce_long" {
+	switch {
+	case plan.dustClose:
+		logger.Infof("  ✓ Reduce became a full close: remainder below minimum notional")
+	case isReduceAction(decision.Action):
 		logger.Infof("  ✓ Reduced long position by %.2f%%", decision.ReducePct*100)
-	} else {
+	default:
 		logger.Infof("  ✓ Position closed successfully")
 	}
 	return nil
@@ -429,17 +427,12 @@ func (at *AutoTrader) executeCloseShortWithRecord(decision *kernel.Decision, act
 	}
 
 	// Close the position. A "reduce_short" decision closes only the requested
-	// fraction; quantity 0 means close all.
-	closeQty := 0.0
-	closeLabel := "close_short"
-	if isReduceAction(decision.Action) {
-		closeQty = reduceQuantity(quantity, decision.ReducePct)
-		if closeQty <= 0 {
-			return fmt.Errorf("reduce_short %s: no quantity to close (held %.8f)", decision.Symbol, quantity)
-		}
-		closeLabel = "reduce_short"
+	// fraction; the plan keeps full closes and dust escalations straight.
+	plan, err := planClose(decision.Action, decision.Symbol, quantity, decision.ReducePct, marketData.CurrentPrice)
+	if err != nil {
+		return err
 	}
-	order, err := at.trader.CloseShort(decision.Symbol, closeQty)
+	order, err := at.trader.CloseShort(decision.Symbol, plan.exchangeQty)
 	if err != nil {
 		return fmt.Errorf("failed to close short position for %s: %w", decision.Symbol, err)
 	}
@@ -450,11 +443,14 @@ func (at *AutoTrader) executeCloseShortWithRecord(decision *kernel.Decision, act
 	}
 
 	// Record order to database and poll for confirmation
-	at.recordAndConfirmOrder(order, decision.Symbol, closeLabel, closeQty, marketData.CurrentPrice, 0, entryPrice)
+	at.recordAndConfirmOrder(order, decision.Symbol, decision.Action, plan.recordQty, marketData.CurrentPrice, 0, entryPrice)
 
-	if closeLabel == "reduce_short" {
+	switch {
+	case plan.dustClose:
+		logger.Infof("  ✓ Reduce became a full close: remainder below minimum notional")
+	case isReduceAction(decision.Action):
 		logger.Infof("  ✓ Reduced short position by %.2f%%", decision.ReducePct*100)
-	} else {
+	default:
 		logger.Infof("  ✓ Position closed successfully")
 	}
 	return nil

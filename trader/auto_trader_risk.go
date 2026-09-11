@@ -58,9 +58,11 @@ func (at *AutoTrader) checkPositionDrawdown() {
 		return
 	}
 
+	activeKeys := make(map[string]bool, len(positions))
 	for _, pos := range positions {
 		symbol := pos["symbol"].(string)
 		side := pos["side"].(string)
+		activeKeys[symbol+"_"+side] = true
 		entryPrice := pos["entryPrice"].(float64)
 		markPrice := pos["markPrice"].(float64)
 		quantity := pos["positionAmt"].(float64)
@@ -132,6 +134,24 @@ func (at *AutoTrader) checkPositionDrawdown() {
 			// Record situations close to close position condition (for debugging)
 			logger.Infof("📊 Drawdown monitoring: %s %s | Price move: %.2f%% | Profit: %.2f%% | Peak: %.2f%% | Drawdown: %.2f%%",
 				symbol, side, pricePnLPct, currentPnLPct, peakPnLPct, drawdownPct)
+		}
+	}
+
+	// Positions closed outside this monitor (signal exit, stop loss, manual
+	// close) never clear their peak entry; drop entries whose position is gone.
+	at.pruneStalePeakPnL(activeKeys)
+}
+
+// pruneStalePeakPnL drops peak-profit entries whose position no longer exists.
+// Without this, a later re-entry of the same symbol inherited the previous
+// position's peak, corrupting both the drawdown measurement and the prompt's
+// take-profit hint (which would compare the fresh position against an old peak).
+func (at *AutoTrader) pruneStalePeakPnL(activeKeys map[string]bool) {
+	at.peakPnLCacheMutex.Lock()
+	defer at.peakPnLCacheMutex.Unlock()
+	for key := range at.peakPnLCache {
+		if !activeKeys[key] {
+			delete(at.peakPnLCache, key)
 		}
 	}
 }

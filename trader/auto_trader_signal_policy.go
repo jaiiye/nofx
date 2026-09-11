@@ -158,14 +158,49 @@ const (
 	signalAbsentGraceCycles = 2
 )
 
-// reduceQuantity converts a fraction of a held quantity into the quantity to
-// close. A non-positive or >=1 fraction means "close everything" (0), which is
-// the exchange-level convention for a full close.
-func reduceQuantity(held, pct float64) float64 {
-	if held <= 0 || pct <= 0 || pct >= 1 {
-		return 0
+// a trim whose remainder is below this notional closes the whole position
+// instead of stranding exchange-minimum dust (mirrors the general minimum
+// opening size used by decision validation)
+const minReduceRemainNotionalUSD = 12.0
+
+// closePlan describes how a close decision is executed and recorded.
+type closePlan struct {
+	exchangeQty float64 // quantity sent to the exchange; 0 means close all
+	recordQty   float64 // quantity recorded for accounting
+	dustClose   bool    // a trim escalated to a full close by the dust guard
+}
+
+// planClose computes the execution plan for a close decision. A plain close
+// sends 0 to the exchange (the close-all convention) and records the held
+// quantity. A reduce closes only its fraction — unless the remainder would be
+// exchange-minimum dust, in which case it escalates to a full close.
+func planClose(action, symbol string, held, reducePct, price float64) (closePlan, error) {
+	if !isReduceAction(action) {
+		return closePlan{recordQty: held}, nil
 	}
-	return held * pct
+	if held <= 0 {
+		return closePlan{}, fmt.Errorf("%s %s: no quantity to close (held %.8f)", action, symbol, held)
+	}
+	trim, fullClose := trimQuantity(held, reducePct, price)
+	if fullClose {
+		return closePlan{recordQty: held, dustClose: true}, nil
+	}
+	return closePlan{exchangeQty: trim, recordQty: trim}, nil
+}
+
+// trimQuantity converts a fraction of a held quantity into the quantity to
+// close, reporting whether the plan escalated to a full close — either because
+// the fraction is not a real trim, or because the remainder would strand
+// exchange-minimum dust that would later fail the minimum order size.
+func trimQuantity(held, pct, price float64) (qty float64, fullClose bool) {
+	if pct <= 0 || pct >= 1 {
+		return 0, true
+	}
+	trim := held * pct
+	if price > 0 && (held-trim)*price < minReduceRemainNotionalUSD {
+		return 0, true
+	}
+	return trim, false
 }
 
 // signalAbsentBudget returns how many consecutive board absences are tolerated

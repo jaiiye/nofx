@@ -370,3 +370,51 @@ func TestSignalTPCleanupRunsOnlyOncePerSymbol(t *testing.T) {
 		t.Fatal("non-Vergex strategies must not run TP cleanup")
 	}
 }
+
+func TestTrimQuantity(t *testing.T) {
+	cases := []struct {
+		name             string
+		held, pct, price float64
+		wantQty          float64
+		wantFullClose    bool
+	}{
+		{"full close by zero pct", 1.0, 0, 100, 0, true},
+		{"full close by pct >= 1", 1.0, 1.0, 100, 0, true},
+		{"plain trim", 1.0, 1.0 / 3.0, 100, 1.0 / 3.0, false},
+		{"dust remainder closes all", 0.1, 0.5, 100, 0, true}, // remaining 5 USDT < 12
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			qty, fullClose := trimQuantity(tc.held, tc.pct, tc.price)
+			if qty != tc.wantQty || fullClose != tc.wantFullClose {
+				t.Fatalf("held=%.4f pct=%.4f price=%.2f: got (%.6f, %v), want (%.6f, %v)",
+					tc.held, tc.pct, tc.price, qty, fullClose, tc.wantQty, tc.wantFullClose)
+			}
+		})
+	}
+}
+
+func TestPlanClose(t *testing.T) {
+	// A plain close records the held quantity while the exchange gets close-all.
+	plan, err := planClose("close_long", "BTC", 1.0, 0, 100)
+	if err != nil || plan.exchangeQty != 0 || plan.recordQty != 1.0 || plan.dustClose {
+		t.Fatalf("plain close: got %+v, err %v", plan, err)
+	}
+
+	// A normal trim closes only its fraction.
+	plan, err = planClose("reduce_long", "BTC", 1.0, 1.0/3.0, 100)
+	if err != nil || plan.exchangeQty != 1.0/3.0 || plan.recordQty != 1.0/3.0 || plan.dustClose {
+		t.Fatalf("plain trim: got %+v, err %v", plan, err)
+	}
+
+	// A trim stranding dust escalates to a full close and says so.
+	plan, err = planClose("reduce_long", "BTC", 0.1, 0.5, 100)
+	if err != nil || plan.exchangeQty != 0 || plan.recordQty != 0.1 || !plan.dustClose {
+		t.Fatalf("dust trim: got %+v, err %v", plan, err)
+	}
+
+	// A reduce with nothing held is an error, not a silent close-all.
+	if _, err = planClose("reduce_long", "BTC", 0, 0.5, 100); err == nil {
+		t.Fatal("reduce with nothing held must error")
+	}
+}
