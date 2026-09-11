@@ -267,6 +267,72 @@ func TestVergexSignalPolicyAllowsOnlyMatchingEntries(t *testing.T) {
 	}
 }
 
+func TestVergexSignalPolicyRequiresStrongSignalToOpen(t *testing.T) {
+	// A faded-but-still-matching board must not rebuild a position the exit side
+	// just closed: only a strong signal authorises a new entry.
+	decisions := []kernel.Decision{{Symbol: "xyz:NVDA", Action: "open_long"}}
+	bias := testSignalBias(map[string]string{"NVDA": "bullish"})
+
+	cases := []struct {
+		name    string
+		score   float64
+		allowed bool
+	}{
+		{"strong opens", signalStrongScore, true},
+		{"just below the floor is blocked", signalStrongScore - 0.01, false},
+		{"medium is blocked", (signalStrongScore + signalWeakScore) / 2, false},
+		{"weak is blocked", signalWeakScore - 0.1, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			at := &AutoTrader{signalAbsentCycles: make(map[string]int)}
+			strength := func(string) (float64, bool) { return tc.score, true }
+			got, blocked := applyVergexSignalPolicy(decisions, nil, bias, strength, at)
+			if tc.allowed && (len(got) != 1 || len(blocked) != 0) {
+				t.Fatalf("score %.2f: expected the entry to pass, got %+v blocked %+v", tc.score, got, blocked)
+			}
+			if !tc.allowed && (len(got) != 0 || len(blocked) != 1) {
+				t.Fatalf("score %.2f: expected the entry to be blocked, got %+v blocked %+v", tc.score, got, blocked)
+			}
+		})
+	}
+}
+
+func TestVergexSignalPolicyDoesNotRebuildAfterGivebackExit(t *testing.T) {
+	// The signal is still strong (no trim is due) but the price gave back most
+	// of its peak, so the giveback protection closes the position. The next
+	// cycle the AI tries to re-open on that same strong signal.
+	positions := []kernel.PositionInfo{{
+		Symbol: "xyz:NVDA", Side: "long", Leverage: 1,
+		UnrealizedPnLPct: 5.0, PeakPnLPct: 10.0,
+	}}
+	at := &AutoTrader{signalAbsentCycles: make(map[string]int)}
+	bias := testSignalBias(map[string]string{"NVDA": "bullish"})
+	strong := func(string) (float64, bool) { return signalStrongScore + 0.5, true }
+
+	got, _ := applyVergexSignalPolicy(nil, positions, bias, strong, at)
+	if len(got) != 1 || got[0].Action != "close_long" {
+		t.Fatalf("expected the giveback exit, got %+v", got)
+	}
+
+	// A strong signal is allowed to re-enter. This is the accepted trade-off of
+	// a strength-only gate (no time cooldown): the same strong signal that
+	// justified the position may justify rebuilding it once the exit has fired.
+	reopen := []kernel.Decision{{Symbol: "xyz:NVDA", Action: "open_long"}}
+	got, blocked := applyVergexSignalPolicy(reopen, nil, bias, strong, at)
+	if len(got) != 1 || len(blocked) != 0 {
+		t.Fatalf("a strong signal may re-enter without a cooldown, got %+v blocked %+v", got, blocked)
+	}
+
+	// A faded signal must not rebuild the position, so the exit is not undone
+	// by a weak re-entry in the following cycle.
+	faded := func(string) (float64, bool) { return signalStrongScore - 0.1, true }
+	got, blocked = applyVergexSignalPolicy(reopen, nil, bias, faded, at)
+	if len(got) != 0 || len(blocked) != 1 {
+		t.Fatalf("a faded signal must not rebuild the position after exit, got %+v blocked %+v", got, blocked)
+	}
+}
+
 func TestVergexSignalPolicyDoesNotTreatMissingSnapshotAsSignalExit(t *testing.T) {
 	at := testVergexSignalTrader()
 	decisions := []kernel.Decision{{Symbol: "xyz:NVDA", Action: "hold"}}

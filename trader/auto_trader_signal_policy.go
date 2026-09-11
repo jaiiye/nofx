@@ -143,7 +143,10 @@ func getFreshPositions(tr types.Trader) ([]map[string]interface{}, error) {
 // floor was noise, and 0.75 was the strong-signal gate. They only ever scale an
 // existing directional signal down; they never flip or open a direction.
 const (
-	// at or above this the direction is treated as intact
+	// signalStrongScore is the minimum |z| for an intact direction. It plays two
+	// roles: a held position at or above it is never trimmed, and a *new* entry
+	// requires it. The second role is what prevents re-opening a position the
+	// exit side just closed — a signal too weak to keep is too weak to build.
 	signalStrongScore = 0.75
 	// below this the signal is treated as decayed and the position is trimmed
 	signalWeakScore = 0.40
@@ -383,14 +386,26 @@ func applyVergexSignalPolicy(
 
 		bias, present := biasFor(decision.Symbol)
 		action := strings.ToLower(strings.TrimSpace(decision.Action))
-		allowed := present &&
+		strength := 0.0
+		if strengthFor != nil {
+			strength, _ = strengthFor(decision.Symbol)
+		}
+		directionMatches := present &&
 			((action == "open_long" && bias == "bullish") ||
 				(action == "open_short" && bias == "bearish"))
-		if allowed {
-			filtered = append(filtered, decision)
-		} else {
+		if !directionMatches {
 			blocked = append(blocked, decision)
+			continue
 		}
+		// Entries demand a strong signal, unlike holds which merely require a
+		// matching direction. This is what stops a faded or flip-flopping board
+		// from rebuilding a position the exit side just closed: a signal weak
+		// enough to trigger a trim is not strong enough to justify a new open.
+		if strength < signalStrongScore {
+			blocked = append(blocked, decision)
+			continue
+		}
+		filtered = append(filtered, decision)
 	}
 	return filtered, blocked
 }
