@@ -83,9 +83,9 @@ func CacheTTLFor(path string) time.Duration {
 	return vergexCachePolicy().TTLFor(path)
 }
 
-// DetailSymbolLimit 每轮最多为多少个标的拉取付费详情（默认 5）
+// DetailSymbolLimit 每轮最多为多少个标的拉取付费详情（默认 10）
 func DetailSymbolLimit() int {
-	return paidcache.EnvInt(paidcache.EnvDetailSymbols, 5)
+	return paidcache.EnvInt(paidcache.EnvDetailSymbols, 10)
 }
 
 func anyEnvSet(keys ...string) bool {

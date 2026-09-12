@@ -1206,7 +1206,7 @@ func (e *StrategyEngine) FetchVergexDataBatch(ctx context.Context, symbols []str
 	seen := make(map[string]bool)
 	limited := make([]string, 0, store.MaxCandidateCoins)
 	// 详情数据每个标的 2 次付费请求（signal-lab + heatmap），
-	// 可通过环境变量限制每轮拉取的标的数量（默认 5；小账户可保持或调低）
+	// 可通过环境变量限制每轮拉取的标的数量（默认 10，不超过候选数 + 持仓数）
 	detailLimit := store.MaxCandidateCoins + store.MaxPositions
 	if v := vergex.DetailSymbolLimit(); v > 0 && v < detailLimit {
 		detailLimit = v
