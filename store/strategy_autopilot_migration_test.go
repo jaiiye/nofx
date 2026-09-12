@@ -18,10 +18,11 @@ func TestMigrateLegacyAutopilotRiskDefaults(t *testing.T) {
 		ratio        float64
 		wantMigrate  bool
 	}{
-		{"legacy two-slot book", 2, 5.0, true},
+		{"legacy three-slot book", 3, 5.0, true},
 		{"legacy four-slot book", 4, 5.0, true},
 		{"legacy four-slot quarter-ratio book", 4, legacyAutopilotPositionRatio, true},
 		{"already current", AutopilotDefaultMaxPositions, AutopilotMaxPositionValueRatio, false},
+		{"user-chosen two-slot book is left alone", 2, 5.0, false},
 		{"user-chosen one-slot book is left alone", 1, 5.0, false},
 		{"user-chosen custom ratio is left alone", 2, 3.0, false},
 	}
@@ -65,11 +66,18 @@ func TestMigrateLegacyAutopilotRiskDefaultsIgnoresNonAutopilot(t *testing.T) {
 }
 
 func TestClampLimitsConstrainsAutopilotSlots(t *testing.T) {
-	// An Autopilot config above the current book size is pulled down to it...
-	cfg := autopilotConfig(MaxPositions, 5.0)
+	// Every strategy shares the same bound, so a slot count above it is pulled
+	// down regardless of source type.
+	cfg := autopilotConfig(MaxPositions+3, 5.0)
 	cfg.ClampLimits()
-	if cfg.RiskControl.MaxPositions != AutopilotDefaultMaxPositions {
-		t.Fatalf("Autopilot slots = %d, want %d", cfg.RiskControl.MaxPositions, AutopilotDefaultMaxPositions)
+	if cfg.RiskControl.MaxPositions != MaxPositions {
+		t.Fatalf("Autopilot slots = %d, want %d", cfg.RiskControl.MaxPositions, MaxPositions)
+	}
+	// ...and a user choice at or below the bound is respected.
+	cfg = autopilotConfig(MaxPositions, 5.0)
+	cfg.ClampLimits()
+	if cfg.RiskControl.MaxPositions != MaxPositions {
+		t.Fatalf("a user-chosen %d-slot Autopilot book must survive clamping, got %d", MaxPositions, cfg.RiskControl.MaxPositions)
 	}
 
 	// ...while a non-Autopilot strategy keeps its higher slot count (up to MaxPositions).

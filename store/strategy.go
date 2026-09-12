@@ -13,7 +13,7 @@ import (
 // Hard limits to prevent token explosion in AI requests
 const (
 	MaxCandidateCoins = 10
-	MaxPositions      = 8
+	MaxPositions      = 5
 	MaxTimeframes     = 4
 	MinKlineCount     = 10
 	MaxKlineCount     = 30
@@ -36,8 +36,12 @@ const (
 // small and concentrated; these are the values new strategies are created with
 // and the target of the legacy-config migration below.
 const (
-	// AutopilotDefaultMaxPositions is the slot count for the Autopilot book.
-	AutopilotDefaultMaxPositions = 3
+	// AutopilotDefaultMaxPositions is the slot count a fresh Autopilot book is
+	// created with. It pairs with AutopilotMaxPositionValueRatio so that the
+	// default book stays within the leverage budget: slots x ratio must not
+	// exceed the 10x leverage capacity (2 x 5.0 = 10x, fully margined).
+	// The upper bound a user may raise it to is the generic MaxPositions.
+	AutopilotDefaultMaxPositions = 2
 	// AutopilotMaxPositionValueRatio is the hard per-position notional cap
 	// (equity x ratio). It is a safety bound, not an allocation target: the
 	// Autopilot distributes its margin budget across the configured slots.
@@ -63,9 +67,10 @@ func MigrateLegacyAutopilotRiskDefaults(config *StrategyConfig) bool {
 	}
 
 	risk := &config.RiskControl
-	// Older Autopilot books were created with 2 or 4 slots and a per-position
-	// ratio of 2.4 (a quarter of buying power) or 5.0 (full book).
-	legacyBook := (risk.MaxPositions == 2 || risk.MaxPositions == 4) &&
+	// Older Autopilot books used 3 or 4 slots (and, before that, a per-position
+	// ratio of 2.4 for four slots). A 2-slot book is the current default and is
+	// left untouched so a user's choice of 2 is never rewritten.
+	legacyBook := (risk.MaxPositions == 3 || risk.MaxPositions == 4) &&
 		(risk.BTCETHMaxPositionValueRatio == 5.0 || risk.BTCETHMaxPositionValueRatio == legacyAutopilotPositionRatio) &&
 		(risk.AltcoinMaxPositionValueRatio == 5.0 || risk.AltcoinMaxPositionValueRatio == legacyAutopilotPositionRatio)
 	if !legacyBook {
@@ -124,9 +129,9 @@ func (c *StrategyConfig) ClampLimits() {
 	if c.RiskControl.MaxPositions > MaxPositions {
 		c.RiskControl.MaxPositions = MaxPositions
 	}
-	if c.CoinSource.SourceType == "vergex_signal" && c.RiskControl.MaxPositions > AutopilotDefaultMaxPositions {
-		c.RiskControl.MaxPositions = AutopilotDefaultMaxPositions
-	}
+	// Autopilot shares the generic MaxPositions bound; only its default
+	// (AutopilotDefaultMaxPositions) differs, so every strategy is capped at
+	// the same slot count while a fresh Autopilot book starts smaller.
 
 	// Clamp leverage limits to the same bounds as the manual config UI.
 	if c.RiskControl.BTCETHMaxLeverage < MinLeverage {
@@ -1063,11 +1068,11 @@ func GetDefaultStrategyConfig(lang string) StrategyConfig {
 			PriceRankingLimit:      10,
 		},
 		RiskControl: RiskControlConfig{
-			MaxPositions:                 AutopilotDefaultMaxPositions,   // Three, concentrated positions held for big moves (CODE ENFORCED)
+			MaxPositions:                 AutopilotDefaultMaxPositions,   // Two, concentrated positions held for big moves (CODE ENFORCED)
 			BTCETHMaxLeverage:            10,                             // Moderate leverage: a wide (-5%) stop is ~-50% margin, survivable, not an instant liquidation
 			AltcoinMaxLeverage:           10,                             // Moderate leverage: a wide (-5%) stop is ~-50% margin, survivable, not an instant liquidation
-			BTCETHMaxPositionValueRatio:  AutopilotMaxPositionValueRatio, // Per-position hard cap = equity × 5; the Autopilot allocates across slots
-			AltcoinMaxPositionValueRatio: AutopilotMaxPositionValueRatio, // Per-position hard cap = equity × 5; the Autopilot allocates across slots
+			BTCETHMaxPositionValueRatio:  AutopilotMaxPositionValueRatio, // Per-position hard cap = equity × 5; 2 slots = 10x total, matching the leverage budget
+			AltcoinMaxPositionValueRatio: AutopilotMaxPositionValueRatio, // Per-position hard cap = equity × 5; 2 slots = 10x total, matching the leverage budget
 			MaxMarginUsage:               1.0,                            // Claw402 Autopilot intentionally uses full margin when opening
 			MinPositionSize:              12,                             // Min 12 USDT per position (CODE ENFORCED)
 			MinRiskRewardRatio:           3.0,                            // Min 3:1 profit/loss ratio (AI guided)
