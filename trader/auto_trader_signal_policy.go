@@ -6,6 +6,7 @@ import (
 
 	"nofx/kernel"
 	"nofx/logger"
+	"nofx/provider/hyperliquid"
 	"nofx/trader/types"
 )
 
@@ -253,6 +254,16 @@ func (at *AutoTrader) enforceVergexSignalPolicy(decisions []kernel.Decision, ctx
 	return filtered
 }
 
+// logCorrelatedOpenBlocked records an open rejected because the book already
+// carries the same correlation group. A nil receiver (pure unit tests) is a
+// no-op so the decision logic stays testable without a logger.
+func (at *AutoTrader) logCorrelatedOpenBlocked(symbol, group string) {
+	if at == nil {
+		return
+	}
+	at.logWarnf("🚫 Blocked %s: the book already holds the %s group (one position per correlated risk)", symbol, group)
+}
+
 // signalExitState is the board-driven disposition of a held position.
 type signalExitState struct {
 	action    string
@@ -367,6 +378,16 @@ func applyVergexSignalPolicy(
 		})
 	}
 
+	// Held exposure per correlation group, so a new open cannot double up on a
+	// macro risk the book already carries (e.g. WTI and Brent crude are one bet
+	// on oil, not two diversified positions).
+	groupHeld := make(map[string]bool, len(positions))
+	for _, position := range positions {
+		if g := hyperliquid.CorrelationGroup(position.Symbol); g != "" {
+			groupHeld[g] = true
+		}
+	}
+
 	// Flat symbols may only open in the exact direction advertised by the board.
 	for _, decision := range decisions {
 		base := universeBaseKey(decision.Symbol)
@@ -401,6 +422,16 @@ func applyVergexSignalPolicy(
 		if strength < signalStrongScore {
 			blocked = append(blocked, decision)
 			continue
+		}
+		// One position per correlation group: taking a second instrument that
+		// tracks the same underlying doubles the risk without adding an edge.
+		if group := hyperliquid.CorrelationGroup(decision.Symbol); group != "" {
+			if groupHeld[group] {
+				at.logCorrelatedOpenBlocked(decision.Symbol, group)
+				blocked = append(blocked, decision)
+				continue
+			}
+			groupHeld[group] = true
 		}
 		filtered = append(filtered, decision)
 	}

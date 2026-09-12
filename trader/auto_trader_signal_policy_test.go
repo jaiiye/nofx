@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"nofx/kernel"
+	"nofx/provider/hyperliquid"
 	"nofx/store"
 	tradertypes "nofx/trader/types"
 )
@@ -416,5 +417,90 @@ func TestPlanClose(t *testing.T) {
 	// A reduce with nothing held is an error, not a silent close-all.
 	if _, err = planClose("reduce_long", "BTC", 0, 0.5, 100); err == nil {
 		t.Fatal("reduce with nothing held must error")
+	}
+}
+
+func TestCorrelationGroupSplitsBroadCategories(t *testing.T) {
+	cases := []struct {
+		a, b string
+		same bool
+	}{
+		// The pair that motivated the rule: two crude grades are one oil bet.
+		{"xyz:CL", "xyz:BRENTOIL", true},
+		// Broad category would have merged these; the fine group must not.
+		{"xyz:CL", "xyz:GOLD", false},
+		{"xyz:GOLD", "xyz:SILVER", true},
+		{"xyz:COPPER", "xyz:GOLD", false},
+		// Semiconductors cluster.
+		{"xyz:NVDA", "xyz:SNDK", true},
+		{"xyz:NVDA", "xyz:AAPL", false},
+		// Crypto majors group; alts stay unconstrained.
+		{"BTCUSDT", "ETHUSDT", true},
+		{"SOLUSDT", "ZECUSDT", false},
+		// Unrelated/unknown instruments carry no group.
+		{"xyz:SNDK", "SOLUSDT", false},
+	}
+	for _, tc := range cases {
+		ga, gb := hyperliquid.CorrelationGroup(tc.a), hyperliquid.CorrelationGroup(tc.b)
+		got := ga != "" && ga == gb
+		if got != tc.same {
+			t.Fatalf("%s(%q) vs %s(%q): same=%v, want %v", tc.a, ga, tc.b, gb, got, tc.same)
+		}
+	}
+}
+
+func TestVergexSignalPolicyBlocksCorrelatedDoubleUp(t *testing.T) {
+	// WTI is already held; a Brent open in the same cycle must be blocked.
+	positions := []kernel.PositionInfo{{Symbol: "xyz:CL", Side: "long"}}
+	decisions := []kernel.Decision{{Symbol: "xyz:BRENTOIL", Action: "open_long"}}
+	at := &AutoTrader{signalAbsentCycles: make(map[string]int)}
+	bias := testSignalBias(map[string]string{"CL": "bullish", "BRENTOIL": "bullish"})
+	strong := func(string) (float64, bool) { return signalStrongScore + 0.5, true }
+
+	got, blocked := applyVergexSignalPolicy(decisions, positions, bias, strong, at)
+	if len(blocked) != 1 || blocked[0].Symbol != "xyz:BRENTOIL" {
+		t.Fatalf("a correlated double-up must be blocked, got blocked %+v (allowed %+v)", blocked, got)
+	}
+	for _, d := range got {
+		if d.Action == "open_long" {
+			t.Fatalf("no correlated open may survive, got %+v", got)
+		}
+	}
+
+	// An uncorrelated strong signal still opens normally.
+	decisions = []kernel.Decision{{Symbol: "xyz:AAPL", Action: "open_long"}}
+	bias = testSignalBias(map[string]string{"CL": "bullish", "AAPL": "bullish"})
+	got, blocked = applyVergexSignalPolicy(decisions, positions, bias, strong, at)
+	if len(blocked) != 0 {
+		t.Fatalf("an uncorrelated signal must not be blocked, got %+v", blocked)
+	}
+	opened := false
+	for _, d := range got {
+		if d.Symbol == "xyz:AAPL" && d.Action == "open_long" {
+			opened = true
+		}
+	}
+	if !opened {
+		t.Fatalf("an uncorrelated signal must open, got %+v", got)
+	}
+}
+
+func TestVergexSignalPolicyBlocksCorrelatedPairWithinOneCycle(t *testing.T) {
+	// Two correlated opens in the same cycle: the first wins, the second is
+	// blocked, so the book never takes both at once.
+	decisions := []kernel.Decision{
+		{Symbol: "xyz:CL", Action: "open_long"},
+		{Symbol: "xyz:BRENTOIL", Action: "open_long"},
+	}
+	at := &AutoTrader{signalAbsentCycles: make(map[string]int)}
+	bias := testSignalBias(map[string]string{"CL": "bullish", "BRENTOIL": "bullish"})
+	strong := func(string) (float64, bool) { return signalStrongScore + 0.5, true }
+
+	got, blocked := applyVergexSignalPolicy(decisions, nil, bias, strong, at)
+	if len(got) != 1 || got[0].Symbol != "xyz:CL" {
+		t.Fatalf("only the first correlated open should pass, got %+v", got)
+	}
+	if len(blocked) != 1 || blocked[0].Symbol != "xyz:BRENTOIL" {
+		t.Fatalf("the second correlated open must be blocked, got %+v", blocked)
 	}
 }

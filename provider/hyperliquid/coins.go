@@ -49,6 +49,51 @@ func XYZCategory(baseSymbol string) string {
 	}
 }
 
+// CorrelationGroup returns a fine-grained bucket of instruments that move
+// together, so a book can avoid holding the same macro risk in several slots.
+// It deliberately splits XYZCategory's broad buckets: WTI and Brent crude are
+// both "commodity" but one bet on oil, and the precious metals or the
+// semiconductors likewise. Crypto perps fall back to their base symbol, which
+// keeps them unconstrained relative to each other only when unrelated.
+//
+// An empty return means the instrument is not grouped (no constraint applied).
+func CorrelationGroup(symbol string) string {
+	base := strings.ToUpper(strings.TrimSpace(symbol))
+	base = strings.TrimSuffix(base, "USDT")
+	base = strings.TrimSuffix(base, "USDC")
+	base = strings.TrimPrefix(base, "XYZ:")
+
+	switch base {
+	// Energy: crude grades move together — the pair that motivated this.
+	case "CL", "BRENTOIL", "NATGAS", "TTF", "URANIUM":
+		return "energy"
+	// Precious metals.
+	case "GOLD", "SILVER", "PLATINUM", "PALLADIUM":
+		return "precious_metal"
+	// Industrial metals.
+	case "COPPER", "ALUMINIUM":
+		return "industrial_metal"
+	// Agriculture.
+	case "CORN", "WHEAT":
+		return "agriculture"
+	// Semiconductors and related equipment.
+	case "NVDA", "AMD", "INTC", "MU", "SNDK", "DRAM", "SKHX", "SKHY", "ASML", "AVGO", "ARM", "MRVL", "SMCI", "TSM":
+		return "semiconductor"
+	// Equity indices.
+	case "SPX", "SP500", "NDX", "DJI", "DAX", "FTSE", "NIKKEI", "HSI", "CSI300", "XYZ100", "XYZ25", "XYZ50":
+		return "equity_index"
+	// Big tech / mega-cap platforms.
+	case "AAPL", "MSFT", "GOOGL", "GOOG", "AMZN", "META", "NFLX", "ORCL", "CRM", "ADBE", "SNOW":
+		return "mega_cap_tech"
+	// Crypto majors settle against the same beta; group only the two that
+	// dominate index moves so an altcoin book is not over-constrained.
+	case "BTC", "ETH":
+		return "crypto_major"
+	default:
+		return ""
+	}
+}
+
 // CoinProvider provides Hyperliquid coin lists
 type CoinProvider struct {
 	mu          sync.RWMutex
