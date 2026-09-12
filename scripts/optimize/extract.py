@@ -1,10 +1,17 @@
 """Extract a replayable dataset from data/data.db.
 
-Reads decision_records and emits three CSVs under scripts/optimize/data/:
+Reads decision_records and emits six CSVs under scripts/optimize/data/:
   cycles.csv    - one row per decision cycle (timestamp, recorded equity)
   decisions.csv - the AI's intended actions per cycle (including throttled ones)
   candles.csv   - deduplicated per-symbol 15m OHLCV parsed from input prompts
   prices.csv    - per-cycle current_price for every symbol present in the prompt
+  signals.csv   - the Vergex/Claw402 direction board as shown to the AI
+  positions.csv - closed round trips, so a replay can rebuild the book per cycle
+
+The board is what the direction state machine consumes: rank/bias/score plus the
+Signal Lab composite Z. Cycle-level P&L attribution can then ask "what would a
+different signalStrongScore have done to an existing position" without
+replaying the LLM at all.
 
 Run:  .venv/bin/python extract.py [--db ../../data/data.db]
 """
@@ -25,6 +32,17 @@ CANDLE_RE = re.compile(
 )
 EQUITY_RE = re.compile(r"Account: Equity ([\d.]+)")
 TS_RE = re.compile(r"(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})")
+# Vergex Claw402 Signals board, as rendered into the decision prompt:
+#   ### xyz:AAPL (Vergex hip3_perp/AAPL)
+#   Ranking: rank=1 bias=bullish confidence=0.00 score=1.6300 category=stock
+#     #### Signal Lab
+#     - Composite Z: 1.62
+BOARD_HEADER_RE = re.compile(r"^### (\S+) \(Vergex \S+\)\s*$")
+RANKING_RE = re.compile(
+    r"^Ranking: rank=(\d+) bias=(\S+) confidence=([\d.]+) score=([-\d.]+)"
+    r" category=(\S+)\s*$"
+)
+COMPOSITE_Z_RE = re.compile(r"^- Composite Z: ([-\d.]+)\s*$")
 
 
 def parse_cycle_ts(raw):
@@ -73,6 +91,92 @@ def parse_prompt(prompt, cycle_ts):
     return equity, prices, candles
 
 
+def load_positions(conn):
+    """Closed round trips as (symbol, side, qty, entry_price, entry_ts, exit_ts).
+
+    Timestamps are stored in milliseconds; the replay wants RFC3339 UTC so it
+    can be joined against cycle timestamps without unit guesswork. Still-open
+    positions have no exit and are excluded, so the newest cycles rebuild a
+    slightly smaller book than the exchange reported.
+    """
+    out = []
+    q = (
+        "SELECT symbol, side, quantity, entry_price, entry_time, exit_time,"
+        " realized_pnl, close_reason FROM trader_positions"
+        " WHERE status = 'CLOSED' AND exit_time IS NOT NULL"
+    )
+    for sym, side, qty, ep, et, xt, rp, cr in conn.execute(q):
+        if not et or not xt or not ep or not qty:
+            continue
+        out.append(
+            (
+                sym,
+                (side or "").lower(),
+                qty,
+                ep,
+                ms_to_iso(et),
+                ms_to_iso(xt),
+                rp if rp is not None else 0.0,
+                cr or "",
+            )
+        )
+    out.sort(key=lambda r: r[4])
+    return out
+
+
+def ms_to_iso(ms):
+    return datetime.fromtimestamp(ms / 1000, timezone.utc).isoformat()
+
+
+def parse_signals(prompt):
+    """Parse the Vergex Claw402 board out of a decision prompt.
+
+    Returns one entry per symbol, carrying the ranking line the state machine
+    keys on (bias/score) plus the Signal Lab composite Z for cross-checking.
+    A symbol whose ranking line is missing is skipped: bias without a score
+    cannot drive the state machine, and inventing a score would bias the scan.
+    """
+    out = []
+    symbol = None
+    ranking = None
+    composite = None
+
+    def flush():
+        if symbol is None or ranking is None:
+            return
+        rank, bias, confidence, score, category = ranking
+        out.append(
+            {
+                "symbol": symbol,
+                "rank": int(rank),
+                "bias": bias.lower(),
+                "confidence": float(confidence),
+                "score": float(score),
+                "category": category,
+                "composite_z": composite,
+            }
+        )
+
+    for line in prompt.splitlines():
+        line = line.rstrip()
+        hm = BOARD_HEADER_RE.match(line)
+        if hm:
+            flush()
+            symbol, ranking, composite = hm.group(1).upper(), None, None
+            continue
+        if symbol is None:
+            continue
+        rm = RANKING_RE.match(line)
+        if rm:
+            ranking = rm.groups()
+            continue
+        zm = COMPOSITE_Z_RE.match(line)
+        if zm:
+            composite = float(zm.group(1))
+    flush()
+    return out
+
+
 def parse_decisions(raw):
     try:
         items = json.loads(raw or "[]")
@@ -115,6 +219,8 @@ def main():
     cycles, decisions = [], []
     candle_map = {}  # (symbol, ts) -> row, latest observation wins
     price_rows = []
+    signal_rows = []
+    signal_cycles = 0
     skipped = 0
 
     for rec_id, ts_raw, prompt, decisions_raw in rows:
@@ -128,6 +234,23 @@ def main():
             price_rows.append((rec_id, cycle_ts.isoformat(), sym, price))
         for sym, cts, o, h, low, c, v in candles:
             candle_map[(sym, cts)] = (sym, cts.isoformat(), o, h, low, c, v)
+        board = parse_signals(prompt or "")
+        if board:
+            signal_cycles += 1
+        for s in board:
+            signal_rows.append(
+                (
+                    rec_id,
+                    cycle_ts.isoformat(),
+                    s["symbol"],
+                    s["rank"],
+                    s["bias"],
+                    s["confidence"],
+                    s["score"],
+                    s["category"],
+                    "" if s["composite_z"] is None else s["composite_z"],
+                )
+            )
         for d in parse_decisions(decisions_raw):
             decisions.append(
                 (
@@ -169,10 +292,30 @@ def main():
         sorted(candle_map.values(), key=lambda r: (r[0], r[1])),
     )
     write("prices.csv", ["cycle_id", "ts", "symbol", "price"], price_rows)
+    write(
+        "signals.csv",
+        [
+            "cycle_id", "ts", "symbol", "rank", "bias", "confidence",
+            "score", "category", "composite_z",
+        ],
+        signal_rows,
+    )
+
+    positions = load_positions(conn)
+    write(
+        "positions.csv",
+        [
+            "symbol", "side", "quantity", "entry_price", "entry_ts",
+            "exit_ts", "realized_pnl", "close_reason",
+        ],
+        positions,
+    )
 
     print(
         f"cycles={len(cycles)} decisions={len(decisions)}"
         f" candles={len(candle_map)} prices={len(price_rows)} skipped={skipped}"
+        f" signals={len(signal_rows)} signal_cycles={signal_cycles}/{len(cycles)}"
+        f" positions={len(positions)}"
     )
 
 
