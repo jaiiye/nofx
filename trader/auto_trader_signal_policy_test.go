@@ -58,13 +58,13 @@ func testSignalBias(values map[string]string) func(string) (string, bool) {
 	}
 }
 
-// testSignalStrength reports a strong (non-decaying) score for every symbol the
-// bias map knows about, so legacy tests exercise the hold/close paths rather
-// than the decay trims.
+// testSignalStrength reports a score above the entry floor for every symbol
+// the bias map knows about, so legacy tests exercise the hold/close paths
+// rather than the decay trims or the entry gate.
 func testSignalStrength(values map[string]string) func(string) (float64, bool) {
 	return func(symbol string) (float64, bool) {
 		_, ok := values[universeBaseKey(symbol)]
-		return signalStrongScore, ok
+		return signalOpenScore, ok
 	}
 }
 
@@ -222,7 +222,8 @@ func TestVergexSignalPolicyAllowsOnlyMatchingEntries(t *testing.T) {
 
 func TestVergexSignalPolicyRequiresStrongSignalToOpen(t *testing.T) {
 	// A faded-but-still-matching board must not rebuild a position the exit side
-	// just closed: only a strong signal authorises a new entry.
+	// just closed, and a merely-intact signal must not open one at all: entries
+	// are gated above the hold floor.
 	decisions := []kernel.Decision{{Symbol: "xyz:NVDA", Action: "open_long"}}
 	bias := testSignalBias(map[string]string{"NVDA": "bullish"})
 
@@ -231,8 +232,9 @@ func TestVergexSignalPolicyRequiresStrongSignalToOpen(t *testing.T) {
 		score   float64
 		allowed bool
 	}{
-		{"strong opens", signalStrongScore, true},
-		{"just below the floor is blocked", signalStrongScore - 0.01, false},
+		{"opens at the entry floor", signalOpenScore, true},
+		{"just below the entry floor is blocked", signalOpenScore - 0.01, false},
+		{"intact for a hold but too weak to open", signalStrongScore, false},
 		{"medium is blocked", (signalStrongScore + signalWeakScore) / 2, false},
 		{"weak is blocked", signalWeakScore - 0.1, false},
 	}

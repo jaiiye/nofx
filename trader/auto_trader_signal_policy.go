@@ -144,11 +144,17 @@ func getFreshPositions(tr types.Trader) ([]map[string]interface{}, error) {
 // floor was noise, and 0.75 was the strong-signal gate. They only ever scale an
 // existing directional signal down; they never flip or open a direction.
 const (
-	// signalStrongScore is the minimum |z| for an intact direction. It plays two
-	// roles: a held position at or above it is never trimmed, and a *new* entry
-	// requires it. The second role is what prevents re-opening a position the
-	// exit side just closed — a signal too weak to keep is too weak to build.
+	// signalStrongScore is the minimum |z| for an intact direction: a held
+	// position at or above it is never trimmed.
 	signalStrongScore = 0.75
+	// signalOpenScore is the minimum |z| for a NEW entry. It sits above the
+	// hold floor on purpose: a signal intact enough to keep is not necessarily
+	// strong enough to build. The recorded-board replay (scripts/optimize
+	// signals.csv, 2026-08-31..09-12) scored entries by their z at entry —
+	// legs at |z| >= 1.0 averaged +1.21 USDT against -0.64 for 0.75-1.0 legs —
+	// and 0.75 sits at the board's 10th percentile, so the old shared floor
+	// gated almost nothing (90% of rows passed, one reduce in twelve days).
+	signalOpenScore = 1.0
 	// below this the signal is treated as decayed and the position is trimmed
 	signalWeakScore = 0.40
 	// fractions of the current position closed at each decay tier
@@ -415,11 +421,10 @@ func applyVergexSignalPolicy(
 			blocked = append(blocked, decision)
 			continue
 		}
-		// Entries demand a strong signal, unlike holds which merely require a
-		// matching direction. This is what stops a faded or flip-flopping board
-		// from rebuilding a position the exit side just closed: a signal weak
-		// enough to trigger a trim is not strong enough to justify a new open.
-		if strength < signalStrongScore {
+		// Entries demand more strength than holds: this is what stops a faded
+		// or flip-flopping board from rebuilding a position the exit side just
+		// closed, and what keeps weak-signal entries out of the book at all.
+		if strength < signalOpenScore {
 			blocked = append(blocked, decision)
 			continue
 		}
