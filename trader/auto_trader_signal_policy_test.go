@@ -284,6 +284,24 @@ func TestVergexSignalPolicyDoesNotTreatMissingSnapshotAsSignalExit(t *testing.T)
 	}
 }
 
+func TestVergexSignalPolicyBlocksEntriesWhileBoardIsMissing(t *testing.T) {
+	at := testVergexSignalTrader()
+	decisions := []kernel.Decision{
+		{Symbol: "xyz:NVDA", Action: "open_long"},
+		{Symbol: "xyz:NVDA", Action: "close_long"},
+		{Symbol: "BTC", Action: "hold"},
+	}
+	ctx := &kernel.Context{Positions: []kernel.PositionInfo{{Symbol: "xyz:NVDA", Side: "long"}}}
+
+	got := at.enforceVergexSignalPolicy(decisions, ctx)
+	if len(got) != 2 || got[0].Action != "close_long" || got[1].Action != "hold" {
+		t.Fatalf("blind cycles must drop opens but keep defensive closes and holds, got %+v", got)
+	}
+	if at.signalBoardBlindCycles == 0 {
+		t.Fatal("blind cycles must be counted so recovery can be reported")
+	}
+}
+
 func TestVergexSignalPolicyUsesSignalManagedProfitExit(t *testing.T) {
 	at := testVergexSignalTrader()
 	if !at.usesSignalManagedExit() {

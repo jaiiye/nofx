@@ -243,8 +243,15 @@ func (at *AutoTrader) clearSignalAbsence(symbol string) {
 // position state machine. Detail data can explain a signal, but cannot reverse
 // or prematurely exit it.
 func (at *AutoTrader) enforceVergexSignalPolicy(decisions []kernel.Decision, ctx *kernel.Context) []kernel.Decision {
-	if !at.usesVergexSignalPolicy() || at.strategyEngine == nil || ctx == nil || !at.strategyEngine.HasVergexSignalSnapshot() {
+	if !at.usesVergexSignalPolicy() {
 		return decisions
+	}
+	if at.strategyEngine == nil || ctx == nil || !at.strategyEngine.HasVergexSignalSnapshot() {
+		return at.guardBlindSignalCycle(decisions)
+	}
+	if at.signalBoardBlindCycles > 0 {
+		at.logInfof("🧭 Claw402 direction board recovered after %d blind cycle(s)", at.signalBoardBlindCycles)
+		at.signalBoardBlindCycles = 0
 	}
 
 	filtered, blocked := applyVergexSignalPolicy(
@@ -256,6 +263,27 @@ func (at *AutoTrader) enforceVergexSignalPolicy(decisions []kernel.Decision, ctx
 	)
 	for _, decision := range blocked {
 		at.logWarnf("🧭 Blocked %s %s: action conflicts with the current Claw402 direction signal", decision.Symbol, decision.Action)
+	}
+	return filtered
+}
+
+// guardBlindSignalCycle runs when the strategy depends on the direction board
+// but no snapshot is available. The state machine cannot evaluate anything, so
+// letting the AI's decisions through unfiltered would allow opening positions
+// against a board nobody can see — the 2026-09-04..09-08 stretch shows this can
+// persist for days while every cycle "succeeds". Blind cycles therefore fail
+// closed on entries; closes and holds still pass, because exiting without the
+// board is defensive and the per-minute drawdown monitor keeps covering exits.
+func (at *AutoTrader) guardBlindSignalCycle(decisions []kernel.Decision) []kernel.Decision {
+	at.signalBoardBlindCycles++
+	at.logWarnf("🧭 Claw402 direction board unavailable for %d cycle(s): state machine is blind, new entries are blocked", at.signalBoardBlindCycles)
+	filtered := make([]kernel.Decision, 0, len(decisions))
+	for _, decision := range decisions {
+		if isOpenAction(decision.Action) {
+			at.logWarnf("🧭 Blocked %s %s: the direction board is unavailable, so the entry direction cannot be verified", decision.Action, decision.Symbol)
+			continue
+		}
+		filtered = append(filtered, decision)
 	}
 	return filtered
 }
