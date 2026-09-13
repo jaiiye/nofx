@@ -13,7 +13,17 @@ import (
 // Hard limits to prevent token explosion in AI requests
 const (
 	MaxCandidateCoins = 10
-	MaxPositions      = 3
+	// MaxPositions is the hard ceiling for simultaneous positions. It is the
+	// single source of truth: ClampLimits() enforces it on save, and the
+	// runtime risk check falls back to it when a config was built without
+	// going through ClampLimits().
+	MaxPositions = 5
+	// DefaultMaxPositions is the value used when a config leaves MaxPositions
+	// unset (0). It is a focused default (few, concentrated positions) and sits
+	// well below the ceiling, so the editor can still raise it up to
+	// MaxPositions without being clamped.
+	DefaultMaxPositions = 2
+
 	MaxTimeframes     = 4
 	MinKlineCount     = 10
 	MaxKlineCount     = 30
@@ -28,9 +38,35 @@ const (
 	MaxMarginUsage    = 1.0
 	MinPositionSize   = 10.0
 	MaxPositionSize   = 1000.0
-	MinConfidence     = 50
-	MaxConfidence     = 100
+	// DefaultMinPositionSize mirrors the runtime fallback used by
+	// enforceMinPositionSize so the two cannot drift apart.
+	DefaultMinPositionSize = 12.0
+	MinConfidence          = 50
+	MaxConfidence          = 100
 )
+
+// EffectiveMaxPositions resolves the position cap for a config, applying the
+// documented default when the field is unset and the hard ceiling when the
+// stored value exceeds it. Callers on the hot path (risk enforcement) should
+// use this instead of re-deriving the rules.
+func (c *RiskControlConfig) EffectiveMaxPositions() int {
+	if c == nil || c.MaxPositions <= 0 {
+		return DefaultMaxPositions
+	}
+	if c.MaxPositions > MaxPositions {
+		return MaxPositions
+	}
+	return c.MaxPositions
+}
+
+// EffectiveMinPositionSize resolves the minimum position size for a config,
+// applying the documented default when unset.
+func (c *RiskControlConfig) EffectiveMinPositionSize() float64 {
+	if c == nil || c.MinPositionSize <= 0 {
+		return DefaultMinPositionSize
+	}
+	return c.MinPositionSize
+}
 
 // ClampLimits enforces product-level limits on strategy config to prevent token overflow.
 func (c *StrategyConfig) ClampLimits() {
@@ -884,9 +920,9 @@ type RiskControlConfig struct {
 	// Min position size in USDT (CODE ENFORCED)
 	MinPositionSize float64 `json:"min_position_size"`
 
-	// Min take_profit / stop_loss ratio (AI guided)
+	// Min take_profit / stop_loss ratio (CODE ENFORCED)
 	MinRiskRewardRatio float64 `json:"min_risk_reward_ratio"`
-	// Min AI confidence to open position (AI guided)
+	// Min AI confidence to open position (CODE ENFORCED)
 	MinConfidence int `json:"min_confidence"`
 }
 
@@ -905,7 +941,25 @@ func (s *StrategyStore) initDefaultData() error {
 	return nil
 }
 
-// GetDefaultStrategyConfig returns the default strategy configuration for the given language
+// GetDefaultStrategyConfig returns the base strategy template.
+//
+// This is a TEMPLATE, not the set of strategies a user actually gets. Two
+// distinct consumers exist:
+//
+//  1. Editor/agent fallbacks — the frontend strategy editor, the agent's
+//     strategy tools, and kernel's defensive default all start from this
+//     template and let the user override individual fields.
+//  2. Built-in presets — api/handler_user.go builds the per-user starter
+//     strategies by taking this template and applying a preset overlay
+//     (see setStableRisk/setStockRank), then running ClampLimits().
+//
+// Because of (2), changing a value here also shifts every built-in preset
+// that does not explicitly override that field. Note the preset overlay also
+// tightens MaxPositions below (see handler_user.go setStableRisk).
+//
+// The default universe is Hyperliquid xyz STOCK perps (not crypto): the
+// primary Hyperliquid crypto perps remain reachable by switching SourceType
+// to hyper_main / hyper_all / ai500 in the editor.
 func GetDefaultStrategyConfig(lang string) StrategyConfig {
 	// Normalize language to "zh" or "en"
 	normalizedLang := "en"
@@ -969,15 +1023,19 @@ func GetDefaultStrategyConfig(lang string) StrategyConfig {
 			PriceRankingLimit:      10,
 		},
 		RiskControl: RiskControlConfig{
-			MaxPositions:                 3,   // Max 3 coins simultaneously (CODE ENFORCED)
-			BTCETHMaxLeverage:            5,   // BTC/ETH exchange leverage (AI guided)
-			AltcoinMaxLeverage:           5,   // Altcoin exchange leverage (AI guided)
-			BTCETHMaxPositionValueRatio:  5.0, // BTC/ETH: max position = 5x equity (CODE ENFORCED)
-			AltcoinMaxPositionValueRatio: 1.0, // Altcoin: max position = 1x equity (CODE ENFORCED)
-			MaxMarginUsage:               0.9, // Max 90% margin usage (CODE ENFORCED)
-			MinPositionSize:              12,  // Min 12 USDT per position (CODE ENFORCED)
-			MinRiskRewardRatio:           3.0, // Min 3:1 profit/loss ratio (AI guided)
-			MinConfidence:                75,  // Min 75% confidence (AI guided)
+			MaxPositions: DefaultMaxPositions, // Few, concentrated positions held for big moves (CODE ENFORCED)
+			// Moderate leverage: a wide (-5%) stop is ~-50% margin, survivable,
+			// not an instant liquidation (liquidation needs ~20x).
+			BTCETHMaxLeverage:  10,
+			AltcoinMaxLeverage: 10,
+			// Per-position notional = equity x 5; 2 positions = 10x total
+			// notional (full margin at 10x, ~10% liquidation cushion).
+			BTCETHMaxPositionValueRatio:  5.0,
+			AltcoinMaxPositionValueRatio: 5.0,
+			MaxMarginUsage:               1.0,                    // Intentionally uses full margin when opening
+			MinPositionSize:              DefaultMinPositionSize, // CODE ENFORCED
+			MinRiskRewardRatio:           3.0,                    // Min 3:1 profit/loss ratio (CODE ENFORCED)
+			MinConfidence:                78,                     // Min 78% confidence (CODE ENFORCED)
 		},
 	}
 

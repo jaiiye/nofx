@@ -243,10 +243,7 @@ func (at *AutoTrader) enforceMinPositionSize(positionSizeUSD float64) error {
 		return nil
 	}
 
-	minSize := at.config.StrategyConfig.RiskControl.MinPositionSize
-	if minSize <= 0 {
-		minSize = 12 // Default: 12 USDT
-	}
+	minSize := at.config.StrategyConfig.RiskControl.EffectiveMinPositionSize()
 
 	if positionSizeUSD < minSize {
 		return fmt.Errorf("❌ [RISK CONTROL] Position %.2f USDT below minimum (%.2f USDT)", positionSizeUSD, minSize)
@@ -254,16 +251,15 @@ func (at *AutoTrader) enforceMinPositionSize(positionSizeUSD float64) error {
 	return nil
 }
 
-// enforceMaxPositions checks maximum positions count (CODE ENFORCED)
+// enforceMaxPositions checks maximum positions count (CODE ENFORCED).
+// The default and ceiling both come from the store package so this check can
+// never drift from what ClampLimits() persisted and what the editor displays.
 func (at *AutoTrader) enforceMaxPositions(currentPositionCount int) error {
 	if at.config.StrategyConfig == nil {
 		return nil
 	}
 
-	maxPositions := at.config.StrategyConfig.RiskControl.MaxPositions
-	if maxPositions <= 0 {
-		maxPositions = 3 // Default: 3 positions
-	}
+	maxPositions := at.config.StrategyConfig.RiskControl.EffectiveMaxPositions()
 
 	if currentPositionCount >= maxPositions {
 		return fmt.Errorf("❌ [RISK CONTROL] Already at max positions (%d/%d)", currentPositionCount, maxPositions)

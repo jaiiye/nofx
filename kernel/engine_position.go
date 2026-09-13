@@ -4,22 +4,23 @@ import (
 	"fmt"
 	"nofx/logger"
 	"nofx/market"
+	"nofx/store"
 )
 
 // ============================================================================
 // Decision Validation
 // ============================================================================
 
-func validateDecisions(decisions []Decision, accountEquity float64, btcEthLeverage, altcoinLeverage int, btcEthPosRatio, altcoinPosRatio float64) error {
+func validateDecisions(decisions []Decision, accountEquity float64, risk store.RiskControlConfig) error {
 	for i := range decisions {
-		if err := validateDecision(&decisions[i], accountEquity, btcEthLeverage, altcoinLeverage, btcEthPosRatio, altcoinPosRatio); err != nil {
+		if err := validateDecision(&decisions[i], accountEquity, risk); err != nil {
 			return fmt.Errorf("decision #%d validation failed: %w", i+1, err)
 		}
 	}
 	return nil
 }
 
-func validateDecision(d *Decision, accountEquity float64, btcEthLeverage, altcoinLeverage int, btcEthPosRatio, altcoinPosRatio float64) error {
+func validateDecision(d *Decision, accountEquity float64, risk store.RiskControlConfig) error {
 	validActions := map[string]bool{
 		"open_long":   true,
 		"open_short":  true,
@@ -41,13 +42,13 @@ func validateDecision(d *Decision, accountEquity float64, btcEthLeverage, altcoi
 		//     and the user's quick-trade flow shows them at the higher cap,
 		//     so the validator must match.
 		//   - Everything else is altcoin (1x equity by default).
-		maxLeverage := altcoinLeverage
-		posRatio := altcoinPosRatio
+		maxLeverage := risk.AltcoinMaxLeverage
+		posRatio := risk.AltcoinMaxPositionValueRatio
 		maxPositionValue := accountEquity * posRatio
 		isMajor := d.Symbol == "BTCUSDT" || d.Symbol == "ETHUSDT" || market.IsXyzDexAsset(d.Symbol)
 		if isMajor {
-			maxLeverage = btcEthLeverage
-			posRatio = btcEthPosRatio
+			maxLeverage = risk.BTCETHMaxLeverage
+			posRatio = risk.BTCETHMaxPositionValueRatio
 			maxPositionValue = accountEquity * posRatio
 		}
 
@@ -123,9 +124,28 @@ func validateDecision(d *Decision, accountEquity float64, btcEthLeverage, altcoi
 			}
 		}
 
-		if riskRewardRatio < 3.0 {
-			return fmt.Errorf("risk/reward ratio too low (%.2f:1), must be ≥3.0:1 [risk: %.2f%% reward: %.2f%%] [stop loss: %.2f take profit: %.2f]",
-				riskRewardRatio, riskPercent, rewardPercent, d.StopLoss, d.TakeProfit)
+		minRiskReward := risk.MinRiskRewardRatio
+		if minRiskReward <= 0 {
+			minRiskReward = 3.0 // Fallback when the strategy leaves it unset
+		}
+		if riskRewardRatio < minRiskReward {
+			return fmt.Errorf("risk/reward ratio too low (%.2f:1), must be ≥%.1f:1 [risk: %.2f%% reward: %.2f%%] [stop loss: %.2f take profit: %.2f]",
+				riskRewardRatio, minRiskReward, riskPercent, rewardPercent, d.StopLoss, d.TakeProfit)
+		}
+
+		// Confidence is supplied by the model, so enforce the configured floor
+		// here rather than relying on the prompt alone. The field is optional
+		// in the output schema, which means a missing value arrives as 0 and is
+		// indistinguishable from an explicit low score unless we split the two
+		// cases — they need different operator responses (fix the prompt vs.
+		// raise the entry bar), so they get different errors.
+		if risk.MinConfidence > 0 && d.Confidence <= 0 {
+			return fmt.Errorf("%s opened a position without a confidence score; the field is required and must be 0-100",
+				d.Symbol)
+		}
+		if risk.MinConfidence > 0 && d.Confidence < risk.MinConfidence {
+			return fmt.Errorf("%s confidence %d below minimum %d required to open a position",
+				d.Symbol, d.Confidence, risk.MinConfidence)
 		}
 	}
 

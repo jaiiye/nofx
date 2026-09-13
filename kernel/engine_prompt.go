@@ -148,7 +148,7 @@ func (e *StrategyEngine) BuildSystemPrompt(accountEquity float64, variant string
 	//      regardless of when the strategy was first created.
 	customPrompt := e.config.CustomPrompt
 	if singleSymbol && market.IsXyzDexAsset(primarySymbol) {
-		customPrompt = buildXYZStockCustomPrompt(primarySymbol)
+		customPrompt = buildXYZStockCustomPrompt(primarySymbol, riskControl.MinConfidence)
 	}
 
 	if customPrompt != "" {
@@ -176,7 +176,11 @@ func (e *StrategyEngine) BuildSystemPrompt(accountEquity float64, variant string
 // We bias the AI toward opening a probing long on every flat cycle, with
 // risk guardrails to keep the size sane. Symbol is inlined for LLM grounding
 // so it never confuses the trading instrument.
-func buildXYZStockCustomPrompt(symbol string) string {
+func buildXYZStockCustomPrompt(symbol string, minConfidence int) string {
+	if minConfidence <= 0 {
+		minConfidence = store.MinConfidence
+	}
+
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Trade ONLY the Hyperliquid USDC perpetual %s (US equity / xyz board).\n\n", symbol))
 	sb.WriteString("Core stance: LONG-ONLY, ACTIVE. Do not short. Do not sit on the sidelines.\n\n")
@@ -186,7 +190,7 @@ func buildXYZStockCustomPrompt(symbol string) string {
 	sb.WriteString("- The user is paying for the quick-trade flow specifically to be in the market — your default is OPEN, not WAIT.\n")
 	sb.WriteString("- `wait` / `hold` are only acceptable when you ALREADY have an open position (then it's a hold decision).\n")
 	sb.WriteString("- If you cannot find a clear breakout setup, take a probing entry at market with reduced size (40-60% of max position value) and a tight 2% stop. Probing > waiting.\n")
-	sb.WriteString("- Set `confidence` >= 75 so backend risk control accepts the order. Justify the 75 in reasoning even if the technical picture is mixed — the strategic decision to be exposed IS the edge for this flow.\n\n")
+	sb.WriteString(fmt.Sprintf("- The configured entry floor is `confidence` >= %d. This is enforced in code: an order below it is rejected outright. Report your genuine conviction rather than inflating the number to clear the gate — a probing entry is still valid at a modest score as long as the setup justifies it.\n\n", minConfidence))
 
 	sb.WriteString("## Preferred Entry Conditions (use to size up, not to gate the entry)\n")
 	sb.WriteString("Size up toward the 80-100% bracket when you see ANY of:\n")

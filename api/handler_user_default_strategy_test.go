@@ -54,8 +54,27 @@ func TestCreateDefaultStrategiesUsesReadyToRunUSStockPresets(t *testing.T) {
 	if trendCfg.CoinSource.SourceType != "hyper_rank" || trendCfg.CoinSource.HyperRankCategory != "stock" || trendCfg.CoinSource.HyperRankDirection != "volume" {
 		t.Fatalf("trend strategy should use Hyperliquid stock volume ranking, got %+v", trendCfg.CoinSource)
 	}
-	if trendCfg.CoinSource.UseAI500 || trendCfg.RiskControl.MaxPositions > 2 || trendCfg.RiskControl.MaxMarginUsage > 0.45 {
-		t.Fatalf("trend strategy should be low-risk Hyperliquid native, got coin=%+v risk=%+v", trendCfg.CoinSource, trendCfg.RiskControl)
+	if trendCfg.CoinSource.UseAI500 {
+		t.Fatalf("trend strategy should use Hyperliquid native data, got coin=%+v", trendCfg.CoinSource)
+	}
+	// Presets ship with the concentrated-position profile: 2 positions at 10x
+	// leverage with 5x equity notional each (10x total, full margin).
+	trendRisk := trendCfg.RiskControl
+	if trendRisk.MaxPositions != 2 {
+		t.Fatalf("trend strategy should cap at 2 positions, got %d", trendRisk.MaxPositions)
+	}
+	if trendRisk.BTCETHMaxLeverage != 10 || trendRisk.AltcoinMaxLeverage != 10 {
+		t.Fatalf("trend strategy should use 10x leverage, got btcEth=%d altcoin=%d", trendRisk.BTCETHMaxLeverage, trendRisk.AltcoinMaxLeverage)
+	}
+	if trendRisk.BTCETHMaxPositionValueRatio != 5.0 || trendRisk.AltcoinMaxPositionValueRatio != 5.0 {
+		t.Fatalf("trend strategy should use 5x equity notional per position, got btcEth=%v altcoin=%v",
+			trendRisk.BTCETHMaxPositionValueRatio, trendRisk.AltcoinMaxPositionValueRatio)
+	}
+	if trendRisk.MaxMarginUsage != 1.0 {
+		t.Fatalf("trend strategy should allow full margin, got %v", trendRisk.MaxMarginUsage)
+	}
+	if trendRisk.MinConfidence != 78 {
+		t.Fatalf("trend strategy min confidence should be 78, got %d", trendRisk.MinConfidence)
 	}
 
 	megaCap := byName["美股大盘稳健策略"]

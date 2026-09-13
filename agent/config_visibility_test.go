@@ -197,8 +197,14 @@ func TestToolManageStrategyUpdateRejectsOutOfRangeLeverageBeforeSave(t *testing.
 	if err != nil {
 		t.Fatalf("parse updated strategy config: %v", err)
 	}
-	if parsed.RiskControl.BTCETHMaxLeverage != 5 || parsed.RiskControl.AltcoinMaxLeverage != 5 {
-		t.Fatalf("expected stored leverage to remain unchanged at safe defaults, got btc_eth=%d alt=%d", parsed.RiskControl.BTCETHMaxLeverage, parsed.RiskControl.AltcoinMaxLeverage)
+	// Derive the expectation from the template so a defaults change does not
+	// silently invalidate this guard.
+	defaults := store.GetDefaultStrategyConfig("zh")
+	if parsed.RiskControl.BTCETHMaxLeverage != defaults.RiskControl.BTCETHMaxLeverage ||
+		parsed.RiskControl.AltcoinMaxLeverage != defaults.RiskControl.AltcoinMaxLeverage {
+		t.Fatalf("expected stored leverage to remain unchanged at safe defaults (%d/%d), got btc_eth=%d alt=%d",
+			defaults.RiskControl.BTCETHMaxLeverage, defaults.RiskControl.AltcoinMaxLeverage,
+			parsed.RiskControl.BTCETHMaxLeverage, parsed.RiskControl.AltcoinMaxLeverage)
 	}
 }
 

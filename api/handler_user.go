@@ -278,12 +278,16 @@ func (s *Server) createDefaultStrategies(userID string, lang string) error {
 		c.CoinSource.UseHyperMain = false
 	}
 	setStableRisk := func(c *store.StrategyConfig) {
+		// Few, concentrated positions held for big moves. 10x leverage keeps a
+		// wide (-5%) stop survivable (~-50% margin, ~10% liquidation cushion);
+		// 2 positions x 5x = 10x total notional (full margin, doubled exposure).
+		// Mirrors the template defaults in store.GetDefaultStrategyConfig.
 		c.RiskControl.MaxPositions = 2
-		c.RiskControl.BTCETHMaxLeverage = 3
-		c.RiskControl.AltcoinMaxLeverage = 3
-		c.RiskControl.BTCETHMaxPositionValueRatio = 2.0
-		c.RiskControl.AltcoinMaxPositionValueRatio = 0.6
-		c.RiskControl.MaxMarginUsage = 0.45
+		c.RiskControl.BTCETHMaxLeverage = 10
+		c.RiskControl.AltcoinMaxLeverage = 10
+		c.RiskControl.BTCETHMaxPositionValueRatio = 5.0
+		c.RiskControl.AltcoinMaxPositionValueRatio = 5.0
+		c.RiskControl.MaxMarginUsage = 1.0
 		c.RiskControl.MinConfidence = 78
 		c.RiskControl.MinRiskRewardRatio = 3.0
 		c.Indicators.Klines.PrimaryTimeframe = "15m"

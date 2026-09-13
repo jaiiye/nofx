@@ -894,8 +894,12 @@ func TestStrategyCreateUsesConfigPatch(t *testing.T) {
 	if cfg.CoinSource.UseOILow {
 		t.Fatalf("expected OI low disabled when source_type is static, got %+v", cfg.CoinSource)
 	}
-	if cfg.RiskControl.MaxPositions != 3 || cfg.RiskControl.MinConfidence != 80 {
-		t.Fatalf("expected risk patch to apply, got %+v", cfg.RiskControl)
+	// MaxPositions comes from the template (the patch only overrides
+	// min_confidence), so read it from there rather than hardcoding.
+	defaultRisk := store.GetDefaultStrategyConfig("zh").RiskControl
+	if cfg.RiskControl.MaxPositions != defaultRisk.MaxPositions || cfg.RiskControl.MinConfidence != 80 {
+		t.Fatalf("expected risk patch to apply (max_positions=%d from template, min_confidence=80), got %+v",
+			defaultRisk.MaxPositions, cfg.RiskControl)
 	}
 	if !strings.Contains(cfg.CustomPrompt, "BTC 趋势做空") || !strings.Contains(cfg.PromptSections.EntryStandards, "做空") {
 		t.Fatalf("expected prompt patch to apply, got custom=%q entry=%q", cfg.CustomPrompt, cfg.PromptSections.EntryStandards)

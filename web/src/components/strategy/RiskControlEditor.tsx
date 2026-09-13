@@ -2,6 +2,34 @@ import { Shield, AlertTriangle } from 'lucide-react'
 import type { RiskControlConfig } from '../../types'
 import { riskControl, ts } from '../../i18n/strategy-translations'
 
+// Display fallbacks only — the authoritative defaults live in
+// store.GetDefaultStrategyConfig (Go). These mirror that profile so the editor
+// never renders a value the backend would not produce. Keep both in sync.
+const DEFAULT_RISK: Required<
+  Pick<
+    RiskControlConfig,
+    | 'max_positions'
+    | 'btc_eth_max_leverage'
+    | 'altcoin_max_leverage'
+    | 'btc_eth_max_position_value_ratio'
+    | 'altcoin_max_position_value_ratio'
+    | 'max_margin_usage'
+    | 'min_risk_reward_ratio'
+    | 'min_position_size'
+    | 'min_confidence'
+  >
+> = {
+  max_positions: 2,
+  btc_eth_max_leverage: 10,
+  altcoin_max_leverage: 10,
+  btc_eth_max_position_value_ratio: 5,
+  altcoin_max_position_value_ratio: 5,
+  max_margin_usage: 1.0,
+  min_risk_reward_ratio: 3,
+  min_position_size: 12,
+  min_confidence: 78,
+}
+
 interface RiskControlEditorProps {
   config: RiskControlConfig
   onChange: (config: RiskControlConfig) => void
@@ -48,7 +76,7 @@ export function RiskControlEditor({
             </p>
             <div className="flex items-center gap-3">
               <span className="font-mono text-lg" style={{ color: '#0ECB81' }}>
-                {config.max_positions ?? 3}
+                {config.max_positions ?? DEFAULT_RISK.max_positions}
               </span>
               <span className="text-xs" style={{ color: '#848E9C' }}>
                 System enforced
@@ -77,7 +105,7 @@ export function RiskControlEditor({
             <div className="flex items-center gap-2">
               <input
                 type="range"
-                value={config.btc_eth_max_leverage ?? 5}
+                value={config.btc_eth_max_leverage ?? DEFAULT_RISK.btc_eth_max_leverage}
                 onChange={(e) =>
                   updateField('btc_eth_max_leverage', parseInt(e.target.value))
                 }
@@ -90,7 +118,7 @@ export function RiskControlEditor({
                 className="w-12 text-center font-mono"
                 style={{ color: '#F0B90B' }}
               >
-                {config.btc_eth_max_leverage ?? 5}x
+                {config.btc_eth_max_leverage ?? DEFAULT_RISK.btc_eth_max_leverage}x
               </span>
             </div>
           </div>
@@ -108,7 +136,7 @@ export function RiskControlEditor({
             <div className="flex items-center gap-2">
               <input
                 type="range"
-                value={config.altcoin_max_leverage ?? 5}
+                value={config.altcoin_max_leverage ?? DEFAULT_RISK.altcoin_max_leverage}
                 onChange={(e) =>
                   updateField('altcoin_max_leverage', parseInt(e.target.value))
                 }
@@ -121,7 +149,7 @@ export function RiskControlEditor({
                 className="w-12 text-center font-mono"
                 style={{ color: '#F0B90B' }}
               >
-                {config.altcoin_max_leverage ?? 5}x
+                {config.altcoin_max_leverage ?? DEFAULT_RISK.altcoin_max_leverage}x
               </span>
             </div>
           </div>
@@ -152,7 +180,7 @@ export function RiskControlEditor({
                 className="w-12 text-center font-mono"
                 style={{ color: '#0ECB81' }}
               >
-                {config.btc_eth_max_position_value_ratio ?? 5}x
+                {config.btc_eth_max_position_value_ratio ?? DEFAULT_RISK.btc_eth_max_position_value_ratio}x
               </span>
               <span className="text-xs" style={{ color: '#848E9C' }}>
                 System enforced
@@ -175,7 +203,7 @@ export function RiskControlEditor({
                 className="w-12 text-center font-mono"
                 style={{ color: '#0ECB81' }}
               >
-                {config.altcoin_max_position_value_ratio ?? 1}x
+                {config.altcoin_max_position_value_ratio ?? DEFAULT_RISK.altcoin_max_position_value_ratio}x
               </span>
               <span className="text-xs" style={{ color: '#848E9C' }}>
                 System enforced
@@ -209,7 +237,7 @@ export function RiskControlEditor({
               <span style={{ color: '#848E9C' }}>1:</span>
               <input
                 type="number"
-                value={config.min_risk_reward_ratio ?? 3}
+                value={config.min_risk_reward_ratio ?? DEFAULT_RISK.min_risk_reward_ratio}
                 onChange={(e) =>
                   updateField('min_risk_reward_ratio', parseFloat(e.target.value) || 3)
                 }
@@ -239,7 +267,7 @@ export function RiskControlEditor({
             </p>
             <div className="flex items-center gap-2">
               <span className="w-12 text-center font-mono" style={{ color: '#0ECB81' }}>
-                {Math.round((config.max_margin_usage ?? 0.9) * 100)}%
+                {Math.round((config.max_margin_usage ?? DEFAULT_RISK.max_margin_usage) * 100)}%
               </span>
               <span className="text-xs" style={{ color: '#848E9C' }}>
                 System enforced
@@ -271,7 +299,7 @@ export function RiskControlEditor({
             </p>
             <div className="flex items-center gap-2">
               <span className="font-mono text-lg" style={{ color: '#0ECB81' }}>
-                {config.min_position_size ?? 12}
+                {config.min_position_size ?? DEFAULT_RISK.min_position_size}
               </span>
               <span className="ml-2" style={{ color: '#848E9C' }}>
                 USDT
@@ -295,7 +323,7 @@ export function RiskControlEditor({
             <div className="flex items-center gap-2">
               <input
                 type="range"
-                value={config.min_confidence ?? 75}
+                value={config.min_confidence ?? DEFAULT_RISK.min_confidence}
                 onChange={(e) =>
                   updateField('min_confidence', parseInt(e.target.value))
                 }
@@ -305,7 +333,7 @@ export function RiskControlEditor({
                 className="flex-1 accent-green-500"
               />
               <span className="w-12 text-center font-mono" style={{ color: '#0ECB81' }}>
-                {config.min_confidence ?? 75}
+                {config.min_confidence ?? DEFAULT_RISK.min_confidence}
               </span>
             </div>
           </div>
