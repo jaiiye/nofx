@@ -670,10 +670,8 @@ func (tm *TraderManager) addTraderFromStore(traderCfg *store.Trader, aiModelCfg 
 		ID:                    traderCfg.ID,
 		Name:                  traderCfg.Name,
 		AIModel:               aiModelCfg.Provider,
-		Exchange:              exchangeCfg.ExchangeType, // Exchange type: binance/bybit/okx/etc
+		Exchange:              exchangeCfg.ExchangeType, // Exchange type (hyperliquid only)
 		ExchangeID:            exchangeCfg.ID,           // Exchange account UUID (for multi-account)
-		BinanceAPIKey:         "",
-		BinanceSecretKey:      "",
 		HyperliquidPrivateKey: "",
 		HyperliquidTestnet:    exchangeCfg.Testnet,
 		UseQwen:               aiModelCfg.Provider == "qwen",
@@ -691,46 +689,11 @@ func (tm *TraderManager) addTraderFromStore(traderCfg *store.Trader, aiModelCfg 
 	logger.Infof("📊 Loading trader %s: ScanIntervalMinutes=%d (from DB), ScanInterval=%v",
 		traderCfg.Name, traderCfg.ScanIntervalMinutes, traderConfig.ScanInterval)
 
-	// Set API keys based on exchange type (convert EncryptedString to string)
-	switch exchangeCfg.ExchangeType {
-	case "binance":
-		traderConfig.BinanceAPIKey = string(exchangeCfg.APIKey)
-		traderConfig.BinanceSecretKey = string(exchangeCfg.SecretKey)
-	case "bybit":
-		traderConfig.BybitAPIKey = string(exchangeCfg.APIKey)
-		traderConfig.BybitSecretKey = string(exchangeCfg.SecretKey)
-	case "okx":
-		traderConfig.OKXAPIKey = string(exchangeCfg.APIKey)
-		traderConfig.OKXSecretKey = string(exchangeCfg.SecretKey)
-		traderConfig.OKXPassphrase = string(exchangeCfg.Passphrase)
-	case "bitget":
-		traderConfig.BitgetAPIKey = string(exchangeCfg.APIKey)
-		traderConfig.BitgetSecretKey = string(exchangeCfg.SecretKey)
-		traderConfig.BitgetPassphrase = string(exchangeCfg.Passphrase)
-	case "gate":
-		traderConfig.GateAPIKey = string(exchangeCfg.APIKey)
-		traderConfig.GateSecretKey = string(exchangeCfg.SecretKey)
-	case "kucoin":
-		traderConfig.KuCoinAPIKey = string(exchangeCfg.APIKey)
-		traderConfig.KuCoinSecretKey = string(exchangeCfg.SecretKey)
-		traderConfig.KuCoinPassphrase = string(exchangeCfg.Passphrase)
-	case "hyperliquid":
+	// Set credentials for Hyperliquid (only supported exchange)
+	if exchangeCfg.ExchangeType == "hyperliquid" {
 		traderConfig.HyperliquidPrivateKey = string(exchangeCfg.APIKey)
 		traderConfig.HyperliquidWalletAddr = exchangeCfg.HyperliquidWalletAddr
 		traderConfig.HyperliquidUnifiedAcct = exchangeCfg.HyperliquidUnifiedAcct
-	case "aster":
-		traderConfig.AsterUser = exchangeCfg.AsterUser
-		traderConfig.AsterSigner = exchangeCfg.AsterSigner
-		traderConfig.AsterPrivateKey = string(exchangeCfg.AsterPrivateKey)
-	case "lighter":
-		traderConfig.LighterPrivateKey = string(exchangeCfg.LighterPrivateKey)
-		traderConfig.LighterWalletAddr = exchangeCfg.LighterWalletAddr
-		traderConfig.LighterAPIKeyPrivateKey = string(exchangeCfg.LighterAPIKeyPrivateKey)
-		traderConfig.LighterAPIKeyIndex = exchangeCfg.LighterAPIKeyIndex
-		traderConfig.LighterTestnet = exchangeCfg.Testnet
-	case "indodax":
-		traderConfig.IndodaxAPIKey = string(exchangeCfg.APIKey)
-		traderConfig.IndodaxSecretKey = string(exchangeCfg.SecretKey)
 	}
 
 	// Set API keys based on AI model (convert EncryptedString to string)
@@ -743,8 +706,6 @@ func (tm *TraderManager) addTraderFromStore(traderCfg *store.Trader, aiModelCfg 
 		// For other providers (grok, openai, claude, gemini, kimi, etc.), use CustomAPIKey
 		traderConfig.CustomAPIKey = string(aiModelCfg.APIKey)
 	}
-
-	traderConfig.Claw402WalletKey = resolveTraderDataWalletKey(st, traderCfg.UserID, aiModelCfg)
 
 	// Create trader instance
 	at, err := trader.NewAutoTrader(traderConfig, st, traderCfg.UserID)
@@ -782,28 +743,4 @@ func (tm *TraderManager) addTraderFromStore(traderCfg *store.Trader, aiModelCfg 
 	}
 
 	return nil
-}
-
-func resolveTraderDataWalletKey(st *store.Store, userID string, selectedModel *store.AIModel) string {
-	// Fast path: selected model is itself a claw402 model.
-	if selectedModel != nil && selectedModel.Provider == "claw402" {
-		if walletKey := string(selectedModel.APIKey); walletKey != "" {
-			return walletKey
-		}
-	}
-
-	if st == nil {
-		return ""
-	}
-
-	// Fallback: find any configured claw402 model for this user so that paid
-	// NofxAI data sources work even when a non-claw402 model (e.g. deepseek) is
-	// selected as the AI brain.
-	preferredID := ""
-	walletKey, err := st.AIModel().ResolveClaw402WalletKey(userID, preferredID)
-	if err != nil {
-		logger.Warnf("⚠️ Failed to load claw402 wallet for trader data routing: %v", err)
-		return ""
-	}
-	return walletKey
 }

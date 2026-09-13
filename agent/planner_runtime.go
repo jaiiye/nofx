@@ -152,7 +152,7 @@ func isConfigOrTraderIntent(text string) bool {
 	keywords := []string{
 		"交易员", "trader", "exchange", "交易所", "模型", "model", "api key", "apikey",
 		"绑定", "配置", "setup", "configure", "deepseek", "openai", "claude", "gemini",
-		"okx", "binance", "bybit", "gate", "kucoin", "hyperliquid", "aster", "lighter",
+		"hyperliquid",
 	}
 	for _, kw := range keywords {
 		if strings.Contains(lower, kw) {

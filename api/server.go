@@ -200,8 +200,6 @@ func (s *Server) setupRoutes() {
 		{
 			// Logout (add to blacklist)
 			s.route(protected, "POST", "/logout", "Logout (blacklist token)", s.handleLogout)
-			s.route(protected, "POST", "/onboarding/beginner", "Prepare beginner claw402 wallet and default model", s.handleBeginnerOnboarding)
-			s.route(protected, "GET", "/onboarding/beginner/current", "Get current beginner claw402 wallet", s.handleCurrentBeginnerWallet)
 			s.route(protected, "GET", "/agent/preferences", "Get persistent agent preferences", s.handleGetAgentPreferences)
 			s.route(protected, "POST", "/agent/preferences", "Create persistent agent preference", s.handleCreateAgentPreference)
 			s.route(protected, "DELETE", "/agent/preferences/:id", "Delete persistent agent preference", s.handleDeleteAgentPreference)
@@ -214,7 +212,7 @@ func (s *Server) setupRoutes() {
 			// Server IP query (requires authentication, for whitelist configuration)
 			s.route(protected, "GET", "/server-ip", "Get server public IP (for exchange whitelist)", s.handleGetServerIP)
 
-			// AI500 index board (cached; routed through claw402 when configured)
+			// AI500 index board (cached; computed from free public market data)
 			s.route(protected, "GET", "/ai500", "AI500 index board (?limit=20)", s.handleAI500List)
 
 			// AI trader management
@@ -278,7 +276,7 @@ Defaults when custom fields empty: openai→api.openai.com/v1, deepseek→api.de
 
 			// Exchange configuration
 			s.routeWithSchema(protected, "GET", "/exchanges", "List exchange accounts",
-				`Returns: [{"id":"<EXACT id — use this as exchange_id when creating/updating a trader>","exchange_type":"<e.g. okx, binance>","account_name":"<user label>","enabled":<bool>}]
+				`Returns: [{"id":"<EXACT id — use this as exchange_id when creating/updating a trader>","exchange_type":"hyperliquid","account_name":"<user label>","enabled":<bool>}]
 CRITICAL: Always use the "id" field for exchange_id. Do not use "exchange_type" as an id.`,
 				s.handleGetExchangeConfigs)
 			s.routeWithSchema(protected, "GET", "/exchanges/account-state", "Get connection and balance state for each exchange account",
@@ -286,18 +284,13 @@ CRITICAL: Always use the "id" field for exchange_id. Do not use "exchange_type" 
 Use this endpoint to show balance and health in the exchange list without depending on traders.`,
 				s.handleGetExchangeAccountStates)
 			s.routeWithSchema(protected, "POST", "/exchanges", "Create a new exchange account",
-				`Body: {"exchange_type":"<string>","account_name":"<string, user label>","enabled":true,"api_key":"<string>","secret_key":"<string>","passphrase":"<string, required for okx/gate/kucoin>"}
-exchange_type values: "binance","bybit","okx","bitget","gate","kucoin","indodax" (CEX) | "hyperliquid","aster","lighter" (DEX)
-Required fields by exchange:
-  binance/bybit/bitget/indodax: api_key + secret_key
-  okx/gate/kucoin: api_key + secret_key + passphrase
-  hyperliquid: hyperliquid_wallet_addr
-  aster: aster_user + aster_signer + aster_private_key
-  lighter: lighter_wallet_addr + lighter_private_key + lighter_api_key_private_key + lighter_api_key_index`,
+				`Body: {"exchange_type":"hyperliquid","account_name":"<string, user label>","enabled":true,"api_key":"<Hyperliquid agent wallet private key>","hyperliquid_wallet_addr":"<string>","hyperliquid_unified_account":<bool>}
+This build only supports Hyperliquid.
+Required fields: api_key (private key) + hyperliquid_wallet_addr`,
 				s.handleCreateExchange)
 			s.routeWithSchema(protected, "PUT", "/exchanges", "Update an existing exchange account configuration",
-				`Body: {"id":"<EXACT id from GET /api/exchanges>","exchange_type":"<string>","account_name":"<string>","enabled":<bool>,"api_key":"<string>","secret_key":"<string>","passphrase":"<string, for okx/gate/kucoin>"}
-Use this to enable/disable an exchange or update API credentials. The "id" field is required to identify which exchange to update.`,
+				`Body: {"id":"<EXACT id from GET /api/exchanges>","account_name":"<string>","enabled":<bool>,"api_key":"<Hyperliquid agent wallet private key>","hyperliquid_wallet_addr":"<string>","hyperliquid_unified_account":<bool>}
+Use this to enable/disable an exchange or update credentials. The "id" field is required to identify which exchange to update.`,
 				s.handleUpdateExchangeConfigs)
 			s.routeWithSchema(protected, "DELETE", "/exchanges/:id", "Delete exchange account",
 				`:id = EXACT id from GET /api/exchanges. Permanently removes the exchange account and disconnects any traders using it.`,

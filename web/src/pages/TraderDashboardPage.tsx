@@ -57,33 +57,26 @@ function getExchangeTypeFromList(
     exchangeId: string | undefined,
     exchanges: Exchange[] | undefined
 ): string {
-    if (!exchangeId) return 'binance'
+    if (!exchangeId) return 'hyperliquid'
     const exchange = exchanges?.find((e) => e.id === exchangeId)
-    if (!exchange) return 'binance' // Default to binance for charts
-    return exchange.exchange_type?.toLowerCase() || 'binance'
+    if (!exchange) return 'hyperliquid' // Default for charts
+    return exchange.exchange_type?.toLowerCase() || 'hyperliquid'
 }
 
 // Helper function to check if exchange is a perp-dex type (wallet-based)
 function isPerpDexExchange(exchangeType: string | undefined): boolean {
     if (!exchangeType) return false
-    const perpDexTypes = ['hyperliquid', 'lighter', 'aster']
-    return perpDexTypes.includes(exchangeType.toLowerCase())
+    return exchangeType.toLowerCase() === 'hyperliquid'
 }
 
 // Helper function to get wallet address for perp-dex exchanges
 function getWalletAddress(exchange: Exchange | undefined): string | undefined {
     if (!exchange) return undefined
     const type = exchange.exchange_type?.toLowerCase()
-    switch (type) {
-        case 'hyperliquid':
-            return exchange.hyperliquidWalletAddr
-        case 'lighter':
-            return exchange.lighterWalletAddr
-        case 'aster':
-            return exchange.asterSigner
-        default:
-            return undefined
+    if (type === 'hyperliquid') {
+        return exchange.hyperliquidWalletAddr
     }
+    return undefined
 }
 
 // Helper function to truncate wallet address for display

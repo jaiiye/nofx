@@ -49,16 +49,12 @@ export const useTradersConfigStore = create<TradersConfigState>((set, get) => ({
 
   setAllExchanges: (exchanges) => {
     set({ allExchanges: exchanges })
-    // 更新 configuredExchanges
+    // 更新 configuredExchanges（当前版本只支持 Hyperliquid）
     const configuredExchanges = exchanges.filter((e) => {
-      if (e.id === 'aster') {
-        return e.asterUser && e.asterUser.trim() !== ''
+      if (e.exchange_type === 'hyperliquid') {
+        return Boolean(e.hyperliquidWalletAddr && e.hyperliquidWalletAddr.trim() !== '')
       }
-      if (e.id === 'hyperliquid') {
-        return e.hyperliquidWalletAddr && e.hyperliquidWalletAddr.trim() !== ''
-      }
-      // 修复: 添加 enabled 判断,与原始逻辑保持一致
-      return e.enabled || (e.apiKey && e.apiKey.trim() !== '')
+      return e.enabled || Boolean(e.apiKey && e.apiKey.trim() !== '')
     })
     set({ configuredExchanges })
   },

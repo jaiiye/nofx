@@ -107,48 +107,14 @@ func missingExchangeFields(exchange *store.Exchange) []string {
 	}
 
 	var missing []string
-	switch exchange.ExchangeType {
-	case "binance", "bybit", "gate", "indodax":
-		if exchange.APIKey == "" {
-			missing = append(missing, "API Key")
-		}
-		if exchange.SecretKey == "" {
-			missing = append(missing, "Secret Key")
-		}
-	case "okx", "bitget", "kucoin":
-		if exchange.APIKey == "" {
-			missing = append(missing, "API Key")
-		}
-		if exchange.SecretKey == "" {
-			missing = append(missing, "Secret Key")
-		}
-		if exchange.Passphrase == "" {
-			missing = append(missing, "Passphrase")
-		}
-	case "hyperliquid":
-		if exchange.APIKey == "" {
-			missing = append(missing, "私钥")
-		}
-		if strings.TrimSpace(exchange.HyperliquidWalletAddr) == "" {
-			missing = append(missing, "钱包地址")
-		}
-	case "aster":
-		if strings.TrimSpace(exchange.AsterUser) == "" {
-			missing = append(missing, "Aster User")
-		}
-		if strings.TrimSpace(exchange.AsterSigner) == "" {
-			missing = append(missing, "Aster Signer")
-		}
-		if exchange.AsterPrivateKey == "" {
-			missing = append(missing, "Aster Private Key")
-		}
-	case "lighter":
-		if strings.TrimSpace(exchange.LighterWalletAddr) == "" {
-			missing = append(missing, "钱包地址")
-		}
-		if exchange.LighterAPIKeyPrivateKey == "" {
-			missing = append(missing, "API Key Private Key")
-		}
+	if exchange.ExchangeType != "hyperliquid" {
+		return []string{"不支持的交易所类型"}
+	}
+	if exchange.APIKey == "" {
+		missing = append(missing, "私钥")
+	}
+	if strings.TrimSpace(exchange.HyperliquidWalletAddr) == "" {
+		missing = append(missing, "钱包地址")
 	}
 
 	return missing
@@ -189,10 +155,7 @@ func validateExchangeForTraderCreation(exchange *store.Exchange) (string, string
 			)
 	}
 
-	switch exchange.ExchangeType {
-	case "binance", "bybit", "okx", "bitget", "gate", "kucoin", "hyperliquid", "aster", "lighter", "indodax":
-		return "", "", nil
-	default:
+	if exchange.ExchangeType != "hyperliquid" {
 		return formatTraderCreationError(
 				fmt.Sprintf("交易所账户「%s」使用了当前版本暂不支持的类型 %s", exchangeDisplayName(exchange), exchange.ExchangeType),
 				"请改用当前版本支持的交易所账户后，再重新创建机器人",
@@ -201,6 +164,7 @@ func validateExchangeForTraderCreation(exchange *store.Exchange) (string, string
 				"exchange_type", exchange.ExchangeType,
 			)
 	}
+	return "", "", nil
 }
 
 func classifyTraderSetupReason(reason string) (string, string) {
@@ -222,8 +186,6 @@ func classifyTraderSetupReason(reason string) (string, string) {
 		return "trader.reason.private_key_invalid", "私钥格式不正确，系统无法识别"
 	case strings.Contains(lower, "failed to initialize hyperliquid trader"):
 		return "trader.reason.hyperliquid_init_failed", "Hyperliquid 账户初始化失败，请确认私钥、主钱包地址和 Agent Wallet 配置是否正确"
-	case strings.Contains(lower, "failed to initialize aster trader"):
-		return "trader.reason.aster_init_failed", "Aster 账户初始化失败，请确认 Aster User、Signer 和私钥是否正确"
 	case strings.Contains(lower, "failed to get meta information"):
 		return "trader.reason.exchange_meta_unavailable", "系统暂时无法从交易所读取账户元信息"
 	case strings.Contains(lower, "security check failed") && strings.Contains(lower, "agent wallet balance too high"):

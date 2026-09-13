@@ -149,11 +149,6 @@ func applyPeriodFilter(query *gorm.DB, period string) *gorm.DB {
 	}
 }
 
-// IsClaw402Config checks if a trader config uses claw402 payment provider
-func IsClaw402Config(aiModel string) bool {
-	return aiModel == "claw402"
-}
-
 // EstimateRunway estimates how many days the given USDC balance will last
 func EstimateRunway(usdcBalance float64, modelName string, scanIntervalMinutes int) (dailyCost float64, runwayDays float64) {
 	if scanIntervalMinutes <= 0 {

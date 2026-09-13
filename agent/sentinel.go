@@ -1,13 +1,12 @@
 package agent
 
 import (
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math"
 	"net/http"
+	"nofx/provider/hyperliquid"
 	"nofx/safe"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -144,27 +143,15 @@ func (s *Sentinel) scan() {
 }
 
 func (s *Sentinel) check(symbol string) {
-	resp, err := s.http.Get(fmt.Sprintf("https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=%s", symbol))
+	ticker, err := hyperliquid.FetchTicker24h(symbol)
 	if err != nil {
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		s.logger.Debug("sentinel ticker non-200", "symbol", symbol, "status", resp.StatusCode)
-		return
-	}
-	body, err := safe.ReadAllLimited(resp.Body, 256*1024) // 256KB limit
-	if err != nil {
-		return
-	}
-	var t map[string]interface{}
-	if err := json.Unmarshal(body, &t); err != nil {
+		s.logger.Debug("sentinel ticker unavailable", "symbol", symbol, "error", err)
 		return
 	}
 
-	price, _ := strconv.ParseFloat(fmt.Sprint(t["lastPrice"]), 64)
-	vol, _ := strconv.ParseFloat(fmt.Sprint(t["quoteVolume"]), 64)
-	chg, _ := strconv.ParseFloat(fmt.Sprint(t["priceChangePercent"]), 64)
+	price := ticker.LastPrice
+	vol := ticker.QuoteVolume
+	chg := ticker.ChangePct
 
 	pt := pricePt{Price: price, Volume: vol, Time: time.Now()}
 	s.mu.Lock()

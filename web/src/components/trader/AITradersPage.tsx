@@ -149,11 +149,8 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
 
   const configuredExchanges =
     allExchanges?.filter((e) => {
-      if (e.id === 'aster') {
-        return e.asterUser && e.asterUser.trim() !== ''
-      }
-      if (e.id === 'hyperliquid') {
-        return e.hyperliquidWalletAddr && e.hyperliquidWalletAddr.trim() !== ''
+      if (e.exchange_type === 'hyperliquid') {
+        return Boolean(e.hyperliquidWalletAddr && e.hyperliquidWalletAddr.trim() !== '')
       }
       return e.enabled
     }) || []
@@ -162,16 +159,8 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
   const enabledExchanges =
     allExchanges?.filter((e) => {
       if (!e.enabled) return false
-      if (e.id === 'aster') {
-        return (
-          e.asterUser &&
-          e.asterUser.trim() !== '' &&
-          e.asterSigner &&
-          e.asterSigner.trim() !== ''
-        )
-      }
-      if (e.id === 'hyperliquid') {
-        return e.hyperliquidWalletAddr && e.hyperliquidWalletAddr.trim() !== ''
+      if (e.exchange_type === 'hyperliquid') {
+        return Boolean(e.hyperliquidWalletAddr && e.hyperliquidWalletAddr.trim() !== '')
       }
       return true
     }) || []
@@ -546,13 +535,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
     passphrase?: string,
     testnet?: boolean,
     hyperliquidWalletAddr?: string,
-    asterUser?: string,
-    asterSigner?: string,
-    asterPrivateKey?: string,
-    lighterWalletAddr?: string,
-    lighterPrivateKey?: string,
-    lighterApiKeyPrivateKey?: string,
-    lighterApiKeyIndex?: number
+    hyperliquidUnifiedAccount?: boolean
   ) => {
     try {
       if (exchangeId) {
@@ -571,13 +554,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
               passphrase: passphrase || '',
               testnet: testnet || false,
               hyperliquid_wallet_addr: hyperliquidWalletAddr || '',
-              aster_user: asterUser || '',
-              aster_signer: asterSigner || '',
-              aster_private_key: asterPrivateKey || '',
-              lighter_wallet_addr: lighterWalletAddr || '',
-              lighter_private_key: lighterPrivateKey || '',
-              lighter_api_key_private_key: lighterApiKeyPrivateKey || '',
-              lighter_api_key_index: lighterApiKeyIndex || 0,
+              hyperliquid_unified_account: hyperliquidUnifiedAccount ?? existingExchange.hyperliquidBuilderApproved ?? false,
             },
           },
         }
@@ -594,13 +571,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
           passphrase: passphrase || '',
           testnet: testnet || false,
           hyperliquid_wallet_addr: hyperliquidWalletAddr || '',
-          aster_user: asterUser || '',
-          aster_signer: asterSigner || '',
-          aster_private_key: asterPrivateKey || '',
-          lighter_wallet_addr: lighterWalletAddr || '',
-          lighter_private_key: lighterPrivateKey || '',
-          lighter_api_key_private_key: lighterApiKeyPrivateKey || '',
-          lighter_api_key_index: lighterApiKeyIndex || 0,
+          hyperliquid_unified_account: hyperliquidUnifiedAccount ?? true,
         }
 
         await api.createExchangeEncrypted(createRequest)

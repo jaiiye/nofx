@@ -7,20 +7,19 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"nofx/logger"
 	"nofx/market"
 	"nofx/provider/alpaca"
-	"nofx/provider/coinank/coinank_api"
-	"nofx/provider/coinank/coinank_enum"
 	"nofx/provider/hyperliquid"
 	"nofx/provider/twelvedata"
 
 	"github.com/gin-gonic/gin"
 )
 
-// handleKlines K-line data (supports multiple exchanges via coinank)
+// handleKlines serves K-line data. Crypto pairs are served by the Hyperliquid
+// native API; Alpaca (US stocks) and Twelve Data (forex/metals) remain for
+// non-crypto instruments.
 func (s *Server) handleKlines(c *gin.Context) {
 	// Get query parameters
 	symbol := c.Query("symbol")
@@ -30,14 +29,14 @@ func (s *Server) handleKlines(c *gin.Context) {
 	}
 
 	interval := c.DefaultQuery("interval", "5m")
-	exchange := c.DefaultQuery("exchange", "binance") // Default to binance for backward compatibility
+	exchange := c.DefaultQuery("exchange", "hyperliquid") // hyperliquid is the only supported crypto venue
 	limitStr := c.DefaultQuery("limit", "1000")
 	limit, err := strconv.Atoi(limitStr)
 	if err != nil || limit <= 0 {
 		limit = 1000
 	}
 
-	// Coinank API has a maximum limit of 1500 klines per request
+	// Cap the per-request candle count to bound upstream load and response size.
 	if limit > 1500 {
 		limit = 1500
 	}
@@ -69,141 +68,14 @@ func (s *Server) handleKlines(c *gin.Context) {
 			return
 		}
 	default:
-		// Crypto exchanges via CoinAnk
-		symbol = market.Normalize(symbol)
-		klines, err = s.getKlinesFromCoinank(symbol, interval, exchange, limit)
-		if err != nil {
-			SafeInternalError(c, "Get klines from CoinAnk", err)
-			return
-		}
+		// This build only supports Hyperliquid; multi-exchange klines are gone.
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("unsupported exchange: %s (this build only supports hyperliquid)", exchange),
+		})
+		return
 	}
 
 	c.JSON(http.StatusOK, klines)
-}
-
-// getKlinesFromCoinank fetches kline data from coinank free/open API for multiple exchanges
-func (s *Server) getKlinesFromCoinank(symbol, interval, exchange string, limit int) ([]market.Kline, error) {
-	// Map exchange string to coinank enum
-	var coinankExchange coinank_enum.Exchange
-	switch strings.ToLower(exchange) {
-	case "binance":
-		coinankExchange = coinank_enum.Binance
-	case "bybit":
-		coinankExchange = coinank_enum.Bybit
-	case "okx":
-		coinankExchange = coinank_enum.Okex
-	case "bitget":
-		coinankExchange = coinank_enum.Bitget
-	case "gate":
-		coinankExchange = coinank_enum.Gate
-	case "aster":
-		coinankExchange = coinank_enum.Aster
-	case "lighter":
-		// Lighter doesn't have direct CoinAnk support, use Binance data as fallback
-		coinankExchange = coinank_enum.Binance
-	case "kucoin":
-		// KuCoin doesn't have direct CoinAnk support, use Binance data as fallback
-		coinankExchange = coinank_enum.Binance
-	default:
-		// For any unknown exchange, default to Binance
-		logger.Warnf("⚠️ Unknown exchange '%s', defaulting to Binance for CoinAnk", exchange)
-		coinankExchange = coinank_enum.Binance
-	}
-
-	// Map interval string to coinank enum
-	var coinankInterval coinank_enum.Interval
-	switch interval {
-	case "1s":
-		coinankInterval = coinank_enum.Second1
-	case "5s":
-		coinankInterval = coinank_enum.Second5
-	case "10s":
-		coinankInterval = coinank_enum.Second10
-	case "30s":
-		coinankInterval = coinank_enum.Second30
-	case "1m":
-		coinankInterval = coinank_enum.Minute1
-	case "3m":
-		coinankInterval = coinank_enum.Minute3
-	case "5m":
-		coinankInterval = coinank_enum.Minute5
-	case "10m":
-		coinankInterval = coinank_enum.Minute10
-	case "15m":
-		coinankInterval = coinank_enum.Minute15
-	case "30m":
-		coinankInterval = coinank_enum.Minute30
-	case "1h":
-		coinankInterval = coinank_enum.Hour1
-	case "2h":
-		coinankInterval = coinank_enum.Hour2
-	case "4h":
-		coinankInterval = coinank_enum.Hour4
-	case "6h":
-		coinankInterval = coinank_enum.Hour6
-	case "8h":
-		coinankInterval = coinank_enum.Hour8
-	case "12h":
-		coinankInterval = coinank_enum.Hour12
-	case "1d":
-		coinankInterval = coinank_enum.Day1
-	case "3d":
-		coinankInterval = coinank_enum.Day3
-	case "1w":
-		coinankInterval = coinank_enum.Week1
-	case "1M":
-		coinankInterval = coinank_enum.Month1
-	default:
-		return nil, fmt.Errorf("unsupported interval for coinank: %s", interval)
-	}
-
-	// Convert symbol format for different exchanges
-	// OKX uses "BTC-USDT-SWAP" format instead of "BTCUSDT"
-	apiSymbol := symbol
-	if coinankExchange == coinank_enum.Okex {
-		// Convert BTCUSDT -> BTC-USDT-SWAP
-		if strings.HasSuffix(symbol, "USDT") {
-			base := strings.TrimSuffix(symbol, "USDT")
-			apiSymbol = fmt.Sprintf("%s-USDT-SWAP", base)
-		}
-	}
-
-	// Call coinank free/open API (no authentication required)
-	ctx := context.Background()
-	ts := time.Now().UnixMilli()
-	// Use "To" side to search backward from current time (get historical klines)
-	coinankKlines, err := coinank_api.Kline(ctx, apiSymbol, coinankExchange, ts, coinank_enum.To, limit, coinankInterval)
-	if err != nil {
-		// Free API doesn't support all exchanges (e.g., OKX, Bitget)
-		// Fallback to Binance data as reference
-		if coinankExchange != coinank_enum.Binance {
-			logger.Warnf("⚠️ CoinAnk free API doesn't support %s, falling back to Binance data", coinankExchange)
-			coinankKlines, err = coinank_api.Kline(ctx, symbol, coinank_enum.Binance, ts, coinank_enum.To, limit, coinankInterval)
-			if err != nil {
-				return nil, fmt.Errorf("coinank API error (fallback): %w", err)
-			}
-		} else {
-			return nil, fmt.Errorf("coinank API error: %w", err)
-		}
-	}
-
-	// Convert coinank kline format to market.Kline format
-	// Coinank: Volume = BTC quantity, Quantity = USDT turnover
-	klines := make([]market.Kline, len(coinankKlines))
-	for i, ck := range coinankKlines {
-		klines[i] = market.Kline{
-			OpenTime:    ck.StartTime,
-			Open:        ck.Open,
-			High:        ck.High,
-			Low:         ck.Low,
-			Close:       ck.Close,
-			Volume:      ck.Volume,   // BTC quantity
-			QuoteVolume: ck.Quantity, // USDT turnover
-			CloseTime:   ck.EndTime,
-		}
-	}
-
-	return klines, nil
 }
 
 // getKlinesFromAlpaca fetches kline data from Alpaca API for US stocks

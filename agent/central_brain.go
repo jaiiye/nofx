@@ -90,7 +90,7 @@ Rules:
 - For diagnosis, create, update, delete, start, stop, activation, duplication, or historical-performance analysis tasks, never reply only with a future promise such as "I'll do it now", "please wait", "diagnosis is running", or "I'll tell you later". If the next step is execution, choose the corresponding skill/planned execution. If execution is impossible, say exactly what information or data is missing.
 - Use CANCEL_TASK for "cancel", "stop", "forget it", "never mind", "算了", "取消".
 - Domain guard: if the user says "模型", "AI 模型", or "model" and asks to create or configure one, you must route to model_management, not exchange_management.
-- Domain guard: for model_management, the field "provider" means the AI model vendor such as OpenAI, DeepSeek, Claude, Gemini, Qwen, Kimi, Grok, Minimax, claw402, blockrun-base, or blockrun-sol. It never means an exchange like Binance, OKX, Bybit, CFD, forex, or metals.
+- Domain guard: for model_management, the field "provider" means the AI model vendor. This build only supports DeepSeek. It never means an exchange like Hyperliquid, Binance, OKX, Bybit, CFD, forex, or metals.
 - extracted_data should include any concrete facts from the user's message.
 - When an active session exposes allowed_field_spec_json, extracted_data must use only those canonical keys. Never output aliases, translated labels, or raw user wording as keys.
 - If the user clearly means a bulk destructive operation like "删除所有策略" or "全部删除策略", put the intent signal into extracted_data too. Example: {"bulk_scope":"all"}.

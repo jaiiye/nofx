@@ -7,14 +7,6 @@ interface IconProps {
 // AI model colors for fallback display
 const MODEL_COLORS: Record<string, string> = {
   deepseek: '#4A90E2',
-  qwen: '#9B59B6',
-  claude: '#D97757',
-  kimi: '#6366F1',
-  gemini: '#4285F4',
-  grok: '#000000',
-  openai: '#10A37F',
-  minimax: '#E45735',
-  claw402: '#7C3AED',
 }
 
 // 获取AI模型图标的函数
@@ -27,30 +19,6 @@ export const getModelIcon = (modelType: string, props: IconProps = {}) => {
   switch (type) {
     case 'deepseek':
       iconPath = '/icons/deepseek.svg'
-      break
-    case 'qwen':
-      iconPath = '/icons/qwen.svg'
-      break
-    case 'claude':
-      iconPath = '/icons/claude.svg'
-      break
-    case 'kimi':
-      iconPath = '/icons/kimi.svg'
-      break
-    case 'gemini':
-      iconPath = '/icons/gemini.svg'
-      break
-    case 'grok':
-      iconPath = '/icons/grok.svg'
-      break
-    case 'openai':
-      iconPath = '/icons/openai.svg'
-      break
-    case 'minimax':
-      iconPath = '/icons/minimax.svg'
-      break
-    case 'claw402':
-      iconPath = '/icons/claw402.png'
       break
     default:
       return null

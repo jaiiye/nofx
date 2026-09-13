@@ -116,10 +116,10 @@ export function LoginPage() {
             </h2>
             <p className="mt-5 text-zinc-400 text-base leading-relaxed max-w-md">
               {language === 'zh'
-                ? '一键接入 Hyperliquid、OKX、Aster 等 10+ 交易所与 7 个 LLM 模型, 用自然语言部署 24/7 自动化策略.'
+                ? '一键接入 Hyperliquid 交易所与 DeepSeek 模型, 用自然语言部署 24/7 自动化策略.'
                 : language === 'id'
-                ? 'Hubungkan ke 10+ bursa termasuk Hyperliquid, OKX, Aster dan 7 model LLM. Terapkan strategi otomatis 24/7 dengan bahasa alami.'
-                : 'Plug into 10+ exchanges including Hyperliquid, OKX, Aster, and 7 LLM models. Deploy 24/7 automated strategies with natural language.'}
+                ? 'Hubungkan ke Hyperliquid dan model DeepSeek. Terapkan strategi otomatis 24/7 dengan bahasa alami.'
+                : 'Plug into Hyperliquid and DeepSeek. Deploy 24/7 automated strategies with natural language.'}
             </p>
           </div>
 

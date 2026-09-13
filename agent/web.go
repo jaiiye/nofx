@@ -8,8 +8,9 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"nofx/safe"
+	"nofx/provider/hyperliquid"
 	"regexp"
+	"strconv"
 	"time"
 )
 
@@ -52,9 +53,9 @@ var validSymbolRe = regexp.MustCompile(`^[A-Za-z0-9\-_]{1,20}$`)
 // validIntervalRe matches only valid kline intervals (e.g. 1m, 5m, 1h, 4h, 1d, 1w).
 var validIntervalRe = regexp.MustCompile(`^[0-9]{1,2}[mhHdDwWM]$`)
 
-// binanceClient is a shared HTTP client for proxying Binance API requests.
-// Reused across requests to benefit from connection pooling.
-var binanceClient = &http.Client{
+// marketProxyClient is a shared HTTP client for proxying public market-data
+// requests. Reused across requests to benefit from connection pooling.
+var marketProxyClient = &http.Client{
 	Timeout: 10 * time.Second,
 	Transport: &http.Transport{
 		MaxIdleConns:        20,
@@ -223,10 +224,17 @@ func (w *WebHandler) HandleKlines(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	proxyBinance(rw, r.Context(), fmt.Sprintf("https://fapi.binance.com/fapi/v1/klines?symbol=%s&interval=%s&limit=300", symbol, interval))
+	writeJSON(rw, 200, map[string]any{
+		"symbol":   symbol,
+		"interval": interval,
+		"source":   "hyperliquid",
+		"message":  "K-line data is served through /api/agent/ticker and the market tools.",
+	})
 }
 
-// HandleTicker proxies ticker data from Binance.
+// HandleTicker returns 24h ticker data for a single symbol, sourced from the
+// Hyperliquid native info API (multi-exchange support was removed from this
+// build).
 func (w *WebHandler) HandleTicker(rw http.ResponseWriter, r *http.Request) {
 	symbol := r.URL.Query().Get("symbol")
 	if symbol == "" {
@@ -238,11 +246,25 @@ func (w *WebHandler) HandleTicker(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	proxyBinance(rw, r.Context(), fmt.Sprintf("https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=%s", symbol))
+	ticker, err := hyperliquid.FetchTicker24h(symbol)
+	if err != nil {
+		writeJSON(rw, 502, map[string]string{"error": fmt.Sprintf("failed to fetch ticker: %v", err)})
+		return
+	}
+
+	writeJSON(rw, 200, map[string]any{
+		"symbol":             ticker.Symbol,
+		"lastPrice":          strconv.FormatFloat(ticker.LastPrice, 'f', -1, 64),
+		"priceChange":        strconv.FormatFloat(ticker.PriceChange, 'f', -1, 64),
+		"priceChangePercent": strconv.FormatFloat(ticker.ChangePct, 'f', 2, 64),
+		"quoteVolume":        strconv.FormatFloat(ticker.QuoteVolume, 'f', -1, 64),
+		"openInterest":       strconv.FormatFloat(ticker.OpenInterest, 'f', -1, 64),
+		"source":             "hyperliquid",
+	})
 }
 
 // HandleTickers handles GET /api/agent/tickers?symbols=BTCUSDT,ETHUSDT,SOLUSDT
-// Batch endpoint: fetches multiple tickers concurrently, returns array.
+// Batch endpoint: returns one entry per requested symbol.
 func (w *WebHandler) HandleTickers(rw http.ResponseWriter, r *http.Request) {
 	symbolsParam := r.URL.Query().Get("symbols")
 	if symbolsParam == "" {
@@ -265,61 +287,42 @@ func (w *WebHandler) HandleTickers(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fetch all tickers concurrently with context propagation
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-
-	type result struct {
-		idx  int
-		data json.RawMessage
+	// One universe fetch serves every requested symbol.
+	contexts, err := hyperliquid.FetchAssetContexts()
+	if err != nil {
+		writeJSON(rw, 502, map[string]string{"error": fmt.Sprintf("failed to fetch market data: %v", err)})
+		return
 	}
-	results := make(chan result, len(symbols))
-	for i, sym := range symbols {
-		idx, s := i, sym
-		safe.GoNamed("ticker-fetch-"+s, func() {
-			req, err := http.NewRequestWithContext(ctx, "GET",
-				fmt.Sprintf("https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=%s", s), nil)
-			if err != nil {
-				results <- result{idx: idx}
-				return
-			}
-			resp, err := binanceClient.Do(req)
-			if err != nil {
-				results <- result{idx: idx}
-				return
-			}
-			defer resp.Body.Close()
-			if resp.StatusCode != 200 {
-				results <- result{idx: idx}
-				return
-			}
-			body, err := safe.ReadAllLimited(resp.Body, 16*1024)
-			if err != nil {
-				results <- result{idx: idx}
-				return
-			}
-			results <- result{idx: idx, data: body}
+
+	out := make([]map[string]any, 0, len(symbols))
+	for _, sym := range symbols {
+		coin := hyperliquid.CoinNameFromSymbol(sym)
+		asset, ok := contexts[coin]
+		if !ok {
+			continue
+		}
+		price := asset.MarkPrice
+		if price <= 0 {
+			price = asset.OraclePrice
+		}
+		changePct := 0.0
+		change := 0.0
+		if asset.PrevDayPrice > 0 && price > 0 {
+			change = price - asset.PrevDayPrice
+			changePct = change / asset.PrevDayPrice * 100
+		}
+		out = append(out, map[string]any{
+			"symbol":             coin + "USDT",
+			"lastPrice":          strconv.FormatFloat(price, 'f', -1, 64),
+			"priceChange":        strconv.FormatFloat(change, 'f', -1, 64),
+			"priceChangePercent": strconv.FormatFloat(changePct, 'f', 2, 64),
+			"quoteVolume":        strconv.FormatFloat(asset.DayVolumeUSD, 'f', -1, 64),
+			"openInterest":       strconv.FormatFloat(asset.OpenInterest*price, 'f', -1, 64),
+			"source":             "hyperliquid",
 		})
 	}
 
-	// Collect results in order
-	ordered := make([]json.RawMessage, len(symbols))
-	for range symbols {
-		r := <-results
-		if r.data != nil {
-			ordered[r.idx] = r.data
-		}
-	}
-
-	// Filter out nil entries and write response
-	out := make([]json.RawMessage, 0, len(ordered))
-	for _, d := range ordered {
-		if d != nil {
-			out = append(out, d)
-		}
-	}
-	rw.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(rw).Encode(out)
+	writeJSON(rw, 200, out)
 }
 
 // commaRe is pre-compiled for splitComma — avoids recompiling on every call.
@@ -336,13 +339,13 @@ func splitComma(s string) []string {
 	return parts
 }
 
-func proxyBinance(rw http.ResponseWriter, ctx context.Context, url string) {
+func proxyMarketData(rw http.ResponseWriter, ctx context.Context, url string) {
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		writeJSON(rw, 500, map[string]string{"error": "failed to create request"})
 		return
 	}
-	resp, err := binanceClient.Do(req)
+	resp, err := marketProxyClient.Do(req)
 	if err != nil {
 		// Distinguish client cancellation from upstream failures
 		if ctx.Err() != nil {

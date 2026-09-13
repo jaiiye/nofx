@@ -6,20 +6,9 @@ import (
 	"nofx/kernel"
 	"nofx/logger"
 	"nofx/mcp"
-	_ "nofx/mcp/payment"
 	_ "nofx/mcp/provider"
 	"nofx/store"
-	"nofx/trader/aster"
-	"nofx/trader/binance"
-	"nofx/trader/bitget"
-	"nofx/trader/bybit"
-	"nofx/trader/gate"
 	"nofx/trader/hyperliquid"
-	"nofx/trader/indodax"
-	"nofx/trader/kucoin"
-	"nofx/trader/lighter"
-	"nofx/trader/okx"
-	"nofx/wallet"
 	"sync"
 	"time"
 )
@@ -57,39 +46,8 @@ type AutoTraderConfig struct {
 	AIModel string // AI model: "qwen" or "deepseek"
 
 	// Trading platform selection
-	Exchange   string // Exchange type: "binance", "bybit", "okx", "bitget", "gate", "hyperliquid", "aster" or "lighter"
+	Exchange   string // Exchange type: only "hyperliquid" is supported in this build
 	ExchangeID string // Exchange account UUID (for multi-account support)
-
-	// Binance API configuration
-	BinanceAPIKey    string
-	BinanceSecretKey string
-
-	// Bybit API configuration
-	BybitAPIKey    string
-	BybitSecretKey string
-
-	// OKX API configuration
-	OKXAPIKey     string
-	OKXSecretKey  string
-	OKXPassphrase string
-
-	// Bitget API configuration
-	BitgetAPIKey     string
-	BitgetSecretKey  string
-	BitgetPassphrase string
-
-	// Gate API configuration
-	GateAPIKey    string
-	GateSecretKey string
-
-	// KuCoin API configuration
-	KuCoinAPIKey     string
-	KuCoinSecretKey  string
-	KuCoinPassphrase string
-
-	// Indodax API configuration
-	IndodaxAPIKey    string
-	IndodaxSecretKey string
 
 	// Hyperliquid configuration
 	HyperliquidPrivateKey  string
@@ -97,28 +55,15 @@ type AutoTraderConfig struct {
 	HyperliquidTestnet     bool
 	HyperliquidUnifiedAcct bool // Unified Account mode: Spot USDC as Perp collateral
 
-	// Aster configuration
-	AsterUser       string // Aster main wallet address
-	AsterSigner     string // Aster API wallet address
-	AsterPrivateKey string // Aster API wallet private key
-
-	// LIGHTER configuration
-	LighterWalletAddr       string // LIGHTER wallet address (L1 wallet)
-	LighterPrivateKey       string // LIGHTER L1 private key (for account identification)
-	LighterAPIKeyPrivateKey string // LIGHTER API Key private key (40 bytes, for transaction signing)
-	LighterAPIKeyIndex      int    // LIGHTER API Key index (0-255)
-	LighterTestnet          bool   // Whether to use testnet
-
 	// AI configuration
 	UseQwen     bool
 	DeepSeekKey string
 	QwenKey     string
 
 	// Custom AI API configuration
-	CustomAPIURL     string
-	CustomAPIKey     string
-	CustomModelName  string
-	Claw402WalletKey string
+	CustomAPIURL    string
+	CustomAPIKey    string
+	CustomModelName string
 
 	// Scan configuration
 	ScanInterval time.Duration // Scan interval (recommended 3 minutes)
@@ -173,7 +118,6 @@ type AutoTrader struct {
 	lastBalanceSyncTime   time.Time          // Last balance sync time
 	userID                string             // User ID
 	gridState             *GridState         // Grid trading state (only used when StrategyType == "grid_trading")
-	claw402WalletAddr     string             // Claw402 wallet address (derived from private key at start)
 	consecutiveAIFailures int                // Consecutive AI call failures
 	safeMode              bool               // Safe mode: no new positions, protect existing ones
 	safeModeReason        string             // Why safe mode was activated
@@ -231,13 +175,8 @@ func NewAutoTrader(config AutoTraderConfig, st *store.Store, userID string) (*Au
 		mcpClient = mcp.New()
 	}
 
-	// Payment providers (claw402) ignore customURL
-	switch aiModel {
-	case "claw402":
-		mcpClient.SetAPIKey(apiKey, "", config.CustomModelName)
-	default:
-		mcpClient.SetAPIKey(apiKey, customURL, config.CustomModelName)
-	}
+	// Set API key for the selected provider
+	mcpClient.SetAPIKey(apiKey, customURL, config.CustomModelName)
 	logger.Infof("🤖 [%s] Using %s AI", config.Name, aiModel)
 
 	if config.CustomAPIURL != "" || config.CustomModelName != "" {
@@ -246,7 +185,7 @@ func NewAutoTrader(config AutoTraderConfig, st *store.Store, userID string) (*Au
 
 	// Set default trading platform
 	if config.Exchange == "" {
-		config.Exchange = "binance"
+		config.Exchange = "hyperliquid"
 	}
 
 	// Create corresponding trader based on configuration
@@ -260,60 +199,13 @@ func NewAutoTrader(config AutoTraderConfig, st *store.Store, userID string) (*Au
 	}
 	logger.Infof("📊 [%s] Position mode: %s", config.Name, marginModeStr)
 
-	switch config.Exchange {
-	case "binance":
-		logger.Infof("🏦 [%s] Using Binance Futures trading", config.Name)
-		trader = binance.NewFuturesTrader(config.BinanceAPIKey, config.BinanceSecretKey, userID)
-	case "bybit":
-		logger.Infof("🏦 [%s] Using Bybit Futures trading", config.Name)
-		trader = bybit.NewBybitTrader(config.BybitAPIKey, config.BybitSecretKey)
-	case "okx":
-		logger.Infof("🏦 [%s] Using OKX Futures trading", config.Name)
-		trader = okx.NewOKXTrader(config.OKXAPIKey, config.OKXSecretKey, config.OKXPassphrase)
-	case "bitget":
-		logger.Infof("🏦 [%s] Using Bitget Futures trading", config.Name)
-		trader = bitget.NewBitgetTrader(config.BitgetAPIKey, config.BitgetSecretKey, config.BitgetPassphrase)
-	case "gate":
-		logger.Infof("🏦 [%s] Using Gate.io Futures trading", config.Name)
-		trader = gate.NewGateTrader(config.GateAPIKey, config.GateSecretKey)
-	case "kucoin":
-		logger.Infof("🏦 [%s] Using KuCoin Futures trading", config.Name)
-		trader = kucoin.NewKuCoinTrader(config.KuCoinAPIKey, config.KuCoinSecretKey, config.KuCoinPassphrase)
-	case "hyperliquid":
-		logger.Infof("🏦 [%s] Using Hyperliquid trading", config.Name)
-		trader, err = hyperliquid.NewHyperliquidTrader(config.HyperliquidPrivateKey, config.HyperliquidWalletAddr, config.HyperliquidTestnet, config.HyperliquidUnifiedAcct)
-		if err != nil {
-			return nil, fmt.Errorf("failed to initialize Hyperliquid trader: %w", err)
-		}
-	case "aster":
-		logger.Infof("🏦 [%s] Using Aster trading", config.Name)
-		trader, err = aster.NewAsterTrader(config.AsterUser, config.AsterSigner, config.AsterPrivateKey)
-		if err != nil {
-			return nil, fmt.Errorf("failed to initialize Aster trader: %w", err)
-		}
-	case "lighter":
-		logger.Infof("🏦 [%s] Using LIGHTER trading", config.Name)
-
-		if config.LighterWalletAddr == "" || config.LighterAPIKeyPrivateKey == "" {
-			return nil, fmt.Errorf("Lighter requires wallet address and API Key private key")
-		}
-
-		// Lighter only supports mainnet (testnet disabled)
-		trader, err = lighter.NewLighterTraderV2(
-			config.LighterWalletAddr,
-			config.LighterAPIKeyPrivateKey,
-			config.LighterAPIKeyIndex,
-			false, // Always use mainnet for Lighter
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to initialize LIGHTER trader: %w", err)
-		}
-		logger.Infof("✓ LIGHTER trader initialized successfully")
-	case "indodax":
-		logger.Infof("🏦 [%s] Using Indodax Spot trading", config.Name)
-		trader = indodax.NewIndodaxTrader(config.IndodaxAPIKey, config.IndodaxSecretKey)
-	default:
-		return nil, fmt.Errorf("unsupported trading platform: %s", config.Exchange)
+	if config.Exchange != "hyperliquid" {
+		return nil, fmt.Errorf("unsupported trading platform: %s (this build only supports hyperliquid)", config.Exchange)
+	}
+	logger.Infof("🏦 [%s] Using Hyperliquid trading", config.Name)
+	trader, err = hyperliquid.NewHyperliquidTrader(config.HyperliquidPrivateKey, config.HyperliquidWalletAddr, config.HyperliquidTestnet, config.HyperliquidUnifiedAcct)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize Hyperliquid trader: %w", err)
 	}
 
 	// Validate initial balance configuration, auto-fetch from exchange if 0
@@ -359,13 +251,7 @@ func NewAutoTrader(config AutoTraderConfig, st *store.Store, userID string) (*Au
 	if config.StrategyConfig == nil {
 		return nil, fmt.Errorf("[%s] strategy not configured", config.Name)
 	}
-	// Pass claw402 wallet key to strategy engine so nofxos data requests
-	// are routed through claw402 (reuses the same wallet as AI calls)
-	claw402Key := config.Claw402WalletKey
-	if claw402Key == "" && config.AIModel == "claw402" && config.CustomAPIKey != "" {
-		claw402Key = config.CustomAPIKey
-	}
-	strategyEngine := kernel.NewStrategyEngine(config.StrategyConfig, claw402Key)
+	strategyEngine := kernel.NewStrategyEngine(config.StrategyConfig)
 	logger.Infof("✓ [%s] Using strategy engine (strategy configuration loaded)", config.Name)
 
 	return &AutoTrader{
@@ -410,84 +296,16 @@ func (at *AutoTrader) Run() error {
 	at.logInfof("⚙️  Scan interval: %v", at.config.ScanInterval)
 	logger.Info("🤖 AI will make full decisions on leverage, position size, stop loss/take profit, etc.")
 
-	// Pre-launch checks for claw402 users
-	at.runPreLaunchChecks()
 	at.monitorWg.Add(1)
 	defer at.monitorWg.Done()
 
 	// Start drawdown monitoring
 	at.startDrawdownMonitor()
 
-	// Start Lighter order sync if using Lighter exchange
-	if at.exchange == "lighter" {
-		if lighterTrader, ok := at.trader.(*lighter.LighterTraderV2); ok && at.store != nil {
-			lighterTrader.StartOrderSync(at.id, at.exchangeID, at.exchange, at.store, 30*time.Second, at.stopMonitorCh)
-			at.logInfof("🔄 Lighter order+position sync enabled (every 30s)")
-		}
-	}
-
-	// Start Hyperliquid order sync if using Hyperliquid exchange
-	if at.exchange == "hyperliquid" {
-		if hyperliquidTrader, ok := at.trader.(*hyperliquid.HyperliquidTrader); ok && at.store != nil {
-			hyperliquidTrader.StartOrderSync(at.id, at.exchangeID, at.exchange, at.store, 30*time.Second, at.stopMonitorCh)
-			at.logInfof("🔄 Hyperliquid order+position sync enabled (every 30s)")
-		}
-	}
-
-	// Start Bybit order sync if using Bybit exchange
-	if at.exchange == "bybit" {
-		if bybitTrader, ok := at.trader.(*bybit.BybitTrader); ok && at.store != nil {
-			bybitTrader.StartOrderSync(at.id, at.exchangeID, at.exchange, at.store, 30*time.Second, at.stopMonitorCh)
-			at.logInfof("🔄 Bybit order+position sync enabled (every 30s)")
-		}
-	}
-
-	// Start OKX order sync if using OKX exchange
-	if at.exchange == "okx" {
-		if okxTrader, ok := at.trader.(*okx.OKXTrader); ok && at.store != nil {
-			okxTrader.StartOrderSync(at.id, at.exchangeID, at.exchange, at.store, 30*time.Second, at.stopMonitorCh)
-			at.logInfof("🔄 OKX order+position sync enabled (every 30s)")
-		}
-	}
-
-	// Start Bitget order sync if using Bitget exchange
-	if at.exchange == "bitget" {
-		if bitgetTrader, ok := at.trader.(*bitget.BitgetTrader); ok && at.store != nil {
-			bitgetTrader.StartOrderSync(at.id, at.exchangeID, at.exchange, at.store, 30*time.Second, at.stopMonitorCh)
-			at.logInfof("🔄 Bitget order+position sync enabled (every 30s)")
-		}
-	}
-
-	// Start Aster order sync if using Aster exchange
-	if at.exchange == "aster" {
-		if asterTrader, ok := at.trader.(*aster.AsterTrader); ok && at.store != nil {
-			asterTrader.StartOrderSync(at.id, at.exchangeID, at.exchange, at.store, 30*time.Second, at.stopMonitorCh)
-			at.logInfof("🔄 Aster order+position sync enabled (every 30s)")
-		}
-	}
-
-	// Start Binance order sync if using Binance exchange
-	if at.exchange == "binance" {
-		if binanceTrader, ok := at.trader.(*binance.FuturesTrader); ok && at.store != nil {
-			binanceTrader.StartOrderSync(at.id, at.exchangeID, at.exchange, at.store, 30*time.Second, at.stopMonitorCh)
-			at.logInfof("🔄 Binance order+position sync enabled (every 30s)")
-		}
-	}
-
-	// Start Gate order sync if using Gate exchange
-	if at.exchange == "gate" {
-		if gateTrader, ok := at.trader.(*gate.GateTrader); ok && at.store != nil {
-			gateTrader.StartOrderSync(at.id, at.exchangeID, at.exchange, at.store, 30*time.Second, at.stopMonitorCh)
-			at.logInfof("🔄 Gate order+position sync enabled (every 30s)")
-		}
-	}
-
-	// Start KuCoin order sync if using KuCoin exchange
-	if at.exchange == "kucoin" {
-		if kucoinTrader, ok := at.trader.(*kucoin.KuCoinTrader); ok && at.store != nil {
-			kucoinTrader.StartOrderSync(at.id, at.exchangeID, at.exchange, at.store, 30*time.Second, at.stopMonitorCh)
-			at.logInfof("🔄 KuCoin order+position sync enabled (every 30s)")
-		}
+	// Start Hyperliquid order sync
+	if hyperliquidTrader, ok := at.trader.(*hyperliquid.HyperliquidTrader); ok && at.store != nil {
+		hyperliquidTrader.StartOrderSync(at.id, at.exchangeID, at.exchange, at.store, 30*time.Second, at.stopMonitorCh)
+		at.logInfof("🔄 Hyperliquid order+position sync enabled (every 30s)")
 	}
 
 	ticker := time.NewTicker(at.config.ScanInterval)
@@ -643,50 +461,6 @@ func calculatePnLPercentage(unrealizedPnl, marginUsed float64) float64 {
 		return (unrealizedPnl / marginUsed) * 100
 	}
 	return 0.0
-}
-
-// runPreLaunchChecks performs pre-launch checks for claw402 users (wallet balance, runway estimate)
-func (at *AutoTrader) runPreLaunchChecks() {
-	if !store.IsClaw402Config(at.config.AIModel) {
-		return
-	}
-
-	logger.Info("🔍 Running pre-launch checks (claw402)...")
-
-	// Derive wallet address from CustomAPIKey (which is the private key for claw402)
-	if at.config.CustomAPIKey != "" {
-		// Try to derive address using go-ethereum
-		addr := deriveWalletAddress(at.config.CustomAPIKey)
-		if addr != "" {
-			at.claw402WalletAddr = addr
-			logger.Infof("💳 [%s] Claw402 wallet: %s", at.name, addr)
-
-			// Query USDC balance
-			balance, err := wallet.QueryUSDCBalance(addr)
-			if err != nil {
-				logger.Warnf("⚠️ [%s] Could not query USDC balance: %v", at.name, err)
-			} else {
-				// Estimate runway
-				scanMinutes := int(at.config.ScanInterval.Minutes())
-				modelName := at.config.CustomModelName
-				if modelName == "" {
-					modelName = "deepseek"
-				}
-				dailyCost, runway := store.EstimateRunway(balance, modelName, scanMinutes)
-				logger.Infof("💰 [%s] USDC Balance: $%.2f | Daily AI cost: ~$%.2f | Runway: ~%.1f days",
-					at.name, balance, dailyCost, runway)
-
-				if balance < 1.0 {
-					logger.Warnf("⚠️ [%s] Low USDC balance! Consider topping up.", at.name)
-				}
-				if balance <= 0 {
-					logger.Errorf("🚨 [%s] USDC balance is ZERO — AI calls will fail!", at.name)
-				}
-			}
-		}
-	}
-
-	logger.Info("✅ Pre-launch checks complete")
 }
 
 // deriveWalletAddress derives an Ethereum address from a hex private key

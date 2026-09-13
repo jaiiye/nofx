@@ -20,7 +20,6 @@ import { CompetitionPage } from '../components/trader/CompetitionPage'
 import { AITradersPage } from '../components/trader/AITradersPage'
 import { FAQPage } from '../pages/FAQPage'
 import { LandingPage } from '../pages/LandingPage'
-import { BeginnerOnboardingPage } from '../pages/BeginnerOnboardingPage'
 import { DataPage } from '../pages/DataPage'
 import { AgentChatPage } from '../pages/AgentChatPage'
 import { SettingsPage } from '../pages/SettingsPage'
@@ -32,7 +31,6 @@ import { useLanguage } from '../contexts/LanguageContext'
 import { useSystemConfig } from '../hooks/useSystemConfig'
 import { t } from '../i18n/translations'
 import { api } from '../lib/api'
-import { getUserMode } from '../lib/onboarding'
 import type {
   AccountInfo,
   DecisionRecord,
@@ -192,11 +190,7 @@ function AppChrome({
   )
 }
 
-function TradersRoute({
-  showBeginnerOnboarding = false,
-}: {
-  showBeginnerOnboarding?: boolean
-}) {
+function TradersRoute() {
   const navigate = useNavigate()
   const { user, token } = useAuth()
   const { data: traders } = useSWR<TraderInfo[]>(
@@ -212,7 +206,6 @@ function TradersRoute({
     <AppChrome
       currentPage="traders"
       animateContent
-      extraContent={showBeginnerOnboarding ? <BeginnerOnboardingPage /> : null}
     >
       <AITradersPage
         onTraderSelect={(traderId) => {
@@ -489,11 +482,7 @@ export function AppRoutes() {
           path={ROUTES.welcome}
           element={
             isAuthenticated ? (
-              getUserMode() === 'beginner' ? (
-                <TradersRoute showBeginnerOnboarding />
-              ) : (
-                <Navigate to={ROUTES.traders} replace />
-              )
+              <Navigate to={ROUTES.traders} replace />
             ) : (
               <Navigate to={ROUTES.login} replace />
             )

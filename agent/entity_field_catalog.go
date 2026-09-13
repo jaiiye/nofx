@@ -32,15 +32,8 @@ var exchangeFieldCatalog = []entityFieldMeta{
 	{Key: "enabled", Keywords: []string{"启用", "禁用", "enable", "disable"}, ValueType: "enabled", AgentUpdatable: true},
 	{Key: "api_key", Keywords: []string{"api key", "apikey", "api_key"}, ValueType: "credential", ManualEditable: true, AgentUpdatable: true},
 	{Key: "secret_key", Keywords: []string{"secret key", "secret", "secret_key"}, ValueType: "credential", ManualEditable: true, AgentUpdatable: true},
-	{Key: "passphrase", Keywords: []string{"passphrase", "密码短语"}, ValueType: "credential", ManualEditable: true, AgentUpdatable: true},
 	{Key: "testnet", Keywords: []string{"testnet", "测试网"}, ValueType: "flag", ManualEditable: true, AgentUpdatable: true},
 	{Key: "hyperliquid_wallet_addr", Keywords: []string{"hyperliquid wallet", "hyperliquid钱包", "主钱包地址", "wallet address"}, ValueType: "credential", ManualEditable: true, AgentUpdatable: true},
-	{Key: "aster_user", Keywords: []string{"aster user", "aster用户", "用户地址", "user"}, ValueType: "credential", ManualEditable: true, AgentUpdatable: true},
-	{Key: "aster_signer", Keywords: []string{"aster signer", "signer"}, ValueType: "credential", ManualEditable: true, AgentUpdatable: true},
-	{Key: "aster_private_key", Keywords: []string{"aster private key", "aster私钥", "private key"}, ValueType: "credential", ManualEditable: true, AgentUpdatable: true},
-	{Key: "lighter_wallet_addr", Keywords: []string{"lighter wallet", "lighter钱包", "wallet address"}, ValueType: "credential", ManualEditable: true, AgentUpdatable: true},
-	{Key: "lighter_api_key_private_key", Keywords: []string{"lighter api key private key", "lighter api key", "api key private key"}, ValueType: "credential", ManualEditable: true, AgentUpdatable: true},
-	{Key: "lighter_api_key_index", Keywords: []string{"lighter api key index", "lighter索引", "api key index"}, ValueType: "int", ManualEditable: true, AgentUpdatable: true},
 }
 
 func fieldKeysByCapability(catalog []entityFieldMeta, include func(entityFieldMeta) bool) []string {

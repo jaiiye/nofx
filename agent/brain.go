@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"nofx/provider/hyperliquid"
 	"nofx/safe"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -203,30 +205,22 @@ func (b *Brain) sendBrief(hour int) {
 		title = "🌙 *晚间市场简报*"
 	}
 
-	// Fetch BTC/ETH prices for the brief
+	// Fetch BTC/ETH prices for the brief from the Hyperliquid native API
 	var btcPrice, ethPrice, btcChg, ethChg string
 	for _, sym := range []string{"BTCUSDT", "ETHUSDT"} {
-		resp, err := b.http.Get(fmt.Sprintf("https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=%s", sym))
+		ticker, err := hyperliquid.FetchTicker24h(sym)
 		if err != nil {
 			continue
 		}
-		body, readErr := safe.ReadAllLimited(resp.Body, 64*1024) // 64KB limit
-		statusOK := resp.StatusCode == http.StatusOK
-		resp.Body.Close()
-		if readErr != nil || !statusOK {
-			continue
-		}
-		var t map[string]string
-		if err := json.Unmarshal(body, &t); err != nil {
-			continue
-		}
+		price := strconv.FormatFloat(ticker.LastPrice, 'f', -1, 64)
+		change := strconv.FormatFloat(ticker.ChangePct, 'f', 2, 64)
 		if sym == "BTCUSDT" {
-			btcPrice = t["lastPrice"]
-			btcChg = t["priceChangePercent"]
+			btcPrice = price
+			btcChg = change
 		}
 		if sym == "ETHUSDT" {
-			ethPrice = t["lastPrice"]
-			ethChg = t["priceChangePercent"]
+			ethPrice = price
+			ethChg = change
 		}
 	}
 

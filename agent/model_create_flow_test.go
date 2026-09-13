@@ -9,7 +9,7 @@ import (
 	"nofx/store"
 )
 
-func TestHandleModelCreateSkillAsksProviderFirstWithClaw402Recommendation(t *testing.T) {
+func TestHandleModelCreateSkillAsksProviderFirst(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "agent-model-create.db")
 	st, err := store.New(dbPath)
 	if err != nil {
@@ -22,30 +22,28 @@ func TestHandleModelCreateSkillAsksProviderFirstWithClaw402Recommendation(t *tes
 	for _, want := range []string{
 		"还缺这些字段：模型提供商",
 		"可选模型 provider",
-		"推荐 `claw402`",
-		"并列可选",
-		"按次付费",
-		"Base USDC 钱包支付",
-		"直接创建 Base 钱包",
-		"直接扫码充值/支付",
+		"deepseek",
 	} {
 		if !strings.Contains(reply, want) {
 			t.Fatalf("expected reply to contain %q, got: %s", want, reply)
 		}
 	}
 	for _, unexpected := range []string{
+		"claw402",
+		"blockrun-base",
+		"blockrun-sol",
 		"还缺这些字段：模型提供商、API Key",
 		"还缺这些字段：模型提供商、钱包私钥",
 		"还缺这些字段：模型提供商、wallet private key",
 	} {
 		if strings.Contains(reply, unexpected) {
-			t.Fatalf("provider-first reply should not ask for credentials yet: %s", reply)
+			t.Fatalf("provider-first reply should not mention %q: %s", unexpected, reply)
 		}
 	}
 }
 
-func TestHandleModelCreateSkillUsesCollectedClaw402PrivateKey(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "agent-model-create-claw402.db")
+func TestHandleModelCreateSkillUsesCollectedDeepSeekAPIKey(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "agent-model-create-deepseek.db")
 	st, err := store.New(dbPath)
 	if err != nil {
 		t.Fatalf("create store: %v", err)
@@ -57,19 +55,16 @@ func TestHandleModelCreateSkillUsesCollectedClaw402PrivateKey(t *testing.T) {
 		Action: "create",
 		Phase:  "collecting",
 		Fields: map[string]string{
-			"provider":          "claw402",
-			"name":              "Claw402 (Base USDC)",
-			"api_key":           "0x205d759b80bae1afa31a36c4afaeec0b10378c1c55e3363bcde5a1db75c747ca",
-			"custom_model_name": "deepseek",
+			"provider":          "deepseek",
+			"name":              "DeepSeek AI",
+			"api_key":           "sk-test-deepseek-123456",
+			"custom_model_name": "deepseek-chat",
 		},
 	}
 
 	reply := a.handleModelCreateSkill("default", 42, "zh", "继续", session)
 
-	if strings.Contains(reply, "还缺这些字段：钱包私钥") {
-		t.Fatalf("expected bare private key to be accepted, got: %s", reply)
-	}
 	if !strings.Contains(reply, "我先整理了一份模型配置草稿") {
-		t.Fatalf("expected draft summary after accepting private key, got: %s", reply)
+		t.Fatalf("expected draft summary after accepting API key, got: %s", reply)
 	}
 }

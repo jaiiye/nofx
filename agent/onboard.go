@@ -233,13 +233,7 @@ func (a *Agent) handleExchangeChoice(userID int64, text string, state *SetupStat
 	lower := strings.ToLower(strings.TrimSpace(text))
 
 	exchanges := map[string]string{
-		"binance": "binance", "币安": "binance", "1": "binance",
-		"okx": "okx", "欧易": "okx", "2": "okx",
-		"bybit": "bybit", "3": "bybit",
-		"bitget": "bitget", "4": "bitget",
-		"gate": "gate", "5": "gate",
-		"kucoin": "kucoin", "库币": "kucoin", "6": "kucoin",
-		"hyperliquid": "hyperliquid", "7": "hyperliquid",
+		"hyperliquid": "hyperliquid", "1": "hyperliquid",
 	}
 
 	ex, ok := exchanges[lower]
@@ -456,8 +450,6 @@ func (a *Agent) saveSetupExchange(storeUserID string, state *SetupState) (string
 				apiKey, apiSecret, passphrase,
 				false,
 				hlWallet, hlUnified, false,
-				"", "", "",
-				"", "", "", 0,
 			); err != nil {
 				return "", err
 			}
@@ -473,8 +465,6 @@ func (a *Agent) saveSetupExchange(storeUserID string, state *SetupState) (string
 		apiKey, apiSecret, passphrase,
 		false,
 		hlWallet, hlUnified, false,
-		"", "", "",
-		"", "", "", 0,
 	)
 }
 
@@ -512,7 +502,8 @@ func maskKey(key string) string {
 }
 
 func needsPassphrase(exchange string) bool {
-	return exchange == "okx" || exchange == "bitget" || exchange == "kucoin"
+	// No exchange supported by this build requires a passphrase.
+	return false
 }
 
 func containsAny(s string, words []string) bool {

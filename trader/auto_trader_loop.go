@@ -8,7 +8,6 @@ import (
 	"nofx/market"
 	"nofx/provider/hyperliquid"
 	"nofx/store"
-	"nofx/wallet"
 	"strings"
 	"time"
 )
@@ -28,11 +27,6 @@ func (at *AutoTrader) runCycle() error {
 	if !running {
 		at.logInfof("⏹ Trader is stopped, aborting cycle #%d", at.callCount)
 		return nil
-	}
-
-	// Check USDC balance periodically for claw402 users (every 10 cycles)
-	if at.callCount%10 == 0 && store.IsClaw402Config(at.config.AIModel) {
-		at.checkClaw402Balance()
 	}
 
 	// Create decision record
@@ -734,37 +728,4 @@ func sortDecisionsByPriority(decisions []kernel.Decision) []kernel.Decision {
 	}
 
 	return sorted
-}
-
-// checkClaw402Balance checks USDC balance and logs warnings if low
-func (at *AutoTrader) checkClaw402Balance() {
-	scanMinutes := int(at.config.ScanInterval.Minutes())
-	if scanMinutes <= 0 {
-		scanMinutes = 3
-	}
-	dailyCost, _ := store.EstimateRunway(1.0, at.config.CustomModelName, scanMinutes)
-	logger.Infof("💰 [%s] Estimated daily AI cost: ~$%.2f (model: %s, interval: %dm)",
-		at.name, dailyCost, at.config.CustomModelName, scanMinutes)
-
-	if at.claw402WalletAddr != "" {
-		balance, err := wallet.QueryUSDCBalance(at.claw402WalletAddr)
-		if err != nil {
-			at.logWarnf("⚠️ Failed to query USDC balance: %v", err)
-			return
-		}
-
-		if balance < 1.0 {
-			at.logWarnf("⚠️ Low USDC balance: $%.2f — AI may stop soon!", balance)
-		}
-		if balance <= 0 {
-			at.logErrorf("🚨 USDC balance is ZERO — AI calls will fail!")
-		}
-
-		runway := float64(0)
-		if dailyCost > 0 {
-			runway = balance / dailyCost
-		}
-		logger.Infof("💰 [%s] USDC Balance: $%.2f | Daily AI cost: ~$%.2f | Runway: ~%.1f days",
-			at.name, balance, dailyCost, runway)
-	}
 }

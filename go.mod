@@ -3,13 +3,8 @@ module nofx
 go 1.25.11
 
 require (
-	github.com/adshao/go-binance/v2 v2.8.9
 	github.com/agiledragon/gomonkey/v2 v2.13.0
-	github.com/antihax/optional v1.0.0
-	github.com/bybit-exchange/bybit.go.api v0.0.0-20250727214011-c9347d6804d6
-	github.com/elliottech/lighter-go v0.0.0-20251104171447-78b9b55ebc48
 	github.com/ethereum/go-ethereum v1.17.3
-	github.com/gateio/gateapi-go/v6 v6.104.3
 	github.com/gin-gonic/gin v1.11.0
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
@@ -33,7 +28,6 @@ require (
 require (
 	github.com/ProjectZKM/Ziren/crates/go-runtime/zkvm_runtime v0.0.0-20251001021608-1fe7b43fc4d6 // indirect
 	github.com/armon/go-radix v1.0.0 // indirect
-	github.com/bitly/go-simplejson v0.5.1 // indirect
 	github.com/bits-and-blooms/bitset v1.24.0 // indirect
 	github.com/bytedance/sonic v1.14.0 // indirect
 	github.com/bytedance/sonic/loader v0.3.0 // indirect
@@ -45,7 +39,6 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/elastic/go-sysinfo v1.15.4 // indirect
 	github.com/elastic/go-windows v1.0.2 // indirect
-	github.com/elliottech/poseidon_crypto v0.0.11 // indirect
 	github.com/ethereum/c-kzg-4844/v2 v2.1.6 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.8 // indirect
 	github.com/gin-contrib/sse v1.1.0 // indirect
@@ -63,7 +56,6 @@ require (
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
-	github.com/jpillora/backoff v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
@@ -81,7 +73,6 @@ require (
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/quic-go/quic-go v0.59.1 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/sonirico/vago v0.11.4 // indirect
 	github.com/sonirico/vago/lol v0.1.0 // indirect
 	github.com/supranational/blst v0.3.16 // indirect

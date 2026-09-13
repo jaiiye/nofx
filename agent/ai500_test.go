@@ -10,7 +10,7 @@ import (
 	"nofx/provider/nofxos"
 )
 
-func withStubbedAI500(t *testing.T, fn func(walletKey string) ([]nofxos.CoinData, error)) {
+func withStubbedAI500(t *testing.T, fn func() ([]nofxos.CoinData, error)) {
 	t.Helper()
 	original := fetchAI500ForTool
 	fetchAI500ForTool = fn
@@ -18,7 +18,7 @@ func withStubbedAI500(t *testing.T, fn func(walletKey string) ([]nofxos.CoinData
 }
 
 func TestToolGetAI500ListSortsByScoreAndLimits(t *testing.T) {
-	withStubbedAI500(t, func(walletKey string) ([]nofxos.CoinData, error) {
+	withStubbedAI500(t, func() ([]nofxos.CoinData, error) {
 		return []nofxos.CoinData{
 			{Pair: "LOWUSDT", Score: 10, IncreasePercent: -3},
 			{Pair: "TOPUSDT", Score: 99, IncreasePercent: 42},
@@ -54,7 +54,7 @@ func TestToolGetAI500ListDefaultLimit(t *testing.T) {
 	for i := range coins {
 		coins[i] = nofxos.CoinData{Pair: "C", Score: float64(i)}
 	}
-	withStubbedAI500(t, func(walletKey string) ([]nofxos.CoinData, error) {
+	withStubbedAI500(t, func() ([]nofxos.CoinData, error) {
 		return coins, nil
 	})
 
@@ -71,7 +71,7 @@ func TestToolGetAI500ListDefaultLimit(t *testing.T) {
 }
 
 func TestToolGetAI500ListUpstreamError(t *testing.T) {
-	withStubbedAI500(t, func(walletKey string) ([]nofxos.CoinData, error) {
+	withStubbedAI500(t, func() ([]nofxos.CoinData, error) {
 		return nil, errors.New("upstream down")
 	})
 
@@ -83,7 +83,7 @@ func TestToolGetAI500ListUpstreamError(t *testing.T) {
 }
 
 func TestHandleToolCallDispatchesAI500(t *testing.T) {
-	withStubbedAI500(t, func(walletKey string) ([]nofxos.CoinData, error) {
+	withStubbedAI500(t, func() ([]nofxos.CoinData, error) {
 		return []nofxos.CoinData{{Pair: "BTCUSDT", Score: 90}}, nil
 	})
 

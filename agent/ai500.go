@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"nofx/provider/nofxos"
-	"nofx/store"
 )
 
 const (
@@ -15,36 +14,10 @@ const (
 	ai500MaxLimit     = 100
 )
 
-// fetchAI500ForTool is swappable in tests. It resolves a nofxos client
-// (routed through claw402 when a wallet key is available) and returns the
-// cached AI500 board.
-var fetchAI500ForTool = func(walletKey string) ([]nofxos.CoinData, error) {
-	return nofxos.GetAI500ListCached(nofxos.ResolveClient(walletKey))
-}
-
-// Claw402WalletKeyForStoreUser returns the wallet private key of the user's
-// enabled claw402 model, if any, so data requests can be routed through the
-// claw402 payment gateway on the user's own account.
-func Claw402WalletKeyForStoreUser(st *store.Store, storeUserID string) string {
-	if st == nil {
-		return ""
-	}
-	if strings.TrimSpace(storeUserID) == "" {
-		storeUserID = "default"
-	}
-	models, err := st.AIModel().List(storeUserID)
-	if err != nil {
-		return ""
-	}
-	for _, model := range models {
-		if model == nil || !model.Enabled {
-			continue
-		}
-		if strings.EqualFold(strings.TrimSpace(model.Provider), "claw402") && len(model.APIKey) > 0 {
-			return string(model.APIKey)
-		}
-	}
-	return ""
+// fetchAI500ForTool is swappable in tests. It resolves a nofxos client and
+// returns the cached AI500 board.
+var fetchAI500ForTool = func() ([]nofxos.CoinData, error) {
+	return nofxos.GetAI500ListCached(nofxos.ResolveClient(""))
 }
 
 // AI500BoardEntry is the display shape for one AI500 constituent.
@@ -59,14 +32,14 @@ type AI500BoardEntry struct {
 
 // AI500Board returns the AI500 constituents sorted by score (descending),
 // truncated to limit.
-func AI500Board(walletKey string, limit int) ([]AI500BoardEntry, error) {
+func AI500Board(limit int) ([]AI500BoardEntry, error) {
 	if limit <= 0 {
 		limit = ai500DefaultLimit
 	}
 	if limit > ai500MaxLimit {
 		limit = ai500MaxLimit
 	}
-	coins, err := fetchAI500ForTool(walletKey)
+	coins, err := fetchAI500ForTool()
 	if err != nil {
 		return nil, err
 	}
@@ -103,8 +76,7 @@ func (a *Agent) toolGetAI500List(storeUserID, argsJSON string) string {
 		}
 	}
 
-	walletKey := Claw402WalletKeyForStoreUser(a.store, storeUserID)
-	entries, err := AI500Board(walletKey, args.Limit)
+	entries, err := AI500Board(args.Limit)
 	if err != nil {
 		return fmt.Sprintf(`{"error":"failed to fetch AI500 list: %s"}`, err)
 	}

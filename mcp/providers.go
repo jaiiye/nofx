@@ -13,6 +13,9 @@ const (
 	ProviderKimi     = "kimi"
 	ProviderMiniMax  = "minimax"
 
+	// ProviderClaw402 is retained only so legacy records and the telemetry
+	// channel taxonomy keep resolving. The Claw402 client itself has been
+	// removed from this build; no code path can select it as a provider.
 	ProviderClaw402 = "claw402"
 
 	// Default DeepSeek configuration (used as fallback in NewClient)

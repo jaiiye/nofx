@@ -23,7 +23,7 @@ var (
 	genericAPIKeyPattern   = regexp.MustCompile(`^[A-Za-z0-9_\-]{8,}$`)
 	hexCredentialPattern   = regexp.MustCompile(`^(0x)?[A-Fa-f0-9]{16,}$`)
 	supportedModelProvider = map[string]struct{}{
-		"openai": {}, "deepseek": {}, "claude": {}, "gemini": {}, "qwen": {}, "kimi": {}, "grok": {}, "minimax": {}, "claw402": {}, "blockrun-base": {}, "blockrun-sol": {},
+		"deepseek": {},
 	}
 )
 
@@ -31,8 +31,6 @@ const (
 	manualTraderScanIntervalMin = 3
 	manualTraderScanIntervalMax = 60
 	manualTraderInitialBalance  = 100.0
-	manualLighterAPIKeyIndexMin = 0
-	manualLighterAPIKeyIndexMax = 255
 )
 
 type modelConfigValidator struct {
@@ -67,24 +65,21 @@ func (v modelConfigValidator) Validate() error {
 }
 
 type exchangeConfigValidator struct {
-	exchangeType            string
-	enabled                 bool
-	apiKey                  string
-	secretKey               string
-	passphrase              string
-	hyperliquidWalletAddr   string
-	asterUser               string
-	asterSigner             string
-	asterPrivateKey         string
-	lighterWalletAddr       string
-	lighterPrivateKey       string
-	lighterAPIKeyPrivateKey string
+	exchangeType          string
+	enabled               bool
+	apiKey                string
+	secretKey             string
+	passphrase            string
+	hyperliquidWalletAddr string
 }
 
 func (v exchangeConfigValidator) Validate() error {
 	exchangeType := strings.ToLower(strings.TrimSpace(v.exchangeType))
 	if exchangeType == "" {
 		return fmt.Errorf("exchange_type is required")
+	}
+	if exchangeType != "hyperliquid" {
+		return fmt.Errorf("unsupported exchange type: %s (this build only supports hyperliquid)", exchangeType)
 	}
 	if trimmed := strings.TrimSpace(v.apiKey); trimmed != "" && !genericAPIKeyPattern.MatchString(trimmed) {
 		return fmt.Errorf("API Key format looks invalid")
@@ -96,14 +91,7 @@ func (v exchangeConfigValidator) Validate() error {
 		missing := store.MissingRequiredExchangeCredentialFields(
 			exchangeType,
 			v.apiKey,
-			v.secretKey,
-			v.passphrase,
 			v.hyperliquidWalletAddr,
-			v.asterUser,
-			v.asterSigner,
-			v.asterPrivateKey,
-			v.lighterWalletAddr,
-			v.lighterAPIKeyPrivateKey,
 		)
 		if len(missing) > 0 {
 			return fmt.Errorf("cannot enable exchange config before required fields are complete: %s", strings.Join(missing, ", "))
@@ -148,18 +136,12 @@ func (v traderBindingValidator) Validate() error {
 		return fmt.Errorf("exchange is disabled")
 	}
 	if err := (exchangeConfigValidator{
-		exchangeType:            exchange.ExchangeType,
-		enabled:                 exchange.Enabled,
-		apiKey:                  strings.TrimSpace(string(exchange.APIKey)),
-		secretKey:               strings.TrimSpace(string(exchange.SecretKey)),
-		passphrase:              strings.TrimSpace(string(exchange.Passphrase)),
-		hyperliquidWalletAddr:   exchange.HyperliquidWalletAddr,
-		asterUser:               exchange.AsterUser,
-		asterSigner:             exchange.AsterSigner,
-		asterPrivateKey:         strings.TrimSpace(string(exchange.AsterPrivateKey)),
-		lighterWalletAddr:       exchange.LighterWalletAddr,
-		lighterPrivateKey:       strings.TrimSpace(string(exchange.LighterPrivateKey)),
-		lighterAPIKeyPrivateKey: strings.TrimSpace(string(exchange.LighterAPIKeyPrivateKey)),
+		exchangeType:          exchange.ExchangeType,
+		enabled:               exchange.Enabled,
+		apiKey:                strings.TrimSpace(string(exchange.APIKey)),
+		secretKey:             strings.TrimSpace(string(exchange.SecretKey)),
+		passphrase:            strings.TrimSpace(string(exchange.Passphrase)),
+		hyperliquidWalletAddr: exchange.HyperliquidWalletAddr,
 	}).Validate(); err != nil {
 		return fmt.Errorf("exchange config is incomplete: %w", err)
 	}
@@ -201,7 +183,7 @@ func (a *Agent) validateModelDraft(storeUserID, modelID, provider string, enable
 	}).Validate()
 }
 
-func (a *Agent) validateExchangeDraft(storeUserID, exchangeID, exchangeType string, enabled bool, apiKey, secretKey, passphrase, hyperliquidWalletAddr, asterUser, asterSigner, asterPrivateKey, lighterWalletAddr, lighterAPIKeyPrivateKey string) error {
+func (a *Agent) validateExchangeDraft(storeUserID, exchangeID, exchangeType string, enabled bool, apiKey, secretKey, passphrase, hyperliquidWalletAddr string) error {
 	if a == nil || a.store == nil {
 		return fmt.Errorf("store unavailable")
 	}
@@ -223,34 +205,14 @@ func (a *Agent) validateExchangeDraft(storeUserID, exchangeID, exchangeType stri
 		if strings.TrimSpace(hyperliquidWalletAddr) == "" {
 			hyperliquidWalletAddr = strings.TrimSpace(exchange.HyperliquidWalletAddr)
 		}
-		if strings.TrimSpace(asterUser) == "" {
-			asterUser = strings.TrimSpace(exchange.AsterUser)
-		}
-		if strings.TrimSpace(asterSigner) == "" {
-			asterSigner = strings.TrimSpace(exchange.AsterSigner)
-		}
-		if strings.TrimSpace(asterPrivateKey) == "" {
-			asterPrivateKey = strings.TrimSpace(string(exchange.AsterPrivateKey))
-		}
-		if strings.TrimSpace(lighterWalletAddr) == "" {
-			lighterWalletAddr = strings.TrimSpace(exchange.LighterWalletAddr)
-		}
-		if strings.TrimSpace(lighterAPIKeyPrivateKey) == "" {
-			lighterAPIKeyPrivateKey = strings.TrimSpace(string(exchange.LighterAPIKeyPrivateKey))
-		}
 	}
 	return (exchangeConfigValidator{
-		exchangeType:            exchangeType,
-		enabled:                 enabled,
-		apiKey:                  apiKey,
-		secretKey:               secretKey,
-		passphrase:              passphrase,
-		hyperliquidWalletAddr:   hyperliquidWalletAddr,
-		asterUser:               asterUser,
-		asterSigner:             asterSigner,
-		asterPrivateKey:         asterPrivateKey,
-		lighterWalletAddr:       lighterWalletAddr,
-		lighterAPIKeyPrivateKey: lighterAPIKeyPrivateKey,
+		exchangeType:          exchangeType,
+		enabled:               enabled,
+		apiKey:                apiKey,
+		secretKey:             secretKey,
+		passphrase:            passphrase,
+		hyperliquidWalletAddr: hyperliquidWalletAddr,
 	}).Validate()
 }
 
@@ -278,14 +240,10 @@ func formatValidationFeedback(lang, domain string, err error) string {
 			return "这份配置还有问题：API Key 格式不对。请直接发完整的 API Key，不要附带多余说明文字。"
 		case strings.Contains(lower, "secret format looks invalid"):
 			return "这份配置还有问题：Secret 格式不对。请直接发完整的 Secret 值，不要和 API Key 填反。"
-		case strings.Contains(lower, "okx requires passphrase"):
-			return "这份配置还有问题：OKX 账户缺少 Passphrase，启用前需要补齐。你直接把 Passphrase 发我就行。"
 		case strings.Contains(lower, "hyperliquid requires wallet address"):
 			return "这份配置还有问题：Hyperliquid 账户缺少钱包地址，启用前需要补齐。"
-		case strings.Contains(lower, "aster requires user, signer, and private key"):
-			return "这份配置还有问题：Aster 账户还缺 user、signer 和 private key，启用前需要补齐。"
-		case strings.Contains(lower, "lighter requires wallet address and api key private key"):
-			return "这份配置还有问题：Lighter 账户还缺钱包地址和 API key private key，启用前需要补齐。"
+		case strings.Contains(lower, "unsupported exchange type"):
+			return "这份配置还有问题：当前版本只支持 Hyperliquid 交易所。"
 		case strings.Contains(lower, "cannot enable model config before a usable api key, url, and model are configured"):
 			return "这份配置还有问题：要先把 API Key、接口地址和模型名称配完整，才能启用。你可以继续把缺的字段发给我。"
 		case strings.Contains(lower, "unsupported provider"):
@@ -330,8 +288,8 @@ func formatValidationFeedback(lang, domain string, err error) string {
 		return "This draft still has an issue: the API key format looks wrong. Send the full API key directly."
 	case strings.Contains(lower, "secret format looks invalid"):
 		return "This draft still has an issue: the secret format looks wrong. Send the full secret value directly."
-	case strings.Contains(lower, "okx requires passphrase"):
-		return "This draft still has an issue: an OKX config needs a passphrase before it can be enabled. Send the passphrase and I'll keep going."
+	case strings.Contains(lower, "unsupported exchange type"):
+		return "This draft still has an issue: this build only supports the Hyperliquid exchange."
 	case strings.Contains(lower, "cannot enable model config before a usable api key, url, and model are configured"):
 		return "This draft still has an issue: the API key, endpoint URL, and model name must be completed before the config can be enabled."
 	}
@@ -442,25 +400,9 @@ func unmarshalStringList(raw string) []string {
 	return values
 }
 
-func normalizeExchangePatchToManualLimits(lang string, patch exchangeUpdatePatch) (exchangeUpdatePatch, []string) {
-	warnings := make([]string, 0, 1)
-	if patch.LighterAPIKeyIndex != nil {
-		requested := *patch.LighterAPIKeyIndex
-		normalized := requested
-		if normalized < manualLighterAPIKeyIndexMin {
-			normalized = manualLighterAPIKeyIndexMin
-		}
-		if normalized > manualLighterAPIKeyIndexMax {
-			normalized = manualLighterAPIKeyIndexMax
-		}
-		if normalized != requested {
-			patch.LighterAPIKeyIndex = &normalized
-			if lang == "zh" {
-				warnings = append(warnings, fmt.Sprintf("Lighter API Key Index 手动面板范围是 %d 到 %d，已从 %d 调整为 %d", manualLighterAPIKeyIndexMin, manualLighterAPIKeyIndexMax, requested, normalized))
-			} else {
-				warnings = append(warnings, fmt.Sprintf("lighter API key index is limited to %d-%d in the manual editor, adjusted from %d to %d", manualLighterAPIKeyIndexMin, manualLighterAPIKeyIndexMax, requested, normalized))
-			}
-		}
-	}
-	return patch, warnings
+// normalizeExchangePatchToManualLimits previously clamped Lighter-specific
+// fields. This build only supports Hyperliquid, so no clamping is needed and
+// the patch is returned untouched.
+func normalizeExchangePatchToManualLimits(_ string, patch exchangeUpdatePatch) (exchangeUpdatePatch, []string) {
+	return patch, nil
 }

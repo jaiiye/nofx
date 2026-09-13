@@ -5,53 +5,51 @@ import (
 	"testing"
 )
 
-func TestModelProviderChoicePromptIncludesRecommendationWithoutAutoSelection(t *testing.T) {
-	msg := modelProviderChoicePrompt("zh")
-	for _, want := range []string{
-		"可选模型 provider",
-		"claw402",
-		"DeepSeek",
-		"OpenAI",
-		"并列可选",
-		"blockrun-base",
-		"直接创建 Base 钱包",
-		"直接扫码充值/支付",
-		"请先告诉我你想用哪个 provider",
-	} {
-		if !strings.Contains(msg, want) {
-			t.Fatalf("expected prompt to contain %q, got: %s", want, msg)
+func TestModelProviderChoicePromptListsOnlyDeepSeek(t *testing.T) {
+	for _, lang := range []string{"zh", "en"} {
+		msg := modelProviderChoicePrompt(lang)
+		if !strings.Contains(msg, "DeepSeek") {
+			t.Fatalf("[%s] expected prompt to advertise DeepSeek, got: %s", lang, msg)
 		}
-	}
-	if strings.Contains(msg, "把私钥发给我") {
-		t.Fatalf("provider choice prompt should not jump ahead to credential collection: %s", msg)
-	}
-}
-
-func TestModelProviderCredentialGuidanceForClaw402MentionsConfigPageWalletFlow(t *testing.T) {
-	msg := modelProviderCredentialGuidance("zh", "claw402")
-	for _, want := range []string{
-		"Base 链 EVM 钱包私钥",
-		"配置页的模型配置里选择 `claw402`",
-		"快速创建钱包",
-		"充值入口",
-	} {
-		if !strings.Contains(msg, want) {
-			t.Fatalf("expected guidance to contain %q, got: %s", want, msg)
+		for _, unsupported := range []string{"claw402", "blockrun-base", "blockrun-sol", "OpenAI", "Claude", "Gemini", "Qwen", "Kimi", "Grok", "MiniMax"} {
+			if strings.Contains(msg, unsupported) {
+				t.Fatalf("[%s] prompt should not advertise removed provider %q, got: %s", lang, unsupported, msg)
+			}
 		}
 	}
 }
 
-func TestModelProviderDetailedGuidanceForClaw402MentionsBeginnerFlow(t *testing.T) {
-	msg := modelProviderDetailedGuidance("zh", "claw402")
-	for _, want := range []string{
-		"优先推荐",
-		"按次付费",
-		"Base USDC 钱包支付",
-		"直接创建 Base 钱包",
-		"直接扫码充值/支付",
-	} {
+func TestSupportedModelProvidersIsDeepSeekOnly(t *testing.T) {
+	ids := supportedModelProviderIDs()
+	if len(ids) != 1 || ids[0] != "deepseek" {
+		t.Fatalf("expected only deepseek to be supported, got %+v", ids)
+	}
+	if _, ok := modelProviderSpecByID("claw402"); ok {
+		t.Fatal("claw402 should no longer be a supported model provider")
+	}
+}
+
+func TestModelProviderCredentialGuidanceForDeepSeek(t *testing.T) {
+	msg := modelProviderCredentialGuidance("zh", "deepseek")
+	if !strings.Contains(msg, "DeepSeek") || !strings.Contains(msg, "API Key") {
+		t.Fatalf("expected DeepSeek API key guidance, got: %s", msg)
+	}
+}
+
+func TestModelProviderDetailedGuidanceForDeepSeek(t *testing.T) {
+	msg := modelProviderDetailedGuidance("zh", "deepseek")
+	for _, want := range []string{"DeepSeek", "deepseek-chat", "custom_api_url"} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("expected detailed guidance to contain %q, got: %s", want, msg)
 		}
+	}
+}
+
+func TestModelProviderGuidanceForUnsupportedProviderIsEmpty(t *testing.T) {
+	if msg := modelProviderCredentialGuidance("zh", "claw402"); msg != "" {
+		t.Fatalf("expected empty guidance for removed provider, got: %s", msg)
+	}
+	if msg := modelProviderDetailedGuidance("zh", "claw402"); msg != "" {
+		t.Fatalf("expected empty detailed guidance for removed provider, got: %s", msg)
 	}
 }

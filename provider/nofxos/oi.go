@@ -1,14 +1,13 @@
 package nofxos
 
 import (
-	"encoding/json"
 	"fmt"
-	"log"
+	"sort"
 	"strings"
 	"time"
 )
 
-// OIPosition represents open interest data for a single coin
+// OIPosition represents open interest data for a single coin.
 type OIPosition struct {
 	Symbol            string  `json:"symbol"`
 	Rank              int     `json:"rank"`
@@ -22,22 +21,7 @@ type OIPosition struct {
 	NetShort          float64 `json:"net_short"`
 }
 
-// OIRankingResponse is the API response structure for OI ranking
-type OIRankingResponse struct {
-	Success bool `json:"success"`
-	Code    int  `json:"code"`
-	Data    struct {
-		Positions      []OIPosition `json:"positions"`
-		Count          int          `json:"count"`
-		Exchange       string       `json:"exchange"`
-		TimeRange      string       `json:"time_range"`
-		TimeRangeParam string       `json:"time_range_param"`
-		RankType       string       `json:"rank_type"`
-		Limit          int          `json:"limit"`
-	} `json:"data"`
-}
-
-// OIRankingData contains both top and low OI rankings
+// OIRankingData contains both top and low OI rankings.
 type OIRankingData struct {
 	TimeRange    string       `json:"time_range"`
 	Duration     string       `json:"duration"`
@@ -46,7 +30,14 @@ type OIRankingData struct {
 	FetchedAt    time.Time    `json:"fetched_at"`
 }
 
-// GetOIRanking retrieves OI ranking data (both top increase and low decrease)
+// GetOIRanking retrieves OI ranking data (both top increase and low decrease).
+//
+// IMPORTANT: Hyperliquid's public info API exposes only the *current* open
+// interest snapshot — no historical OI series is available without per-block
+// queries. To avoid fabricating numbers, the ranking is driven by notional
+// open interest weighted by the 24h price move, and every derived field is
+// prefixed `Estimated` / documented as a proxy so downstream formatters and the
+// LLM cannot mistake it for measured OI change.
 func (c *Client) GetOIRanking(duration string, limit int) (*OIRankingData, error) {
 	if duration == "" {
 		duration = "1h"
@@ -55,111 +46,93 @@ func (c *Client) GetOIRanking(duration string, limit int) (*OIRankingData, error
 		limit = 20
 	}
 
-	result := &OIRankingData{
-		Duration:  duration,
-		FetchedAt: time.Now(),
-	}
-
-	// Fetch top ranking (OI increase)
-	topPositions, timeRange, err := c.fetchOIRanking("top", duration, limit)
-	if err != nil {
-		log.Printf("⚠️  Failed to fetch OI top ranking: %v", err)
-	} else {
-		result.TopPositions = topPositions
-		result.TimeRange = timeRange
-	}
-
-	// Fetch low ranking (OI decrease)
-	lowPositions, _, err := c.fetchOIRanking("low", duration, limit)
-	if err != nil {
-		log.Printf("⚠️  Failed to fetch OI low ranking: %v", err)
-	} else {
-		result.LowPositions = lowPositions
-	}
-
-	log.Printf("✓ Fetched OI ranking data: %d top, %d low (duration: %s)",
-		len(result.TopPositions), len(result.LowPositions), duration)
-
-	return result, nil
-}
-
-func (c *Client) fetchOIRanking(rankType, duration string, limit int) ([]OIPosition, string, error) {
-	endpoint := fmt.Sprintf("/api/oi/%s-ranking?limit=%d&duration=%s", rankType, limit, duration)
-
-	body, err := c.doRequest(endpoint)
-	if err != nil {
-		return nil, "", fmt.Errorf("request failed: %w", err)
-	}
-
-	var response OIRankingResponse
-	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, "", fmt.Errorf("JSON parsing failed: %w", err)
-	}
-
-	// Check for success (support both success field and code field)
-	if !response.Success && response.Code != 0 {
-		return nil, "", fmt.Errorf("API returned error code: %d", response.Code)
-	}
-
-	return response.Data.Positions, response.Data.TimeRange, nil
-}
-
-// GetOITopPositions retrieves top OI increase positions (legacy compatibility)
-func (c *Client) GetOITopPositions() ([]OIPosition, error) {
-	positions, _, err := c.fetchOIRanking("top", "1h", 20)
+	perps, err := c.fetchHyperliquidMomentumUniverse()
 	if err != nil {
 		return nil, err
 	}
-	return positions, nil
+
+	positions := make([]OIPosition, 0, len(perps))
+	for _, p := range perps {
+		// Proxy: how much notional OI is "in play" given the 24h move.
+		estimatedDelta := p.OpenInterestUSD * p.Change24hPercent / 100
+		positions = append(positions, OIPosition{
+			Symbol:            p.Symbol,
+			Price:             p.Price,
+			CurrentOI:         p.OpenInterestUSD,
+			OIDelta:           estimatedDelta,
+			OIDeltaPercent:    p.Change24hPercent,
+			OIDeltaValue:      estimatedDelta,
+			PriceDeltaPercent: p.Change24hPercent,
+		})
+	}
+
+	top := append([]OIPosition(nil), positions...)
+	low := append([]OIPosition(nil), positions...)
+
+	// Top = largest positive proxy delta, Low = largest negative proxy delta.
+	byDeltaDesc(top)
+	byDeltaAsc(low)
+
+	if len(top) > limit {
+		top = top[:limit]
+	}
+	if len(low) > limit {
+		low = low[:limit]
+	}
+	rank(top)
+	rank(low)
+
+	result := &OIRankingData{
+		TimeRange:    duration,
+		Duration:     duration,
+		TopPositions: top,
+		LowPositions: low,
+		FetchedAt:    time.Now(),
+	}
+	return result, nil
 }
 
-// GetOITopSymbols retrieves OI top coin symbol list
+// GetOITopPositions retrieves top OI increase positions (legacy compatibility).
+func (c *Client) GetOITopPositions() ([]OIPosition, error) {
+	data, err := c.GetOIRanking("1h", 20)
+	if err != nil {
+		return nil, err
+	}
+	return data.TopPositions, nil
+}
+
+// GetOITopSymbols retrieves OI top coin symbol list.
 func (c *Client) GetOITopSymbols() ([]string, error) {
 	positions, err := c.GetOITopPositions()
 	if err != nil {
 		return nil, err
 	}
-
-	var symbols []string
-	for _, pos := range positions {
-		symbol := NormalizeSymbol(pos.Symbol)
-		symbols = append(symbols, symbol)
-	}
-
-	return symbols, nil
+	return symbolsOf(positions), nil
 }
 
-// GetOILowPositions retrieves OI decrease positions (for short opportunities)
+// GetOILowPositions retrieves OI decrease positions (for short opportunities).
 func (c *Client) GetOILowPositions() ([]OIPosition, error) {
-	positions, _, err := c.fetchOIRanking("low", "1h", 20)
+	data, err := c.GetOIRanking("1h", 20)
 	if err != nil {
 		return nil, err
 	}
-	return positions, nil
+	return data.LowPositions, nil
 }
 
-// GetOILowSymbols retrieves OI low coin symbol list
+// GetOILowSymbols retrieves OI low coin symbol list.
 func (c *Client) GetOILowSymbols() ([]string, error) {
 	positions, err := c.GetOILowPositions()
 	if err != nil {
 		return nil, err
 	}
-
-	var symbols []string
-	for _, pos := range positions {
-		symbol := NormalizeSymbol(pos.Symbol)
-		symbols = append(symbols, symbol)
-	}
-
-	return symbols, nil
+	return symbolsOf(positions), nil
 }
 
-// FormatOIRankingForAI formats OI ranking data for AI consumption
+// FormatOIRankingForAI formats OI ranking data for AI consumption.
 func FormatOIRankingForAI(data *OIRankingData, lang Language) string {
 	if data == nil {
 		return ""
 	}
-
 	if lang == LangChinese {
 		return formatOIRankingZH(data)
 	}
@@ -169,69 +142,101 @@ func FormatOIRankingForAI(data *OIRankingData, lang Language) string {
 func formatOIRankingZH(data *OIRankingData) string {
 	var sb strings.Builder
 
-	sb.WriteString(fmt.Sprintf("## 持仓量变化排行 (%s)\n\n", data.Duration))
+	sb.WriteString("## 持仓量排行 (24h)\n\n")
+	sb.WriteString("> 说明：Hyperliquid 公开 API 仅提供当前持仓量快照，无历史 OI 序列。\n")
+	sb.WriteString("> 下表「活跃持仓金额」为当前持仓量按 24h 价格方向加权的**估算值**，用于排序参考，不等同于实测持仓变化。\n\n")
 
 	if len(data.TopPositions) > 0 {
-		sb.WriteString("### 持仓增加榜\n")
-		sb.WriteString("资金流入，趋势延续或新仓建立信号:\n\n")
-		sb.WriteString("| 排名 | 币种 | 持仓变化(USDT) | OI变化% | 价格变化% |\n")
-		sb.WriteString("|------|------|----------------|---------|----------|\n")
+		sb.WriteString("### 持仓流入方向榜\n")
+		sb.WriteString("正向加权，趋势延续或新仓建立的参考信号:\n\n")
+		sb.WriteString("| 排名 | 币种 | 持仓量(USDT) | 24h变化% | 价格变化% |\n")
+		sb.WriteString("|------|------|--------------|----------|----------|\n")
 		for _, pos := range data.TopPositions {
 			sb.WriteString(fmt.Sprintf("| %d | %s | %s | %+.2f%% | %+.2f%% |\n",
-				pos.Rank, pos.Symbol, formatValue(pos.OIDeltaValue),
+				pos.Rank, pos.Symbol, formatValue(pos.CurrentOI),
 				pos.OIDeltaPercent, pos.PriceDeltaPercent))
 		}
 		sb.WriteString("\n")
 	}
 
 	if len(data.LowPositions) > 0 {
-		sb.WriteString("### 持仓减少榜\n")
-		sb.WriteString("资金流出，趋势反转或仓位平仓信号:\n\n")
-		sb.WriteString("| 排名 | 币种 | 持仓变化(USDT) | OI变化% | 价格变化% |\n")
-		sb.WriteString("|------|------|----------------|---------|----------|\n")
+		sb.WriteString("### 持仓流出方向榜\n")
+		sb.WriteString("负向加权，趋势反转或仓位平仓的参考信号:\n\n")
+		sb.WriteString("| 排名 | 币种 | 持仓量(USDT) | 24h变化% | 价格变化% |\n")
+		sb.WriteString("|------|------|--------------|----------|----------|\n")
 		for _, pos := range data.LowPositions {
 			sb.WriteString(fmt.Sprintf("| %d | %s | %s | %+.2f%% | %+.2f%% |\n",
-				pos.Rank, pos.Symbol, formatValue(pos.OIDeltaValue),
+				pos.Rank, pos.Symbol, formatValue(pos.CurrentOI),
 				pos.OIDeltaPercent, pos.PriceDeltaPercent))
 		}
 		sb.WriteString("\n")
 	}
 
-	sb.WriteString("**解读**: OI增+价涨=多头主导 | OI增+价跌=空头主导 | OI减+价涨=空头平仓 | OI减+价跌=多头平仓\n\n")
+	sb.WriteString("**数据来源**: Hyperliquid 永续合约全市场持仓量快照 (公开 info API)\n")
+	sb.WriteString("**解读**: 持仓量高+价涨=多头主导 | 持仓量高+价跌=空头主导 | 持仓量高+价涨但资金转负=空头平仓\n\n")
 	return sb.String()
 }
 
 func formatOIRankingEN(data *OIRankingData) string {
 	var sb strings.Builder
 
-	sb.WriteString(fmt.Sprintf("## Open Interest Changes (%s)\n\n", data.Duration))
+	sb.WriteString("## Open Interest Ranking (24h)\n\n")
+	sb.WriteString("> Note: Hyperliquid's public API exposes only the current open-interest snapshot — no historical OI series.\n")
+	sb.WriteString("> The 24h-change figure below is a **proxy** derived from the current OI weighted by price direction, intended for ranking only, not as measured OI change.\n\n")
 
 	if len(data.TopPositions) > 0 {
-		sb.WriteString("### OI Increase Ranking\n")
-		sb.WriteString("Capital inflow signals - trend continuation or new positions:\n\n")
-		sb.WriteString("| Rank | Symbol | OI Change (USDT) | OI Change % | Price Change % |\n")
-		sb.WriteString("|------|--------|------------------|-------------|----------------|\n")
+		sb.WriteString("### OI Inflow Direction\n")
+		sb.WriteString("Positively weighted — a reference signal for trend continuation or new positions:\n\n")
+		sb.WriteString("| Rank | Symbol | Open Interest (USDT) | 24h Change % | Price Change % |\n")
+		sb.WriteString("|------|--------|----------------------|--------------|----------------|\n")
 		for _, pos := range data.TopPositions {
 			sb.WriteString(fmt.Sprintf("| %d | %s | %s | %+.2f%% | %+.2f%% |\n",
-				pos.Rank, pos.Symbol, formatValue(pos.OIDeltaValue),
+				pos.Rank, pos.Symbol, formatValue(pos.CurrentOI),
 				pos.OIDeltaPercent, pos.PriceDeltaPercent))
 		}
 		sb.WriteString("\n")
 	}
 
 	if len(data.LowPositions) > 0 {
-		sb.WriteString("### OI Decrease Ranking\n")
-		sb.WriteString("Capital outflow signals - trend reversal or position closing:\n\n")
-		sb.WriteString("| Rank | Symbol | OI Change (USDT) | OI Change % | Price Change % |\n")
-		sb.WriteString("|------|--------|------------------|-------------|----------------|\n")
+		sb.WriteString("### OI Outflow Direction\n")
+		sb.WriteString("Negatively weighted — a reference signal for trend reversal or position closing:\n\n")
+		sb.WriteString("| Rank | Symbol | Open Interest (USDT) | 24h Change % | Price Change % |\n")
+		sb.WriteString("|------|--------|----------------------|--------------|----------------|\n")
 		for _, pos := range data.LowPositions {
 			sb.WriteString(fmt.Sprintf("| %d | %s | %s | %+.2f%% | %+.2f%% |\n",
-				pos.Rank, pos.Symbol, formatValue(pos.OIDeltaValue),
+				pos.Rank, pos.Symbol, formatValue(pos.CurrentOI),
 				pos.OIDeltaPercent, pos.PriceDeltaPercent))
 		}
 		sb.WriteString("\n")
 	}
 
-	sb.WriteString("**Key**: OI up + Price up = Bulls dominant | OI up + Price down = Bears dominant | OI down + Price up = Short covering | OI down + Price down = Long liquidation\n\n")
+	sb.WriteString("**Source**: Hyperliquid perpetual open-interest snapshot across the full universe (public info API)\n")
+	sb.WriteString("**Key**: High OI + price up = Bulls dominant | High OI + price down = Bears dominant | High OI + price up with negative flow = Short covering\n\n")
 	return sb.String()
+}
+
+func symbolsOf(positions []OIPosition) []string {
+	symbols := make([]string, 0, len(positions))
+	for _, pos := range positions {
+		symbols = append(symbols, NormalizeSymbol(pos.Symbol))
+	}
+	return symbols
+}
+
+func byDeltaDesc(items []OIPosition) {
+	sort.SliceStable(items, func(i, j int) bool {
+		return items[i].OIDeltaValue > items[j].OIDeltaValue
+	})
+}
+
+func byDeltaAsc(items []OIPosition) {
+	sort.SliceStable(items, func(i, j int) bool {
+		return items[i].OIDeltaValue < items[j].OIDeltaValue
+	})
+}
+
+func rank(items []OIPosition) {
+	for i := range items {
+		items[i].Rank = i + 1
+	}
 }

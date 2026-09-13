@@ -14,7 +14,9 @@ import (
 
 // Note: Kline data now uses free/open API (coinank_api.Kline) which doesn't require authentication
 
-// getKlinesFromCoinAnk fetches kline data from CoinAnk API (replacement for WSMonitorCli)
+// getKlinesFromCoinAnk fetches kline data from the CoinAnk API. The upstream
+// API requires a paid key, so callers on the free path should prefer
+// getKlinesFromHyperliquid; this remains for callers that explicitly opt in.
 func getKlinesFromCoinAnk(symbol, interval, exchange string, limit int) ([]Kline, error) {
 	// Map interval string to coinank enum
 	var coinankInterval coinank_enum.Interval
@@ -51,25 +53,9 @@ func getKlinesFromCoinAnk(symbol, interval, exchange string, limit int) ([]Kline
 		return nil, fmt.Errorf("unsupported interval: %s", interval)
 	}
 
-	// Map exchange string to coinank enum
-	var coinankExchange coinank_enum.Exchange
-	switch strings.ToLower(exchange) {
-	case "binance":
-		coinankExchange = coinank_enum.Binance
-	case "bybit":
-		coinankExchange = coinank_enum.Bybit
-	case "okx":
-		coinankExchange = coinank_enum.Okex
-	case "bitget":
-		coinankExchange = coinank_enum.Bitget
-	case "gate":
-		coinankExchange = coinank_enum.Gate
-	case "hyperliquid":
-		coinankExchange = coinank_enum.Hyperliquid
-	case "aster":
-		coinankExchange = coinank_enum.Aster
-	default:
-		// Default to Binance for unknown exchanges
+	// Only Hyperliquid is supported in this build; fall back to Binance market data otherwise
+	coinankExchange := coinank_enum.Hyperliquid
+	if !strings.EqualFold(strings.TrimSpace(exchange), "hyperliquid") {
 		coinankExchange = coinank_enum.Binance
 	}
 
@@ -411,7 +397,7 @@ func GetBoxData(symbol string) (*BoxData, error) {
 	if IsXyzDexAsset(symbol) {
 		klines, err = getKlinesFromHyperliquid(symbol, "1h", LongBoxPeriod)
 	} else {
-		klines, err = getKlinesFromCoinAnk(symbol, "1h", "binance", LongBoxPeriod)
+		klines, err = getKlinesFromHyperliquid(symbol, "1h", LongBoxPeriod)
 	}
 
 	if err != nil {

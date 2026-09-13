@@ -3,11 +3,11 @@ package trader
 import (
 	"fmt"
 	"math"
-	"nofx/telemetry"
 	"nofx/kernel"
 	"nofx/logger"
 	"nofx/market"
 	"nofx/store"
+	"nofx/telemetry"
 	"time"
 )
 
@@ -277,15 +277,14 @@ func (at *AutoTrader) recordAndConfirmOrder(orderResult map[string]interface{}, 
 	var actualQty = quantity
 	var fee float64
 
-	// Exchanges with OrderSync: Skip immediate order recording, let OrderSync handle it
+	// Hyperliquid has OrderSync: skip immediate order recording, let OrderSync handle it
 	// This ensures accurate data from GetTrades API and avoids duplicate records
-	switch at.exchange {
-	case "binance", "lighter", "hyperliquid", "bybit", "okx", "bitget", "aster", "kucoin", "gate":
+	if at.exchange == "hyperliquid" {
 		logger.Infof("  📝 Order submitted (id: %s), will be synced by OrderSync", orderID)
 		return
 	}
 
-	// For exchanges without OrderSync (e.g., Binance): record immediately and poll for fill data
+	// Record immediately and poll for fill data
 	orderRecord := at.createOrderRecord(orderID, symbol, action, positionSide, quantity, price, leverage)
 	if err := at.store.Order().CreateOrder(orderRecord); err != nil {
 		logger.Infof("  ⚠️ Failed to record order: %v", err)

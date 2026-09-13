@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 
 	"nofx/store"
@@ -190,7 +189,7 @@ func hasExplicitManagementDomainCue(text, domain string) bool {
 	case "trader":
 		return containsAny(lower, []string{"交易员", "trader", "agent"})
 	case "exchange":
-		return containsAny(lower, []string{"交易所", "exchange", "okx", "binance", "bybit", "gate", "kucoin", "hyperliquid"})
+		return containsAny(lower, []string{"交易所", "exchange", "hyperliquid"})
 	case "model":
 		return containsAny(lower, []string{"模型", "model"})
 	case "strategy":
@@ -1366,43 +1365,10 @@ func formatExchangeCreateDraftSummary(lang string, session skillSession) string 
 			fmt.Sprintf("- 启用状态：%t（未指定时默认 true）", enabled),
 			fmt.Sprintf("- 测试网：%t（未指定时默认 false）", testnet),
 		}
-		switch exType {
-		case "binance", "bybit", "gate", "indodax":
-			lines = append(lines,
-				fmt.Sprintf("- 已提供 API Key：%t", fieldValue(session, "api_key") != ""),
-				fmt.Sprintf("- 已提供 Secret：%t", fieldValue(session, "secret_key") != ""),
-			)
-		case "okx", "bitget", "kucoin":
-			lines = append(lines,
-				fmt.Sprintf("- 已提供 API Key：%t", fieldValue(session, "api_key") != ""),
-				fmt.Sprintf("- 已提供 Secret：%t", fieldValue(session, "secret_key") != ""),
-				fmt.Sprintf("- 已提供 Passphrase：%t", fieldValue(session, "passphrase") != ""),
-			)
-		case "hyperliquid":
-			lines = append(lines,
-				fmt.Sprintf("- 已提供 API Key：%t", fieldValue(session, "api_key") != ""),
-				fmt.Sprintf("- Hyperliquid 钱包地址：%s", defaultIfEmpty(fieldValue(session, "hyperliquid_wallet_addr"), "未设置")),
-			)
-		case "aster":
-			lines = append(lines,
-				fmt.Sprintf("- Aster User：%s", defaultIfEmpty(fieldValue(session, "aster_user"), "未设置")),
-				fmt.Sprintf("- Aster Signer：%s", defaultIfEmpty(fieldValue(session, "aster_signer"), "未设置")),
-				fmt.Sprintf("- 已提供 Aster 私钥：%t", fieldValue(session, "aster_private_key") != ""),
-			)
-		case "lighter":
-			lines = append(lines,
-				fmt.Sprintf("- Lighter 钱包地址：%s", defaultIfEmpty(fieldValue(session, "lighter_wallet_addr"), "未设置")),
-				fmt.Sprintf("- 已提供 Lighter API Key 私钥：%t", fieldValue(session, "lighter_api_key_private_key") != ""),
-			)
-			if value := fieldValue(session, "lighter_api_key_index"); value != "" {
-				lines = append(lines, fmt.Sprintf("- Lighter API Key Index：%s", value))
-			}
-		default:
-			lines = append(lines,
-				fmt.Sprintf("- 已提供 API Key：%t", fieldValue(session, "api_key") != ""),
-				fmt.Sprintf("- 已提供 Secret：%t", fieldValue(session, "secret_key") != ""),
-			)
-		}
+		lines = append(lines,
+			fmt.Sprintf("- 已提供 API Key：%t", fieldValue(session, "api_key") != ""),
+			fmt.Sprintf("- Hyperliquid 钱包地址：%s", defaultIfEmpty(fieldValue(session, "hyperliquid_wallet_addr"), "未设置")),
+		)
 		lines = append(lines, "如果这些字段没问题，直接回复“确认创建”；也可以继续补充或修改任意字段。")
 		return strings.Join(lines, "\n")
 	}
@@ -1413,43 +1379,10 @@ func formatExchangeCreateDraftSummary(lang string, session skillSession) string 
 		fmt.Sprintf("- Enabled: %t (defaults to true if omitted)", enabled),
 		fmt.Sprintf("- Testnet: %t (defaults to false if omitted)", testnet),
 	}
-	switch exType {
-	case "binance", "bybit", "gate", "indodax":
-		lines = append(lines,
-			fmt.Sprintf("- API key provided: %t", fieldValue(session, "api_key") != ""),
-			fmt.Sprintf("- Secret provided: %t", fieldValue(session, "secret_key") != ""),
-		)
-	case "okx", "bitget", "kucoin":
-		lines = append(lines,
-			fmt.Sprintf("- API key provided: %t", fieldValue(session, "api_key") != ""),
-			fmt.Sprintf("- Secret provided: %t", fieldValue(session, "secret_key") != ""),
-			fmt.Sprintf("- Passphrase provided: %t", fieldValue(session, "passphrase") != ""),
-		)
-	case "hyperliquid":
-		lines = append(lines,
-			fmt.Sprintf("- API key provided: %t", fieldValue(session, "api_key") != ""),
-			fmt.Sprintf("- Hyperliquid wallet address: %s", defaultIfEmpty(fieldValue(session, "hyperliquid_wallet_addr"), "not set")),
-		)
-	case "aster":
-		lines = append(lines,
-			fmt.Sprintf("- Aster user: %s", defaultIfEmpty(fieldValue(session, "aster_user"), "not set")),
-			fmt.Sprintf("- Aster signer: %s", defaultIfEmpty(fieldValue(session, "aster_signer"), "not set")),
-			fmt.Sprintf("- Aster private key provided: %t", fieldValue(session, "aster_private_key") != ""),
-		)
-	case "lighter":
-		lines = append(lines,
-			fmt.Sprintf("- Lighter wallet address: %s", defaultIfEmpty(fieldValue(session, "lighter_wallet_addr"), "not set")),
-			fmt.Sprintf("- Lighter API key private key provided: %t", fieldValue(session, "lighter_api_key_private_key") != ""),
-		)
-		if value := fieldValue(session, "lighter_api_key_index"); value != "" {
-			lines = append(lines, fmt.Sprintf("- Lighter API key index: %s", value))
-		}
-	default:
-		lines = append(lines,
-			fmt.Sprintf("- API key provided: %t", fieldValue(session, "api_key") != ""),
-			fmt.Sprintf("- Secret provided: %t", fieldValue(session, "secret_key") != ""),
-		)
-	}
+	lines = append(lines,
+		fmt.Sprintf("- API key provided: %t", fieldValue(session, "api_key") != ""),
+		fmt.Sprintf("- Hyperliquid wallet address: %s", defaultIfEmpty(fieldValue(session, "hyperliquid_wallet_addr"), "not set")),
+	)
 	lines = append(lines, "Reply 'confirm' to create it, or keep refining any field.")
 	return strings.Join(lines, "\n")
 }
@@ -1912,47 +1845,9 @@ func (a *Agent) describeExchange(storeUserID, lang string, target *EntityReferen
 		credentialLinesZh = append(credentialLinesZh, fmt.Sprintf("- %s：%t", labelZh, present))
 		credentialLinesEn = append(credentialLinesEn, fmt.Sprintf("- %s: %t", labelEn, present))
 	}
-	switch exchange.ExchangeType {
-	case "binance", "bybit", "gate", "indodax":
-		addCredentialLine("API Key", "API key present", exchange.HasAPIKey)
-		addCredentialLine("Secret", "Secret present", exchange.HasSecretKey)
-	case "okx", "bitget", "kucoin":
-		addCredentialLine("API Key", "API key present", exchange.HasAPIKey)
-		addCredentialLine("Secret", "Secret present", exchange.HasSecretKey)
-		addCredentialLine("Passphrase", "Passphrase present", exchange.HasPassphrase)
-	case "hyperliquid":
-		addCredentialLine("API Key", "API key present", exchange.HasAPIKey)
-		credentialLinesZh = append(credentialLinesZh, fmt.Sprintf("- Hyperliquid 钱包地址：%s", defaultIfEmpty(exchange.HyperliquidWalletAddr, "未设置")))
-		credentialLinesEn = append(credentialLinesEn, fmt.Sprintf("- Hyperliquid wallet address: %s", defaultIfEmpty(exchange.HyperliquidWalletAddr, "not set")))
-	case "aster":
-		credentialLinesZh = append(credentialLinesZh,
-			fmt.Sprintf("- Aster User：%s", defaultIfEmpty(exchange.AsterUser, "未设置")),
-			fmt.Sprintf("- Aster Signer：%s", defaultIfEmpty(exchange.AsterSigner, "未设置")),
-			fmt.Sprintf("- Aster 私钥：%t", exchange.HasAsterPrivateKey),
-		)
-		credentialLinesEn = append(credentialLinesEn,
-			fmt.Sprintf("- Aster user: %s", defaultIfEmpty(exchange.AsterUser, "not set")),
-			fmt.Sprintf("- Aster signer: %s", defaultIfEmpty(exchange.AsterSigner, "not set")),
-			fmt.Sprintf("- Aster private key present: %t", exchange.HasAsterPrivateKey),
-		)
-	case "lighter":
-		credentialLinesZh = append(credentialLinesZh,
-			fmt.Sprintf("- Lighter 钱包地址：%s", defaultIfEmpty(exchange.LighterWalletAddr, "未设置")),
-			fmt.Sprintf("- Lighter API Key 私钥：%t", exchange.HasLighterAPIKey),
-			fmt.Sprintf("- Lighter API Key Index：%d", exchange.LighterAPIKeyIndex),
-		)
-		credentialLinesEn = append(credentialLinesEn,
-			fmt.Sprintf("- Lighter wallet address: %s", defaultIfEmpty(exchange.LighterWalletAddr, "not set")),
-			fmt.Sprintf("- Lighter API key private key present: %t", exchange.HasLighterAPIKey),
-			fmt.Sprintf("- Lighter API key index: %d", exchange.LighterAPIKeyIndex),
-		)
-	default:
-		addCredentialLine("API Key", "API key present", exchange.HasAPIKey)
-		addCredentialLine("Secret", "Secret present", exchange.HasSecretKey)
-		if exchange.HasPassphrase {
-			addCredentialLine("Passphrase", "Passphrase present", true)
-		}
-	}
+	addCredentialLine("API Key", "API key present", exchange.HasAPIKey)
+	credentialLinesZh = append(credentialLinesZh, fmt.Sprintf("- Hyperliquid 钱包地址：%s", defaultIfEmpty(exchange.HyperliquidWalletAddr, "未设置")))
+	credentialLinesEn = append(credentialLinesEn, fmt.Sprintf("- Hyperliquid wallet address: %s", defaultIfEmpty(exchange.HyperliquidWalletAddr, "not set")))
 	if lang == "zh" {
 		lines := []string{
 			fmt.Sprintf("交易所配置“%s”详情：", name),
@@ -1999,12 +1894,6 @@ func (a *Agent) describeModel(storeUserID, lang string, target *EntityReference)
 			fmt.Sprintf("- URL：%s", defaultIfEmpty(model.CustomAPIURL, "未设置")),
 			fmt.Sprintf("- Model Name：%s", defaultIfEmpty(model.CustomModelName, "未设置")),
 		}
-		if strings.TrimSpace(model.WalletAddress) != "" {
-			lines = append(lines, fmt.Sprintf("- 钱包地址：%s", model.WalletAddress))
-		}
-		if strings.TrimSpace(model.BalanceUSDC) != "" {
-			lines = append(lines, fmt.Sprintf("- 钱包余额：%s USDC", model.BalanceUSDC))
-		}
 		return strings.Join(lines, "\n"), true
 	}
 	lines := []string{
@@ -2014,12 +1903,6 @@ func (a *Agent) describeModel(storeUserID, lang string, target *EntityReference)
 		fmt.Sprintf("- API key present: %t", model.HasAPIKey),
 		fmt.Sprintf("- URL: %s", defaultIfEmpty(model.CustomAPIURL, "not set")),
 		fmt.Sprintf("- Model name: %s", defaultIfEmpty(model.CustomModelName, "not set")),
-	}
-	if strings.TrimSpace(model.WalletAddress) != "" {
-		lines = append(lines, fmt.Sprintf("- Wallet address: %s", model.WalletAddress))
-	}
-	if strings.TrimSpace(model.BalanceUSDC) != "" {
-		lines = append(lines, fmt.Sprintf("- Wallet balance: %s USDC", model.BalanceUSDC))
 	}
 	return strings.Join(lines, "\n"), true
 }
@@ -2153,12 +2036,7 @@ func (a *Agent) handleExchangeCreateSkill(storeUserID string, userID int64, lang
 	if fieldValue(session, "secret_key") == "" {
 		missing = append(missing, displayCatalogFieldName("secret_key", lang))
 	}
-	switch exType {
-	case "okx":
-		if fieldValue(session, "passphrase") == "" {
-			missing = append(missing, displayCatalogFieldName("passphrase", lang))
-		}
-	case "hyperliquid":
+	if exType == "hyperliquid" {
 		if fieldValue(session, "hyperliquid_wallet_addr") == "" {
 			missing = append(missing, "Hyperliquid Wallet")
 		}
@@ -2169,24 +2047,19 @@ func (a *Agent) handleExchangeCreateSkill(storeUserID string, userID int64, lang
 		if lang == "zh" {
 			reply := "要创建交易所配置，还缺这些字段：" + formatMissingFieldList(lang, missing) + "。"
 			if exType == "" {
-				reply += "\n例如：OKX、Binance、Bybit。"
+				reply += "\n当前版本只支持 Hyperliquid。"
 			}
 			return reply
 		}
 		return "One more thing: please tell me these details: " + formatMissingFieldList(lang, missing) + "."
 	}
 	validator := exchangeConfigValidator{
-		exchangeType:            exType,
-		enabled:                 fieldValue(session, "enabled") == "true",
-		apiKey:                  fieldValue(session, "api_key"),
-		secretKey:               fieldValue(session, "secret_key"),
-		passphrase:              fieldValue(session, "passphrase"),
-		hyperliquidWalletAddr:   fieldValue(session, "hyperliquid_wallet_addr"),
-		asterUser:               fieldValue(session, "aster_user"),
-		asterSigner:             fieldValue(session, "aster_signer"),
-		asterPrivateKey:         fieldValue(session, "aster_private_key"),
-		lighterWalletAddr:       fieldValue(session, "lighter_wallet_addr"),
-		lighterAPIKeyPrivateKey: fieldValue(session, "lighter_api_key_private_key"),
+		exchangeType:          exType,
+		enabled:               fieldValue(session, "enabled") == "true",
+		apiKey:                fieldValue(session, "api_key"),
+		secretKey:             fieldValue(session, "secret_key"),
+		passphrase:            fieldValue(session, "passphrase"),
+		hyperliquidWalletAddr: fieldValue(session, "hyperliquid_wallet_addr"),
 	}
 	if err := validator.Validate(); err != nil {
 		a.saveSkillSession(userID, session)
@@ -2204,7 +2077,7 @@ func (a *Agent) handleExchangeCreateSkill(storeUserID string, userID int64, lang
 		"exchange_type": exType,
 		"account_name":  accountName,
 	}
-	for _, field := range []string{"api_key", "secret_key", "passphrase", "hyperliquid_wallet_addr", "aster_user", "aster_signer", "aster_private_key", "lighter_wallet_addr", "lighter_api_key_private_key"} {
+	for _, field := range []string{"api_key", "secret_key", "hyperliquid_wallet_addr"} {
 		if value := fieldValue(session, field); value != "" {
 			args[field] = value
 		}
@@ -2214,11 +2087,6 @@ func (a *Agent) handleExchangeCreateSkill(storeUserID string, userID int64, lang
 	}
 	if value := fieldValue(session, "testnet"); value != "" {
 		args["testnet"] = value == "true"
-	}
-	if value := fieldValue(session, "lighter_api_key_index"); value != "" {
-		if parsed, err := strconv.Atoi(value); err == nil {
-			args["lighter_api_key_index"] = parsed
-		}
 	}
 	raw, _ := json.Marshal(args)
 	resp := a.toolManageExchangeConfig(storeUserID, string(raw))
@@ -2365,8 +2233,6 @@ func credentialLooksCompatibleWithProvider(provider, value string) bool {
 	}
 
 	switch provider {
-	case "claw402", "blockrun-base", "blockrun-sol":
-		return hexCredentialPattern.MatchString(value)
 	case "openai":
 		return openAIAPIKeyPattern.MatchString(value)
 	default:

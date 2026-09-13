@@ -214,13 +214,7 @@ export function SettingsPage() {
     passphrase?: string,
     testnet?: boolean,
     hyperliquidWalletAddr?: string,
-    asterUser?: string,
-    asterSigner?: string,
-    asterPrivateKey?: string,
-    lighterWalletAddr?: string,
-    lighterPrivateKey?: string,
-    lighterApiKeyPrivateKey?: string,
-    lighterApiKeyIndex?: number
+    hyperliquidUnifiedAccount?: boolean
   ) => {
     try {
       if (exchangeType === 'hyperliquid') {
@@ -237,13 +231,7 @@ export function SettingsPage() {
               passphrase: passphrase || '',
               testnet: testnet || false,
               hyperliquid_wallet_addr: hyperliquidWalletAddr || '',
-              aster_user: asterUser || '',
-              aster_signer: asterSigner || '',
-              aster_private_key: asterPrivateKey || '',
-              lighter_wallet_addr: lighterWalletAddr || '',
-              lighter_private_key: lighterPrivateKey || '',
-              lighter_api_key_private_key: lighterApiKeyPrivateKey || '',
-              lighter_api_key_index: lighterApiKeyIndex || 0,
+              hyperliquid_unified_account: hyperliquidUnifiedAccount ?? false,
             },
           },
         }
@@ -259,13 +247,7 @@ export function SettingsPage() {
           passphrase: passphrase || '',
           testnet: testnet || false,
           hyperliquid_wallet_addr: hyperliquidWalletAddr || '',
-          aster_user: asterUser || '',
-          aster_signer: asterSigner || '',
-          aster_private_key: asterPrivateKey || '',
-          lighter_wallet_addr: lighterWalletAddr || '',
-          lighter_private_key: lighterPrivateKey || '',
-          lighter_api_key_private_key: lighterApiKeyPrivateKey || '',
-          lighter_api_key_index: lighterApiKeyIndex || 0,
+          hyperliquid_unified_account: hyperliquidUnifiedAccount ?? true,
         }
         await api.createExchangeEncrypted(createRequest)
       toast.success('Exchange account created')
@@ -469,11 +451,7 @@ export function SettingsPage() {
                           <div className="flex flex-wrap items-center gap-1.5 mt-1">
                             <p className="text-xs text-zinc-500 capitalize">{exchange.exchange_type || exchange.type}</p>
                             {configBadge('API Key', !!exchange.has_api_key)}
-                            {configBadge('Secret', !!exchange.has_secret_key)}
-                            {exchange.has_passphrase ? configBadge('Passphrase', true) : null}
                             {exchange.hyperliquidWalletAddr ? configBadge('Wallet', true) : null}
-                            {exchange.has_aster_private_key ? configBadge('Aster Key', true) : null}
-                            {exchange.has_lighter_private_key || exchange.has_lighter_api_key_private_key ? configBadge('Lighter Key', true) : null}
                           </div>
                           {accountState && (
                             <div className="flex flex-wrap items-center gap-2 mt-2 text-xs">

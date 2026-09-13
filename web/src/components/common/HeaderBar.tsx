@@ -4,12 +4,6 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Menu, X, ChevronDown, Settings } from 'lucide-react'
 import { t, type Language } from '../../i18n/translations'
 import { OFFICIAL_LINKS } from '../../constants/branding'
-import {
-  getPostAuthPath,
-  getUserMode,
-  setUserMode,
-  type UserMode,
-} from '../../lib/onboarding'
 import { getCurrentPageForPath, ROUTES, type Page } from '../../router/paths'
 import { HyperliquidWalletConnect } from './HyperliquidWalletConnect'
 
@@ -42,9 +36,6 @@ export default function HeaderBar({
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [languageDropdownOpen, setLanguageDropdownOpen] = useState(false)
   const [userDropdownOpen, setUserDropdownOpen] = useState(false)
-  const [userMode, setUserModeState] = useState<UserMode>(
-    () => getUserMode() ?? 'advanced'
-  )
   const dropdownRef = useRef<HTMLDivElement>(null)
   const userDropdownRef = useRef<HTMLDivElement>(null)
   const resolvedCurrentPage =
@@ -54,12 +45,6 @@ export default function HeaderBar({
     navigate(path)
   }
 
-  const handleSwitchMode = (nextMode: UserMode) => {
-    setUserMode(nextMode)
-    setUserModeState(nextMode)
-    setUserDropdownOpen(false)
-    navigateInApp(getPostAuthPath(nextMode))
-  }
   // Close dropdown when clicking outside
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -305,23 +290,6 @@ export default function HeaderBar({
                       >
                         <Settings className="w-3.5 h-3.5" />
                         Settings
-                      </button>
-                      <button
-                        onClick={() =>
-                          handleSwitchMode(
-                            userMode === 'beginner' ? 'advanced' : 'beginner'
-                          )
-                        }
-                        className="w-full flex items-center gap-2 px-3 py-2 text-sm transition-colors hover:bg-white/5 text-nofx-text-muted hover:text-white"
-                      >
-                        <Settings className="w-3.5 h-3.5" />
-                        {userMode === 'beginner'
-                          ? language === 'zh'
-                            ? '切到老手模式'
-                            : 'Switch to Advanced'
-                          : language === 'zh'
-                            ? '切到新手模式'
-                            : 'Switch to Beginner'}
                       </button>
                       {onLogout && (
                         <button

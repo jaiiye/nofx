@@ -39,8 +39,8 @@ export default function FeaturesSection({ language }: FeaturesSectionProps) {
       icon: Blocks,
       title: language === 'zh' ? '多交易所支持' : 'Multi-Exchange Support',
       desc: language === 'zh'
-        ? 'Binance、OKX、Bybit、Hyperliquid、Aster DEX，一套系统管理多个交易所'
-        : 'Binance, OKX, Bybit, Hyperliquid, Aster DEX - one system, multiple exchanges',
+        ? 'Hyperliquid 原生接入，钱包授权即可下单交易'
+        : 'Native Hyperliquid integration — authorize a wallet and start trading',
     },
     {
       icon: BarChart3,

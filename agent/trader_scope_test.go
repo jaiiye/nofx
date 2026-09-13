@@ -372,7 +372,7 @@ func TestHydrateCreateTraderSlotReferencesNormalizesExchangeIDFromVisibleName(t 
 	}
 	a := New(nil, st, DefaultConfig(), slog.Default())
 
-	exchangeID, err := st.Exchange().Create("default", "okx", "小偶", true, "api-test", "secret-test", "pass", false, "", false, false, "", "", "", "", "", "", 0)
+	exchangeID, err := st.Exchange().Create("default", "hyperliquid", "小偶", true, "api-test", "", "", false, "0xabc", true, false)
 	if err != nil {
 		t.Fatalf("seed exchange: %v", err)
 	}
@@ -737,7 +737,7 @@ func TestBuildTraderCreateMissingPromptListsAllMissingSlots(t *testing.T) {
 	if err := st.AIModel().UpdateWithName("default", "default_deepseek", "DeepSeek AI", true, "sk-test-12345", "", "deepseek-chat"); err != nil {
 		t.Fatalf("seed model: %v", err)
 	}
-	exchangeID, err := st.Exchange().Create("default", "okx", "OKX 主账户", true, "api-test", "secret-test", "pass", false, "", false, false, "", "", "", "", "", "", 0)
+	exchangeID, err := st.Exchange().Create("default", "hyperliquid", "Hyperliquid 主账户", true, "api-test", "", "", false, "0xabc", true, false)
 	if err != nil {
 		t.Fatalf("seed exchange: %v", err)
 	}
@@ -1991,23 +1991,28 @@ func TestActiveSessionExtractedDataFiltersToAllowedSchema(t *testing.T) {
 		SkillName:  "exchange_management",
 		ActionName: "create",
 		CollectedFields: map[string]any{
-			"exchange_type": "okx",
+			"exchange_type": "hyperliquid",
 		},
 	}
 	filtered := filterExtractedDataForActiveSession(session, map[string]any{
-		"account_name": "呢呢",
-		"api_key":      "api",
-		"secret":       "wrong-key",
-		"secret_key":   "canonical-secret",
-		"passphrase":   "pass",
+		"account_name":            "呢呢",
+		"api_key":                 "api",
+		"secret":                  "wrong-key",
+		"secret_key":              "canonical-secret",
+		"hyperliquid_wallet_addr": "0xabc",
 	}, "zh")
 	if _, ok := filtered["secret"]; ok {
 		t.Fatalf("expected central brain alias key to be filtered, got: %+v", filtered)
 	}
-	for _, key := range []string{"account_name", "api_key", "secret_key", "passphrase"} {
+	for _, key := range []string{"account_name", "api_key", "secret_key", "hyperliquid_wallet_addr"} {
 		if _, ok := filtered[key]; !ok {
 			t.Fatalf("expected canonical key %q to remain, got: %+v", key, filtered)
 		}
+	}
+	// passphrase belongs to the removed CEX-style exchanges and must no longer
+	// be part of the Hyperliquid-only schema.
+	if _, ok := filtered["passphrase"]; ok {
+		t.Fatalf("expected passphrase to be filtered for hyperliquid schema, got: %+v", filtered)
 	}
 }
 

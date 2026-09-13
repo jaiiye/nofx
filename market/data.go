@@ -1,9 +1,7 @@
 package market
 
 import (
-	"encoding/json"
 	"fmt"
-	"io"
 	"math"
 	"nofx/logger"
 	"nofx/provider/hyperliquid"
@@ -13,8 +11,8 @@ import (
 	"time"
 )
 
-// FundingRateCache is the funding rate cache structure
-// Binance Funding Rate only updates every 8 hours, using 1-hour cache can significantly reduce API calls
+// FundingRateCache is the funding rate cache structure.
+// Hyperliquid quotes funding hourly, so a 1-hour cache is the natural TTL.
 type FundingRateCache struct {
 	Rate      float64
 	UpdatedAt time.Time
@@ -25,9 +23,10 @@ var (
 	frCacheTTL     = 1 * time.Hour
 )
 
-// Get retrieves market data for the specified token (uses Binance data by default)
+// Get retrieves market data for the specified token using Hyperliquid, the
+// only supported venue in this build.
 func Get(symbol string) (*Data, error) {
-	return GetWithExchange(symbol, "binance")
+	return GetWithExchange(symbol, "hyperliquid")
 }
 
 // GetWithExchange retrieves market data for the specified token using exchange-specific data
@@ -51,10 +50,11 @@ func GetWithExchange(symbol, exchange string) (*Data, error) {
 			return nil, fmt.Errorf("Failed to get 5-minute K-line from Hyperliquid: %v", err)
 		}
 	} else {
-		// Use CoinAnk for regular crypto assets with exchange-specific data
-		klines3m, err = getKlinesFromCoinAnk(symbol, "3m", exchange, 100)
+		// CoinAnk has no free tier; serve 3m-equivalent candles from the
+		// Hyperliquid native API instead (5m is the closest available interval).
+		klines3m, err = getKlinesFromHyperliquid(symbol, "5m", 100)
 		if err != nil {
-			return nil, fmt.Errorf("Failed to get 3-minute K-line from CoinAnk (%s): %v", exchange, err)
+			return nil, fmt.Errorf("Failed to get 5-minute K-line from Hyperliquid: %v", err)
 		}
 	}
 
@@ -71,9 +71,9 @@ func GetWithExchange(symbol, exchange string) (*Data, error) {
 			return nil, fmt.Errorf("Failed to get 4-hour K-line from Hyperliquid: %v", err)
 		}
 	} else {
-		klines4h, err = getKlinesFromCoinAnk(symbol, "4h", exchange, 100)
+		klines4h, err = getKlinesFromHyperliquid(symbol, "4h", 100)
 		if err != nil {
-			return nil, fmt.Errorf("Failed to get 4-hour K-line from CoinAnk (%s): %v", exchange, err)
+			return nil, fmt.Errorf("Failed to get 4-hour K-line from Hyperliquid: %v", err)
 		}
 	}
 
@@ -189,8 +189,8 @@ func GetWithTimeframes(symbol string, timeframes []string, primaryTimeframe stri
 				continue
 			}
 		} else {
-			// Use CoinAnk for regular crypto assets (default to Binance)
-			klines, err = getKlinesFromCoinAnk(symbol, tf, "binance", 200)
+			// Use the Hyperliquid native API for crypto assets.
+			klines, err = getKlinesFromHyperliquid(symbol, tf, 200)
 			if err != nil {
 				logger.Infof("⚠️ Failed to get %s %s K-line from CoinAnk: %v", symbol, tf, err)
 				continue
@@ -256,82 +256,58 @@ func GetWithTimeframes(symbol string, timeframes []string, primaryTimeframe stri
 	}, nil
 }
 
-// getOpenInterestData retrieves OI data
+// getOpenInterestData retrieves OI data from the Hyperliquid native info API.
+// Hyperliquid returns open interest in coin units, so it is converted to
+// notional USD using the mark price.
 func getOpenInterestData(symbol string) (*OIData, error) {
-	url := fmt.Sprintf("https://fapi.binance.com/fapi/v1/openInterest?symbol=%s", symbol)
-
-	apiClient := NewAPIClient()
-	resp, err := apiClient.client.Get(url)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
+	ctx, err := hyperliquid.FetchAssetContexts()
 	if err != nil {
 		return nil, err
 	}
 
-	var result struct {
-		OpenInterest string `json:"openInterest"`
-		Symbol       string `json:"symbol"`
-		Time         int64  `json:"time"`
+	coin := hyperliquid.CoinNameFromSymbol(symbol)
+	asset, ok := ctx[coin]
+	if !ok {
+		return nil, fmt.Errorf("no Hyperliquid market context for %s", symbol)
 	}
 
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, err
+	markPrice := asset.MarkPrice
+	if markPrice <= 0 {
+		markPrice = asset.OraclePrice
 	}
 
-	oi, _ := strconv.ParseFloat(result.OpenInterest, 64)
+	oiNotional := asset.OpenInterest * markPrice
 
 	return &OIData{
-		Latest:  oi,
-		Average: oi * 0.999, // Approximate average
+		Latest:  oiNotional,
+		Average: oiNotional * 0.999, // Hyperliquid exposes only the current snapshot
 	}, nil
 }
 
-// getFundingRate retrieves funding rate (optimized: uses 1-hour cache)
+// getFundingRate retrieves the Hyperliquid hourly funding rate (1-hour cache).
+// Hyperliquid quotes funding per hour; it is annualised here so the value stays
+// comparable with the previous 8-hour CEX convention used downstream.
 func getFundingRate(symbol string) (float64, error) {
 	// Check cache (1-hour validity)
-	// Funding Rate only updates every 8 hours, 1-hour cache is very reasonable
 	if cached, ok := fundingRateMap.Load(symbol); ok {
 		cache := cached.(*FundingRateCache)
 		if time.Since(cache.UpdatedAt) < frCacheTTL {
-			// Cache hit, return directly
 			return cache.Rate, nil
 		}
 	}
 
-	// Cache expired or doesn't exist, call API
-	url := fmt.Sprintf("https://fapi.binance.com/fapi/v1/premiumIndex?symbol=%s", symbol)
-
-	apiClient := NewAPIClient()
-	resp, err := apiClient.client.Get(url)
-	if err != nil {
-		return 0, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
+	ctx, err := hyperliquid.FetchAssetContexts()
 	if err != nil {
 		return 0, err
 	}
 
-	var result struct {
-		Symbol          string `json:"symbol"`
-		MarkPrice       string `json:"markPrice"`
-		IndexPrice      string `json:"indexPrice"`
-		LastFundingRate string `json:"lastFundingRate"`
-		NextFundingTime int64  `json:"nextFundingTime"`
-		InterestRate    string `json:"interestRate"`
-		Time            int64  `json:"time"`
+	coin := hyperliquid.CoinNameFromSymbol(symbol)
+	asset, ok := ctx[coin]
+	if !ok {
+		return 0, fmt.Errorf("no Hyperliquid market context for %s", symbol)
 	}
 
-	if err := json.Unmarshal(body, &result); err != nil {
-		return 0, err
-	}
-
-	rate, _ := strconv.ParseFloat(result.LastFundingRate, 64)
+	rate := asset.FundingRate
 
 	// Update cache
 	fundingRateMap.Store(symbol, &FundingRateCache{

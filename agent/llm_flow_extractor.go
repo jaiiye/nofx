@@ -225,16 +225,9 @@ func allowedFieldSpecsForSkillSession(session skillSession, lang string) []llmFl
 		add(&out, "account_name", displayCatalogFieldName("account_name", lang), required["account_name"])
 		add(&out, "api_key", displayCatalogFieldName("api_key", lang), false)
 		add(&out, "secret_key", displayCatalogFieldName("secret_key", lang), false)
-		add(&out, "passphrase", displayCatalogFieldName("passphrase", lang), false)
 		add(&out, "testnet", displayCatalogFieldName("testnet", lang), false)
 		add(&out, "enabled", displayCatalogFieldName("enabled", lang), false)
 		add(&out, "hyperliquid_wallet_addr", displayCatalogFieldName("hyperliquid_wallet_addr", lang), false)
-		add(&out, "aster_user", displayCatalogFieldName("aster_user", lang), false)
-		add(&out, "aster_signer", displayCatalogFieldName("aster_signer", lang), false)
-		add(&out, "aster_private_key", displayCatalogFieldName("aster_private_key", lang), false)
-		add(&out, "lighter_wallet_addr", displayCatalogFieldName("lighter_wallet_addr", lang), false)
-		add(&out, "lighter_api_key_private_key", displayCatalogFieldName("lighter_api_key_private_key", lang), false)
-		add(&out, "lighter_api_key_index", displayCatalogFieldName("lighter_api_key_index", lang), false)
 	case "trader_management":
 		if strings.HasPrefix(session.Action, "update") {
 			add(&out, "update_field", displayCatalogFieldName("update_field", lang), false)

@@ -144,8 +144,6 @@ func displayCatalogFieldName(field, lang string) string {
 		return "exchange type"
 	case "secret_key":
 		return "Secret"
-	case "passphrase":
-		return "Passphrase"
 	case "testnet":
 		if lang == "zh" {
 			return "测试网"
@@ -161,41 +159,6 @@ func displayCatalogFieldName(field, lang string) string {
 			return "Hyperliquid Unified Account"
 		}
 		return "Hyperliquid unified account"
-	case "aster_user":
-		if lang == "zh" {
-			return "Aster User"
-		}
-		return "Aster user"
-	case "aster_signer":
-		if lang == "zh" {
-			return "Aster Signer"
-		}
-		return "Aster signer"
-	case "aster_private_key":
-		if lang == "zh" {
-			return "Aster 私钥"
-		}
-		return "Aster private key"
-	case "lighter_wallet_addr":
-		if lang == "zh" {
-			return "Lighter 钱包地址"
-		}
-		return "Lighter wallet address"
-	case "lighter_private_key":
-		if lang == "zh" {
-			return "Lighter 私钥"
-		}
-		return "Lighter private key"
-	case "lighter_api_key_private_key":
-		if lang == "zh" {
-			return "Lighter API Key 私钥"
-		}
-		return "Lighter API key private key"
-	case "lighter_api_key_index":
-		if lang == "zh" {
-			return "Lighter API Key Index"
-		}
-		return "Lighter API key index"
 	default:
 		if lang == "zh" {
 			return field
@@ -373,26 +336,18 @@ func buildModelUpdatePatchFromSession(session skillSession) modelUpdatePatch {
 }
 
 type exchangeUpdatePatch struct {
-	AccountName             string
-	Enabled                 *bool
-	APIKey                  string
-	SecretKey               string
-	Passphrase              string
-	Testnet                 *bool
-	HyperliquidWalletAddr   string
-	AsterUser               string
-	AsterSigner             string
-	AsterPrivateKey         string
-	LighterWalletAddr       string
-	LighterAPIKeyPrivateKey string
-	LighterAPIKeyIndex      *int
+	AccountName           string
+	Enabled               *bool
+	APIKey                string
+	SecretKey             string
+	Passphrase            string
+	Testnet               *bool
+	HyperliquidWalletAddr string
 }
 
 func (p exchangeUpdatePatch) hasAny() bool {
 	return p.AccountName != "" || p.Enabled != nil || p.APIKey != "" || p.SecretKey != "" ||
-		p.Passphrase != "" || p.Testnet != nil || p.HyperliquidWalletAddr != "" || p.AsterUser != "" ||
-		p.AsterSigner != "" || p.AsterPrivateKey != "" || p.LighterWalletAddr != "" ||
-		p.LighterAPIKeyPrivateKey != "" || p.LighterAPIKeyIndex != nil
+		p.Passphrase != "" || p.Testnet != nil || p.HyperliquidWalletAddr != ""
 }
 
 func applyExchangeUpdatePatchToSession(session *skillSession, patch exchangeUpdatePatch) {
@@ -416,24 +371,6 @@ func applyExchangeUpdatePatchToSession(session *skillSession, patch exchangeUpda
 	}
 	if patch.HyperliquidWalletAddr != "" {
 		setField(session, "hyperliquid_wallet_addr", patch.HyperliquidWalletAddr)
-	}
-	if patch.AsterUser != "" {
-		setField(session, "aster_user", patch.AsterUser)
-	}
-	if patch.AsterSigner != "" {
-		setField(session, "aster_signer", patch.AsterSigner)
-	}
-	if patch.AsterPrivateKey != "" {
-		setField(session, "aster_private_key", patch.AsterPrivateKey)
-	}
-	if patch.LighterWalletAddr != "" {
-		setField(session, "lighter_wallet_addr", patch.LighterWalletAddr)
-	}
-	if patch.LighterAPIKeyPrivateKey != "" {
-		setField(session, "lighter_api_key_private_key", patch.LighterAPIKeyPrivateKey)
-	}
-	if patch.LighterAPIKeyIndex != nil {
-		setField(session, "lighter_api_key_index", strconv.Itoa(*patch.LighterAPIKeyIndex))
 	}
 }
 
@@ -459,24 +396,6 @@ func mergeExchangeUpdatePatch(base, patch exchangeUpdatePatch) exchangeUpdatePat
 	if patch.HyperliquidWalletAddr != "" {
 		base.HyperliquidWalletAddr = patch.HyperliquidWalletAddr
 	}
-	if patch.AsterUser != "" {
-		base.AsterUser = patch.AsterUser
-	}
-	if patch.AsterSigner != "" {
-		base.AsterSigner = patch.AsterSigner
-	}
-	if patch.AsterPrivateKey != "" {
-		base.AsterPrivateKey = patch.AsterPrivateKey
-	}
-	if patch.LighterWalletAddr != "" {
-		base.LighterWalletAddr = patch.LighterWalletAddr
-	}
-	if patch.LighterAPIKeyPrivateKey != "" {
-		base.LighterAPIKeyPrivateKey = patch.LighterAPIKeyPrivateKey
-	}
-	if patch.LighterAPIKeyIndex != nil {
-		base.LighterAPIKeyIndex = patch.LighterAPIKeyIndex
-	}
 	return base
 }
 
@@ -495,16 +414,6 @@ func buildExchangeUpdatePatchFromSession(session skillSession) exchangeUpdatePat
 		patch.Testnet = &parsed
 	}
 	patch.HyperliquidWalletAddr = fieldValue(session, "hyperliquid_wallet_addr")
-	patch.AsterUser = fieldValue(session, "aster_user")
-	patch.AsterSigner = fieldValue(session, "aster_signer")
-	patch.AsterPrivateKey = fieldValue(session, "aster_private_key")
-	patch.LighterWalletAddr = fieldValue(session, "lighter_wallet_addr")
-	patch.LighterAPIKeyPrivateKey = fieldValue(session, "lighter_api_key_private_key")
-	if value := fieldValue(session, "lighter_api_key_index"); value != "" {
-		if parsed, err := strconv.Atoi(value); err == nil {
-			patch.LighterAPIKeyIndex = &parsed
-		}
-	}
 	return patch
 }
 
@@ -1992,28 +1901,6 @@ func (a *Agent) executeExchangeManagementAction(storeUserID string, userID int64
 		if value := defaultIfEmpty(patch.HyperliquidWalletAddr, fieldValue(session, "hyperliquid_wallet_addr")); value != "" {
 			payload["hyperliquid_wallet_addr"] = value
 		}
-		if value := defaultIfEmpty(patch.AsterUser, fieldValue(session, "aster_user")); value != "" {
-			payload["aster_user"] = value
-		}
-		if value := defaultIfEmpty(patch.AsterSigner, fieldValue(session, "aster_signer")); value != "" {
-			payload["aster_signer"] = value
-		}
-		if value := defaultIfEmpty(patch.AsterPrivateKey, fieldValue(session, "aster_private_key")); value != "" {
-			payload["aster_private_key"] = value
-		}
-		if value := defaultIfEmpty(patch.LighterWalletAddr, fieldValue(session, "lighter_wallet_addr")); value != "" {
-			payload["lighter_wallet_addr"] = value
-		}
-		if value := defaultIfEmpty(patch.LighterAPIKeyPrivateKey, fieldValue(session, "lighter_api_key_private_key")); value != "" {
-			payload["lighter_api_key_private_key"] = value
-		}
-		if patch.LighterAPIKeyIndex != nil {
-			payload["lighter_api_key_index"] = *patch.LighterAPIKeyIndex
-		} else if value := fieldValue(session, "lighter_api_key_index"); value != "" {
-			if parsed, err := strconv.Atoi(value); err == nil {
-				payload["lighter_api_key_index"] = parsed
-			}
-		}
 		if session.Action == "update_status" {
 			delete(payload, "account_name")
 		}
@@ -2048,11 +1935,6 @@ func (a *Agent) executeExchangeManagementAction(storeUserID string, userID int64
 			asString(payload["secret_key"]),
 			asString(payload["passphrase"]),
 			asString(payload["hyperliquid_wallet_addr"]),
-			asString(payload["aster_user"]),
-			asString(payload["aster_signer"]),
-			asString(payload["aster_private_key"]),
-			asString(payload["lighter_wallet_addr"]),
-			asString(payload["lighter_api_key_private_key"]),
 		); err != nil {
 			a.saveSkillSession(userID, session)
 			return formatValidationFeedback(lang, "exchange", err)

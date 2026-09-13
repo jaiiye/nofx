@@ -10,12 +10,9 @@ import (
 )
 
 // handleAI500List serves the AI500 index board for the agent UI panel.
-// Data is fetched through the user's claw402 wallet when one is configured
-// (falling back to the direct nofxos client) and served from a 5-minute
+// Data is fetched from the direct nofxos client and served from a 5-minute
 // cache, so panel polling never hammers the upstream.
 func (s *Server) handleAI500List(c *gin.Context) {
-	userID := c.GetString("user_id")
-
 	limit := 0
 	if raw := c.Query("limit"); raw != "" {
 		parsed, err := strconv.Atoi(raw)
@@ -26,8 +23,7 @@ func (s *Server) handleAI500List(c *gin.Context) {
 		limit = parsed
 	}
 
-	walletKey := agent.Claw402WalletKeyForStoreUser(s.store, userID)
-	entries, err := agent.AI500Board(walletKey, limit)
+	entries, err := agent.AI500Board(limit)
 	if err != nil {
 		SafeInternalError(c, "Get AI500 list", err)
 		return

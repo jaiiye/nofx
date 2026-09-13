@@ -24,12 +24,8 @@ func buildSkillDomainPrimer(lang, skillName string) string {
 				"- provider 指模型厂商，不是交易所类型。",
 				"- 关键字段：" + strings.Join(fields, "、"),
 				"- 候选 provider：" + modelProviderSummaryList(lang),
-				"- 推荐 provider：claw402。claw402 是 NOFXi 官方推荐方案，按次付费，使用 Base 链 EVM 钱包 + USDC 支付。",
-				"- 如果用户不确定选哪个 provider，可以优先推荐 claw402 并说明其优势，但绝不能替用户自动选中 claw402；必须先展示完整 provider 选项并让用户自己选择。",
-				"- 如果 provider 还没选定，下一步必须先让用户从完整 provider 列表里选一个，不能先收集 API Key、钱包私钥或其他凭证。",
-				"- 普通 provider（openai/deepseek/claude 等）通常要填 API Key；custom_model_name 和 custom_api_url 可以留空走默认值。",
-				"- claw402 需要钱包私钥，custom_model_name 留空时默认 deepseek。",
-				"- blockrun-base / blockrun-sol 走钱包私钥模式，不需要 custom_api_url，custom_model_name 默认 auto。",
+				"- 当前版本只内置 DeepSeek，需要填 API Key；custom_model_name 和 custom_api_url 可以留空走默认值。",
+				"- 如果 provider 还没选定，下一步必须先让用户确认使用 DeepSeek，不能先收集 API Key 或其他凭证。",
 			}, "\n")
 		}
 		return strings.Join([]string{
@@ -38,12 +34,8 @@ func buildSkillDomainPrimer(lang, skillName string) string {
 			"- provider means the model vendor, not an exchange venue.",
 			"- Key fields: " + strings.Join(fields, ", "),
 			"- Supported providers: " + modelProviderSummaryList(lang),
-			"- Recommended provider: claw402. claw402 is the NOFXi recommended pay-per-use option that uses a Base chain wallet + USDC.",
-			"- If the user is unsure which provider to pick, you may recommend claw402 and explain its advantages, but you must not auto-select claw402 for them. Show the full provider options first and let the user choose.",
-			"- If provider is still missing, the next step must be to ask the user to choose one from the full provider list. Do not ask for an API key, wallet private key, or other credentials before the provider is chosen.",
-			"- Standard providers (openai/deepseek/claude etc.) usually require an API key; `custom_model_name` and `custom_api_url` can be omitted to use defaults.",
-			"- claw402 uses a wallet private key and defaults to `deepseek` if `custom_model_name` is omitted.",
-			"- blockrun-base / blockrun-sol use wallet private keys, do not need `custom_api_url`, and default to `auto`.",
+			"- This build only ships DeepSeek and requires an API key; `custom_model_name` and `custom_api_url` can be omitted to use defaults.",
+			"- If provider is still missing, the next step must be to confirm DeepSeek with the user. Do not ask for an API key before the provider is chosen.",
 		}, "\n")
 	case "exchange_management":
 		fields := []string{

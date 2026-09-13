@@ -18,13 +18,10 @@ import (
 	"sync"
 	"time"
 
-	gethcrypto "github.com/ethereum/go-ethereum/crypto"
-
 	"nofx/manager"
 	"nofx/market"
 	"nofx/mcp"
 	"nofx/store"
-	"nofx/wallet"
 )
 
 type Agent struct {
@@ -53,11 +50,6 @@ type Config struct {
 	AllowTradeExecution bool     `json:"allow_trade_execution"`
 	BriefTimes          []int    `json:"brief_times"`
 }
-
-var (
-	agentWalletAddressFromPrivateKey = walletAddressFromPrivateKey
-	agentQueryUSDCBalanceCached      = wallet.QueryUSDCBalanceCached
-)
 
 func DefaultConfig() *Config {
 	return &Config{
@@ -142,9 +134,7 @@ func (a *Agent) loadAIClientFromStoreUser(storeUserID string) (mcp.AIClient, str
 			a.log().Warn("failed to list AI models for store user", "store_user_id", candidateUserID, "error", err)
 			continue
 		}
-		candidates := rankAgentModelCandidates(models)
-		for _, candidate := range candidates {
-			model := candidate.model
+		for _, model := range rankAgentModelCandidates(models) {
 			if model == nil || !model.Enabled || !agentModelHasUsableAPIKey(model) {
 				continue
 			}
@@ -158,8 +148,6 @@ func (a *Agent) loadAIClientFromStoreUser(storeUserID string) (mcp.AIClient, str
 				"has_api_key", len(model.APIKey) > 0,
 				"custom_api_url", strings.TrimSpace(model.CustomAPIURL),
 				"custom_model_name", strings.TrimSpace(model.CustomModelName),
-				"prefer_model_with_balance", candidate.preferModelWithBalance,
-				"wallet_balance_usdc", candidate.balanceUSDC,
 			)
 
 			apiKey := strings.TrimSpace(string(model.APIKey))
@@ -167,8 +155,7 @@ func (a *Agent) loadAIClientFromStoreUser(storeUserID string) (mcp.AIClient, str
 			modelName := strings.TrimSpace(model.CustomModelName)
 			provider := strings.ToLower(strings.TrimSpace(model.Provider))
 
-			// Use the provider registry for providers like claw402 that have their own
-			// client implementation (x402 payment, custom auth, etc.).
+			// Use the provider registry when the provider ships its own client.
 			if client := mcp.NewAIClientByProvider(provider); client != nil {
 				if modelName == "" {
 					modelName = model.ID
@@ -203,86 +190,25 @@ func (a *Agent) loadAIClientFromStoreUser(storeUserID string) (mcp.AIClient, str
 	return nil, "", false
 }
 
-type agentModelCandidate struct {
-	model                  *store.AIModel
-	preferModelWithBalance bool
-	balanceUSDC            float64
-}
-
-func rankAgentModelCandidates(models []*store.AIModel) []agentModelCandidate {
-	candidates := make([]agentModelCandidate, 0, len(models))
+// rankAgentModelCandidates orders model configs most-recently-updated first,
+// with the model id as a stable tiebreaker. Wallet-balance ranking was removed
+// along with the Claw402 pay-per-call providers.
+func rankAgentModelCandidates(models []*store.AIModel) []*store.AIModel {
+	candidates := make([]*store.AIModel, 0, len(models))
 	for _, model := range models {
-		if model == nil {
-			continue
+		if model != nil {
+			candidates = append(candidates, model)
 		}
-		candidate := agentModelCandidate{model: model}
-		if balance, ok := agentModelUSDCBalance(model); ok && balance > 0 {
-			candidate.preferModelWithBalance = true
-			candidate.balanceUSDC = balance
-		}
-		candidates = append(candidates, candidate)
 	}
 
 	sort.SliceStable(candidates, func(i, j int) bool {
-		left := candidates[i]
-		right := candidates[j]
-		if left.preferModelWithBalance != right.preferModelWithBalance {
-			return left.preferModelWithBalance
+		if !candidates[i].UpdatedAt.Equal(candidates[j].UpdatedAt) {
+			return candidates[i].UpdatedAt.After(candidates[j].UpdatedAt)
 		}
-		if left.balanceUSDC != right.balanceUSDC {
-			return left.balanceUSDC > right.balanceUSDC
-		}
-		leftUpdatedAt := time.Time{}
-		rightUpdatedAt := time.Time{}
-		if left.model != nil {
-			leftUpdatedAt = left.model.UpdatedAt
-		}
-		if right.model != nil {
-			rightUpdatedAt = right.model.UpdatedAt
-		}
-		if !leftUpdatedAt.Equal(rightUpdatedAt) {
-			return leftUpdatedAt.After(rightUpdatedAt)
-		}
-		leftID := ""
-		rightID := ""
-		if left.model != nil {
-			leftID = left.model.ID
-		}
-		if right.model != nil {
-			rightID = right.model.ID
-		}
-		return leftID < rightID
+		return candidates[i].ID < candidates[j].ID
 	})
 
 	return candidates
-}
-
-func agentModelUSDCBalance(model *store.AIModel) (float64, bool) {
-	if model == nil || !agentProviderSupportsUSDCBalance(model.Provider) {
-		return 0, false
-	}
-	privateKey := strings.TrimSpace(string(model.APIKey))
-	if privateKey == "" {
-		return 0, false
-	}
-	walletAddress, err := agentWalletAddressFromPrivateKey(privateKey)
-	if err != nil || strings.TrimSpace(walletAddress) == "" {
-		return 0, false
-	}
-	balance, err := agentQueryUSDCBalanceCached(walletAddress)
-	if err != nil || balance <= 0 {
-		return 0, false
-	}
-	return balance, true
-}
-
-func agentProviderSupportsUSDCBalance(provider string) bool {
-	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "claw402", "blockrun-base":
-		return true
-	default:
-		return false
-	}
 }
 
 func agentModelHasUsableAPIKey(model *store.AIModel) bool {
@@ -306,23 +232,6 @@ func agentModelHasUsableAPIKey(model *store.AIModel) bool {
 	return envKey != "" && strings.TrimSpace(os.Getenv(envKey)) != ""
 }
 
-func walletAddressFromPrivateKey(privateKey string) (string, error) {
-	key := strings.TrimSpace(privateKey)
-	if !strings.HasPrefix(key, "0x") {
-		return "", fmt.Errorf("private key must start with 0x")
-	}
-	if len(key) != 66 {
-		return "", fmt.Errorf("private key must be 66 characters")
-	}
-
-	privateKeyObj, err := gethcrypto.HexToECDSA(strings.TrimPrefix(key, "0x"))
-	if err != nil {
-		return "", err
-	}
-
-	return gethcrypto.PubkeyToAddress(privateKeyObj.PublicKey).Hex(), nil
-}
-
 func resolveModelRuntimeConfig(provider, customAPIURL, customModelName, fallbackModelID string) (string, string) {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	customAPIURL = strings.TrimSpace(customAPIURL)
@@ -335,14 +244,6 @@ func resolveModelRuntimeConfig(provider, customAPIURL, customModelName, fallback
 	}
 	defaults := map[string]providerDefaults{
 		"deepseek": {url: "https://api.deepseek.com/v1", model: "deepseek-chat"},
-		"qwen":     {url: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen3-max"},
-		"openai":   {url: "https://api.openai.com/v1", model: "gpt-5.2"},
-		"claude":   {url: "https://api.anthropic.com/v1", model: "claude-opus-4-6"},
-		"gemini":   {url: "https://generativelanguage.googleapis.com/v1beta/openai", model: "gemini-3-pro-preview"},
-		"grok":     {url: "https://api.x.ai/v1", model: "grok-3-latest"},
-		"kimi":     {url: "https://api.moonshot.ai/v1", model: "moonshot-v1-auto"},
-		"minimax":  {url: "https://api.minimax.chat/v1", model: "MiniMax-M2.5"},
-		"claw402":  {url: "https://claw402.ai", model: "deepseek"},
 	}
 
 	if customAPIURL == "" {
@@ -440,9 +341,6 @@ func (a *Agent) handleMessageForStoreUser(ctx context.Context, storeUserID strin
 	if reply, handled := a.handleTradeConfirmation(ctx, userID, text, lang); handled {
 		return reply, nil
 	}
-	if reply, handled := a.handleModelWalletBalanceQuestion(storeUserID, lang, text); handled {
-		return reply, nil
-	}
 
 	// Everything else goes through the planner and tool system.
 	return a.thinkAndAct(ctx, storeUserID, userID, lang, text)
@@ -485,12 +383,6 @@ func (a *Agent) handleMessageStreamForStoreUser(ctx context.Context, storeUserID
 		return "🧹 Conversation history cleared.", nil
 	}
 	if reply, handled := a.handleTradeConfirmation(ctx, userID, text, lang); handled {
-		if onEvent != nil {
-			emitStreamText(onEvent, reply)
-		}
-		return reply, nil
-	}
-	if reply, handled := a.handleModelWalletBalanceQuestion(storeUserID, lang, text); handled {
 		if onEvent != nil {
 			emitStreamText(onEvent, reply)
 		}
