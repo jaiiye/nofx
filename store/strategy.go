@@ -43,6 +43,12 @@ const (
 	DefaultMinPositionSize = 12.0
 	MinConfidence          = 50
 	MaxConfidence          = 100
+
+	// Keltner ATR multiplier. Not configurable: calculateKeltner is called with
+	// this value at every call site, so a user-settable multiplier could
+	// disagree with the bands actually computed.
+	KeltnerATRMultiplier = 2.0
+
 )
 
 // EffectiveMaxPositions resolves the position cap for a config, applying the

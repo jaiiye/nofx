@@ -7,6 +7,7 @@ import (
 	"nofx/provider/coinank/coinank_api"
 	"nofx/provider/coinank/coinank_enum"
 	"nofx/provider/hyperliquid"
+	"nofx/store"
 	"strconv"
 	"strings"
 	"time"
@@ -145,18 +146,22 @@ func calculateTimeframeSeries(klines []Kline, timeframe string, count int) *Time
 	}
 
 	data := &TimeframeSeriesData{
-		Timeframe:   timeframe,
-		Klines:      make([]KlineBar, 0, count),
-		MidPrices:   make([]float64, 0, count),
-		EMA20Values: make([]float64, 0, count),
-		EMA50Values: make([]float64, 0, count),
-		MACDValues:  make([]float64, 0, count),
-		RSI7Values:  make([]float64, 0, count),
-		RSI14Values: make([]float64, 0, count),
-		Volume:      make([]float64, 0, count),
-		BOLLUpper:   make([]float64, 0, count),
-		BOLLMiddle:  make([]float64, 0, count),
-		BOLLLower:   make([]float64, 0, count),
+		Timeframe:    timeframe,
+		Klines:       make([]KlineBar, 0, count),
+		MidPrices:    make([]float64, 0, count),
+		EMA20Values:  make([]float64, 0, count),
+		EMA50Values:  make([]float64, 0, count),
+		EMA200Values: make([]float64, 0, count),
+		MACDValues:   make([]float64, 0, count),
+		RSI7Values:   make([]float64, 0, count),
+		RSI14Values:  make([]float64, 0, count),
+		Volume:       make([]float64, 0, count),
+		BOLLUpper:    make([]float64, 0, count),
+		BOLLMiddle:   make([]float64, 0, count),
+		BOLLLower:    make([]float64, 0, count),
+		KCUpper:      make([]float64, 0, count),
+		KCMiddle:     make([]float64, 0, count),
+		KCLower:      make([]float64, 0, count),
 	}
 
 	// Get latest N data points based on count from config
@@ -215,10 +220,30 @@ func calculateTimeframeSeries(klines []Kline, timeframe string, count int) *Time
 			data.BOLLMiddle = append(data.BOLLMiddle, middle)
 			data.BOLLLower = append(data.BOLLLower, lower)
 		}
+
+		// Calculate EMA200 for each point. This needs a full 200-bar warmup,
+		// so it only starts appending once that history exists.
+		if i >= ema200Period-1 {
+			data.EMA200Values = append(data.EMA200Values, calculateEMA(klines[:i+1], ema200Period))
+		}
+
+		// Calculate the Keltner Channel for each point. The ATR multiplier comes
+		// from the shared constant so the bands the gates read and the bands the
+		// prompt/advertisement claims can never diverge.
+		if i >= 19 {
+			kcUpper, kcMiddle, kcLower := calculateKeltner(klines[:i+1], 20, 14, store.KeltnerATRMultiplier)
+			data.KCUpper = append(data.KCUpper, kcUpper)
+			data.KCMiddle = append(data.KCMiddle, kcMiddle)
+			data.KCLower = append(data.KCLower, kcLower)
+		}
 	}
 
 	// Calculate ATR14
 	data.ATR14 = calculateATR(klines, 14)
+
+	// ADX(14) is computed on the full series (it needs a long warmup) rather
+	// than per-bar, since only the latest reading drives the chop filter.
+	data.ADX14 = calculateADX(klines, 14)
 
 	return data
 }
@@ -350,10 +375,17 @@ func calculateLongerTermData(klines []Kline) *LongerTermData {
 	// Calculate EMA
 	data.EMA20 = calculateEMA(klines, 20)
 	data.EMA50 = calculateEMA(klines, 50)
+	// EMA200 is the long-term trend filter. It returns 0 when fewer than 200
+	// bars are available, which callers must treat as "no reading".
+	data.EMA200 = calculateEMA(klines, ema200Period)
 
 	// Calculate ATR
 	data.ATR3 = calculateATR(klines, 3)
 	data.ATR14 = calculateATR(klines, 14)
+
+	// Trend-strength filter and ATR-based breakout bands.
+	data.ADX14 = calculateADX(klines, 14)
+	data.KCUpper, data.KCMiddle, data.KCLower = calculateKeltner(klines, 20, 14, store.KeltnerATRMultiplier)
 
 	// Calculate volume
 	if len(klines) > 0 {

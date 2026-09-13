@@ -45,6 +45,80 @@ type TimeframeSeriesData struct {
 	BOLLUpper  []float64 `json:"boll_upper"`  // Upper band
 	BOLLMiddle []float64 `json:"boll_middle"` // Middle band (SMA)
 	BOLLLower  []float64 `json:"boll_lower"`  // Lower band
+
+	// EMA200 series. Requires 200 bars of history, which is why the kline fetch
+	// count is set above 200 — the old 200-bar fetch left zero margin.
+	EMA200Values []float64 `json:"ema200_values"`
+	// ADX(14) current reading (0-100). Measures trend STRENGTH, not direction,
+	// so it is used as a chop filter: low readings mean a range.
+	ADX14 float64 `json:"adx14"`
+	// Keltner Channel: EMA(20) ± multiplier × ATR(14). The middle band is the
+	// EMA itself. Width is ATR-driven, so it does not pinch in quiet markets
+	// the way a standard-deviation envelope does.
+	KCUpper  []float64 `json:"kc_upper"`
+	KCMiddle []float64 `json:"kc_middle"`
+	KCLower  []float64 `json:"kc_lower"`
+}
+
+// LastClose returns the most recent close, or 0 when the series is empty.
+func (d *TimeframeSeriesData) LastClose() float64 {
+	if d == nil || len(d.Klines) == 0 {
+		return 0
+	}
+	return d.Klines[len(d.Klines)-1].Close
+}
+
+// LastEMA200 returns the most recent EMA200, or 0 while the series is still
+// inside the 200-bar warmup window.
+func (d *TimeframeSeriesData) LastEMA200() float64 {
+	return lastOrZero(d, func(s *TimeframeSeriesData) []float64 { return s.EMA200Values })
+}
+
+// LastKCUpper returns the most recent Keltner upper band, or 0 when unavailable.
+func (d *TimeframeSeriesData) LastKCUpper() float64 {
+	return lastOrZero(d, func(s *TimeframeSeriesData) []float64 { return s.KCUpper })
+}
+
+// LastKCMiddle returns the most recent Keltner middle band, or 0.
+func (d *TimeframeSeriesData) LastKCMiddle() float64 {
+	return lastOrZero(d, func(s *TimeframeSeriesData) []float64 { return s.KCMiddle })
+}
+
+// LastKCLower returns the most recent Keltner lower band, or 0.
+func (d *TimeframeSeriesData) LastKCLower() float64 {
+	return lastOrZero(d, func(s *TimeframeSeriesData) []float64 { return s.KCLower })
+}
+
+func lastOrZero(d *TimeframeSeriesData, pick func(*TimeframeSeriesData) []float64) float64 {
+	if d == nil {
+		return 0
+	}
+	series := pick(d)
+	if len(series) == 0 {
+		return 0
+	}
+	return series[len(series)-1]
+}
+
+// PrimarySeries returns the series for the strategy's primary timeframe.
+//
+// The primary timeframe may not be present in TimeframeData when the caller is
+// on the legacy single-series path, so this falls back to any available series
+// rather than returning nil and silently skipping the entry gates.
+func (d *Data) PrimarySeries(primaryTimeframe string) *TimeframeSeriesData {
+	if d == nil {
+		return nil
+	}
+	if s, ok := d.TimeframeData[primaryTimeframe]; ok && s != nil {
+		return s
+	}
+	// Prefer the shortest available timeframe as a deterministic fallback.
+	for _, tf := range []string{"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d"} {
+		if s, ok := d.TimeframeData[tf]; ok && s != nil {
+			return s
+		}
+	}
+	return nil
 }
 
 // OIData Open Interest data
@@ -68,12 +142,20 @@ type IntradayData struct {
 type LongerTermData struct {
 	EMA20         float64
 	EMA50         float64
+	EMA200        float64
 	ATR3          float64
 	ATR14         float64
 	CurrentVolume float64
 	AverageVolume float64
 	MACDValues    []float64
 	RSI14Values   []float64
+	// ADX14 measures trend strength (not direction) on this timeframe. Used as
+	// a chop filter so entries only fire when a trend actually exists.
+	ADX14 float64
+	// Keltner Channel on this timeframe: EMA20 ± 2×ATR14.
+	KCUpper  float64
+	KCMiddle float64
+	KCLower  float64
 }
 
 // Binance API response structure
@@ -231,11 +313,11 @@ const (
 type GridDirection string
 
 const (
-	GridDirectionNeutral   GridDirection = "neutral"     // 50% buy + 50% sell
-	GridDirectionLong      GridDirection = "long"        // 100% buy
-	GridDirectionShort     GridDirection = "short"       // 100% sell
-	GridDirectionLongBias  GridDirection = "long_bias"   // 70% buy + 30% sell (default)
-	GridDirectionShortBias GridDirection = "short_bias"  // 30% buy + 70% sell (default)
+	GridDirectionNeutral   GridDirection = "neutral"    // 50% buy + 50% sell
+	GridDirectionLong      GridDirection = "long"       // 100% buy
+	GridDirectionShort     GridDirection = "short"      // 100% sell
+	GridDirectionLongBias  GridDirection = "long_bias"  // 70% buy + 30% sell (default)
+	GridDirectionShortBias GridDirection = "short_bias" // 30% buy + 70% sell (default)
 )
 
 // GetBuySellRatio returns the buy and sell ratio for this direction

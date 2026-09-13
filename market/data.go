@@ -42,17 +42,22 @@ func GetWithExchange(symbol, exchange string) (*Data, error) {
 	// For hyperliquid exchange, also use Hyperliquid API
 	useHyperliquidAPI := isXyzAsset || strings.ToLower(exchange) == "hyperliquid"
 
-	// Get 3-minute K-line data (or 5-minute for xyz assets as 3m may not be available)
+	// Get 3-minute K-line data (or 5-minute for xyz assets as 3m may not be available).
+	//
+	// The fetch count is KlineFetchLimit rather than a smaller literal: this
+	// legacy path computes EMA200 for the long-term trend filter, and a 100-bar
+	// fetch would leave it permanently at 0 — the filter would look "absent"
+	// rather than broken, which is the hardest kind of bug to trace.
 	if useHyperliquidAPI {
 		// Use Hyperliquid API for xyz dex assets (use 5m since 3m may not be available)
-		klines3m, err = getKlinesFromHyperliquid(symbol, "5m", 100)
+		klines3m, err = getKlinesFromHyperliquid(symbol, "5m", KlineFetchLimit)
 		if err != nil {
 			return nil, fmt.Errorf("Failed to get 5-minute K-line from Hyperliquid: %v", err)
 		}
 	} else {
 		// CoinAnk has no free tier; serve 3m-equivalent candles from the
 		// Hyperliquid native API instead (5m is the closest available interval).
-		klines3m, err = getKlinesFromHyperliquid(symbol, "5m", 100)
+		klines3m, err = getKlinesFromHyperliquid(symbol, "5m", KlineFetchLimit)
 		if err != nil {
 			return nil, fmt.Errorf("Failed to get 5-minute K-line from Hyperliquid: %v", err)
 		}
@@ -64,14 +69,15 @@ func GetWithExchange(symbol, exchange string) (*Data, error) {
 		return nil, fmt.Errorf("%s data is stale, possible cache failure", symbol)
 	}
 
-	// Get 4-hour K-line data
+	// Get 4-hour K-line data. Same KlineFetchLimit rationale as the 5m series
+	// above: the 4h series feeds the longer-term EMA200 used by the trend gate.
 	if useHyperliquidAPI {
-		klines4h, err = getKlinesFromHyperliquid(symbol, "4h", 100)
+		klines4h, err = getKlinesFromHyperliquid(symbol, "4h", KlineFetchLimit)
 		if err != nil {
 			return nil, fmt.Errorf("Failed to get 4-hour K-line from Hyperliquid: %v", err)
 		}
 	} else {
-		klines4h, err = getKlinesFromHyperliquid(symbol, "4h", 100)
+		klines4h, err = getKlinesFromHyperliquid(symbol, "4h", KlineFetchLimit)
 		if err != nil {
 			return nil, fmt.Errorf("Failed to get 4-hour K-line from Hyperliquid: %v", err)
 		}
@@ -183,14 +189,14 @@ func GetWithTimeframes(symbol string, timeframes []string, primaryTimeframe stri
 
 		if isXyzAsset {
 			// Use Hyperliquid API for xyz dex assets
-			klines, err = getKlinesFromHyperliquid(symbol, tf, 200)
+			klines, err = getKlinesFromHyperliquid(symbol, tf, KlineFetchLimit)
 			if err != nil {
 				logger.Infof("⚠️ Failed to get %s %s K-line from Hyperliquid: %v", symbol, tf, err)
 				continue
 			}
 		} else {
 			// Use the Hyperliquid native API for crypto assets.
-			klines, err = getKlinesFromHyperliquid(symbol, tf, 200)
+			klines, err = getKlinesFromHyperliquid(symbol, tf, KlineFetchLimit)
 			if err != nil {
 				logger.Infof("⚠️ Failed to get %s %s K-line from CoinAnk: %v", symbol, tf, err)
 				continue
