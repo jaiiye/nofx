@@ -344,10 +344,14 @@ StrategyConfig fields:
   indicators.enable_rsi: true for overbought/oversold, divergence detection
   indicators.enable_boll: true for volatility, range trading, breakout strategies
   indicators.enable_atr: true for volatility measurement and stop-loss sizing
+  indicators.enable_adx: true to gate entries on trend strength (chop filter)
+  indicators.adx_threshold: min ADX to treat a trend as established (default 20, range 10-60)
+  indicators.enable_keltner: true for EMA(20)+/-2xATR(14) breakout bands (multiplier is fixed)
+  indicators.entry_gates_enforced: false (default) logs which gate WOULD block; true rejects the order
   indicators.enable_volume: ALWAYS true
   indicators.enable_oi: ALWAYS true (open interest data)
   indicators.enable_funding_rate: ALWAYS true
-  indicators.ema_periods: [20,50] default, [9,21] for faster signals
+  indicators.ema_periods: [20,50,200] default; EMA200 is the long-term trend filter
   indicators.rsi_periods: [7,14] default
   indicators.atr_periods: [14] default
   indicators.boll_periods: [20] default
@@ -366,7 +370,8 @@ StrategyConfig fields:
   risk_control.max_margin_usage: 0.1-1.0 (default 1.0 = use up to 100% margin), enforced in code
   risk_control.min_position_size: minimum USDT per trade (default 12), enforced in code
   risk_control.min_risk_reward_ratio: minimum profit/loss ratio required (default 3 = 3:1), enforced in code
-  risk_control.min_confidence: minimum AI confidence to open a position (default 78, range 50-100), enforced in code
+  risk_control.risk_per_trade_pct: percent of equity risked per trade; caps position size at budget/stop-distance (default 1.0, range 0.1-5.0; 0 disables), enforced in code
+  risk_control.min_confidence: recorded self-assessment only; NOT an entry gate (entry is gated by ADX, EMA200 and the Keltner breakout)
   prompt_sections.role_definition: describe the AI's trading persona and goal
   prompt_sections.trading_frequency: guidelines on how often to trade
   prompt_sections.entry_standards: conditions that must align before entering a position

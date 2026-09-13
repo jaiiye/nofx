@@ -81,13 +81,19 @@
       "type": "int",
       "min": 50,
       "max": 100,
-      "description": "最小开仓置信度，手动页面范围 50～100，数值越高开单越谨慎。该项由代码强制执行：决策中的 confidence 低于该值时，开仓订单会被直接拒绝。"
+      "description": "AI 自评置信度，手动页面范围 50～100。仅作为决策记录保存，不再参与开仓判定；开仓改由 ADX、EMA200 与肯特纳突破三条客观规则决定。"
     },
     "min_risk_reward_ratio": {
       "type": "float",
       "min": 1,
       "max": 10,
       "description": "最小盈亏比，手动页面范围 1～10，步进 0.5；例如 1.5 表示每笔交易至少 1.5 倍风险收益比。该项由代码强制执行：止盈止损推算出的实际盈亏比低于该值时，开仓订单会被直接拒绝。"
+    },
+    "risk_per_trade_pct": {
+      "type": "float",
+      "min": 0.1,
+      "max": 5.0,
+      "description": "单笔风险预算（占账户权益的百分比），默认 1.0。仓位上限 = 风险预算 ÷ 止损距离，因此止损越紧允许的仓位越大。该项由代码强制执行：按止损计算出的实际亏损超过预算时会拒绝开仓。设为 0 表示关闭该校验。"
     },
     "custom_prompt": {
       "type": "text",
@@ -247,6 +253,27 @@
       "type": "bool",
       "default": false,
       "description": "是否启用布林带指标。"
+    },
+    "enable_adx": {
+      "type": "bool",
+      "default": false,
+      "description": "是否启用 ADX（趋势强度）指标，用于横盘过滤：ADX 低于阈值时视为震荡市。注意 ADX 衡量趋势强弱而非方向。"
+    },
+    "adx_threshold": {
+      "type": "int",
+      "min": 10,
+      "max": 60,
+      "description": "ADX 趋势阈值，默认 20（宽松）。低于该值时视为震荡市，开仓会被拦截（或仅记录，取决于 entry_gates_enforced）。"
+    },
+    "enable_keltner": {
+      "type": "bool",
+      "default": false,
+      "description": "是否启用肯特纳通道（EMA20 ± 2×ATR14）。宽度由 ATR 驱动，比布林带更少在安静行情中收窄，适合突破入场。ATR 倍数固定为 2，不可配置。"
+    },
+    "entry_gates_enforced": {
+      "type": "bool",
+      "default": false,
+      "description": "入场闸门是否强制执行。false（默认）仅在日志中记录「本应拦截」的标的与原因，便于先观察通过率；改为 true 后才会真正拒绝订单。"
     },
     "enable_volume": {
       "type": "bool",

@@ -30,11 +30,13 @@ const groupLabels: Record<string, string> = {
 }
 
 const indicatorCards = [
-  { key: 'enable_ema', label: 'EMA', hint: '20/50', color: '#F0B90B' },
+  { key: 'enable_ema', label: 'EMA', hint: '20/50/200', color: '#F0B90B' },
   { key: 'enable_macd', label: 'MACD', hint: 'trend momentum', color: '#a855f7' },
   { key: 'enable_rsi', label: 'RSI', hint: 'overbought/oversold', color: '#F6465D' },
   { key: 'enable_atr', label: 'ATR', hint: 'volatility risk', color: '#60a5fa' },
   { key: 'enable_boll', label: 'BOLL', hint: 'range / breakout', color: '#ec4899' },
+  { key: 'enable_adx', label: 'ADX', hint: 'trend strength / chop filter', color: '#14b8a6' },
+  { key: 'enable_keltner', label: 'Keltner', hint: 'EMA20 ± 2×ATR14 breakout', color: '#f97316' },
 ] as const
 
 const marketContextCards = [

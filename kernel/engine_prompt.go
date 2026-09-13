@@ -100,7 +100,7 @@ func (e *StrategyEngine) BuildSystemPrompt(accountEquity float64, variant string
 		}
 		e.writeAvailableIndicators(&sb, zh)
 		if zh {
-			sb.WriteString(fmt.Sprintf("\n**置信度 ≥ %d** 才能开仓。\n\n", riskControl.MinConfidence))
+			sb.WriteString("\n**开仓需满足趋势、ADX 与突破条件**（详见下方开仓条件）。\n\n")
 		} else {
 			sb.WriteString(fmt.Sprintf("\n**Confidence ≥ %d** required to open positions.\n\n", riskControl.MinConfidence))
 		}
@@ -108,12 +108,12 @@ func (e *StrategyEngine) BuildSystemPrompt(accountEquity float64, variant string
 		sb.WriteString("# 🎯 入场标准 (严格)\n\n")
 		sb.WriteString("只有当多重信号共振时才开仓。你拥有:\n")
 		e.writeAvailableIndicators(&sb, zh)
-		sb.WriteString(fmt.Sprintf("\n请自由使用任何有效的分析方法, 但**置信度 ≥ %d** 才能开仓; 避免低质量行为, 如单一指标、信号矛盾、横盘震荡、平仓后立刻再开等。\n\n", riskControl.MinConfidence))
+		sb.WriteString("\n请自由使用任何有效的分析方法, 但需在趋势成立且价格突破时入场; 避免低质量行为, 如单一指标、信号矛盾、横盘震荡、平仓后立刻再开等。\n\n")
 	} else {
 		sb.WriteString("# 🎯 Entry Standards (Strict)\n\n")
 		sb.WriteString("Only open positions when multiple signals resonate. You have:\n")
 		e.writeAvailableIndicators(&sb, zh)
-		sb.WriteString(fmt.Sprintf("\nFeel free to use any effective analysis method, but **confidence ≥ %d** is required to open positions; avoid low-quality behaviors such as single-indicator entries, contradictory signals, sideways chop, or re-entering immediately after a close.\n\n", riskControl.MinConfidence))
+		sb.WriteString("Feel free to use any effective analysis method. Aim for entries where a trend is established and price is breaking out; avoid low-quality behaviors such as single-indicator entries, contradictory signals, sideways chop, or re-entering immediately after a close.\n\n")
 	}
 
 	// 6. Decision process (editable)
@@ -317,10 +317,31 @@ func writeHardConstraints(sb *strings.Builder, accountEquity float64, riskContro
 	}
 	if zh {
 		sb.WriteString(fmt.Sprintf("- 风险回报比: ≥1:%.1f (take_profit / stop_loss)\n", riskControl.MinRiskRewardRatio))
-		sb.WriteString(fmt.Sprintf("- 最小置信度: ≥%d 才开仓\n\n", riskControl.MinConfidence))
+		if riskPct := riskControl.EffectiveRiskPerTradePct(); riskPct > 0 {
+			sb.WriteString(fmt.Sprintf("- 单笔风险预算: 权益的 %.2f%%; 仓位上限由该预算 ÷ 止损距离反推\n", riskPct))
+		}
+		sb.WriteString("\n")
 	} else {
 		sb.WriteString(fmt.Sprintf("- Risk-Reward Ratio: ≥1:%.1f (take_profit / stop_loss)\n", riskControl.MinRiskRewardRatio))
-		sb.WriteString(fmt.Sprintf("- Min Confidence: ≥%d to open position\n\n", riskControl.MinConfidence))
+		if riskPct := riskControl.EffectiveRiskPerTradePct(); riskPct > 0 {
+			sb.WriteString(fmt.Sprintf("- Risk Budget: %.2f%% of equity per trade; position size is capped at budget ÷ stop distance\n", riskPct))
+		}
+		sb.WriteString("\n")
+	}
+
+	// Entry rules are stated as objective conditions rather than a confidence
+	// threshold: the model is no longer asked to self-assess whether it is sure
+	// enough, because the ADX/EMA/Keltner checks now decide that.
+	if zh {
+		sb.WriteString("## 开仓条件 (客观规则)\n")
+		sb.WriteString("- 止损距离应接近 2×ATR, 而不是随意取一个百分比。\n")
+		sb.WriteString("- 开仓前确认趋势方向与 ADX 读数满足要求, 横盘市况下不要逆势开仓。\n")
+		sb.WriteString("- `confidence` 仅作为你的主观记录, 不再决定能否开仓。请如实填写, 不要为了通过而抬高。\n\n")
+	} else {
+		sb.WriteString("## Entry Conditions (objective rules)\n")
+		sb.WriteString("- Place the stop roughly 2×ATR from entry rather than using an arbitrary percentage.\n")
+		sb.WriteString("- Confirm the trend direction and the ADX reading before entering; do not open breakouts in a ranging market.\n")
+		sb.WriteString("- `confidence` is a recorded self-assessment only and no longer gates entry. Report it honestly rather than inflating it.\n\n")
 	}
 
 	// Position sizing guidance
@@ -398,7 +419,7 @@ func writeOutputFormat(sb *strings.Builder, accountEquity, btcEthPosValueRatio f
 	if zh {
 		sb.WriteString("## 字段说明\n\n")
 		sb.WriteString("- `action`: open_long | open_short | close_long | close_short | hold | wait\n")
-		sb.WriteString(fmt.Sprintf("- `confidence`: 0-100 (开仓建议 ≥ %d)\n", riskControl.MinConfidence))
+		sb.WriteString("- `confidence`: 0-100 (主观记录值, 不参与开仓判定, 请如实填写)\n")
 		sb.WriteString("- 开仓时必填: leverage, position_size_usd, stop_loss, take_profit, confidence, risk_usd\n")
 		sb.WriteString("- **重要**: 所有数值必须是算好的数字, 不能是公式/表达式 (例如写 `27.76`, 不要写 `3000 * 0.01`)\n")
 		if singleSymbol {
@@ -408,7 +429,7 @@ func writeOutputFormat(sb *strings.Builder, accountEquity, btcEthPosValueRatio f
 	} else {
 		sb.WriteString("## Field Description\n\n")
 		sb.WriteString("- `action`: open_long | open_short | close_long | close_short | hold | wait\n")
-		sb.WriteString(fmt.Sprintf("- `confidence`: 0-100 (opening recommended ≥ %d)\n", riskControl.MinConfidence))
+		sb.WriteString("- `confidence`: 0-100 (recorded self-assessment only; does not gate entry, so report it honestly)\n")
 		sb.WriteString("- Required when opening: leverage, position_size_usd, stop_loss, take_profit, confidence, risk_usd\n")
 		sb.WriteString("- **IMPORTANT**: all numeric values must be calculated numbers, NOT formulas/expressions (e.g. use `27.76`, not `3000 * 0.01`)\n")
 		if singleSymbol {
@@ -877,6 +898,27 @@ func (e *StrategyEngine) formatMarketData(data *market.Data) string {
 			if indicators.EnableRSI && len(data.LongerTermContext.RSI14Values) > 0 {
 				sb.WriteString(fmt.Sprintf("RSI indicators (14-Period): %s\n\n", formatFloatSlice(data.LongerTermContext.RSI14Values)))
 			}
+
+			// Trend filter + chop filter. EMA200 is reported separately from
+			// the EMA20/50 pair because it is the long-term regime line, not
+			// part of the short-term cross.
+			if indicators.EnableEMA && data.LongerTermContext.EMA200 > 0 {
+				sb.WriteString(fmt.Sprintf("200-Period EMA (long-term trend filter): %.3f\n\n",
+					data.LongerTermContext.EMA200))
+			}
+
+			if indicators.EnableADX && data.LongerTermContext.ADX14 > 0 {
+				sb.WriteString(fmt.Sprintf("ADX (14-Period, trend strength 0-100): %.2f%s\n\n",
+					data.LongerTermContext.ADX14, adxRegimeNote(data.LongerTermContext.ADX14, indicators.ADXThreshold)))
+			}
+
+			if indicators.EnableKeltner && data.LongerTermContext.KCMiddle > 0 {
+				sb.WriteString(fmt.Sprintf("Keltner Channel (EMA20 ± %.1f×ATR14): upper %.3f | middle %.3f | lower %.3f\n\n",
+					store.KeltnerATRMultiplier,
+					data.LongerTermContext.KCUpper,
+					data.LongerTermContext.KCMiddle,
+					data.LongerTermContext.KCLower))
+			}
 		}
 	}
 
@@ -911,6 +953,9 @@ func (e *StrategyEngine) formatTimeframeSeriesData(sb *strings.Builder, data *ma
 		if len(data.EMA50Values) > 0 {
 			sb.WriteString(fmt.Sprintf("EMA50: %s\n", formatFloatSlice(data.EMA50Values)))
 		}
+		if len(data.EMA200Values) > 0 {
+			sb.WriteString(fmt.Sprintf("EMA200: %s\n", formatFloatSlice(data.EMA200Values)))
+		}
 	}
 
 	if indicators.EnableMACD && len(data.MACDValues) > 0 {
@@ -936,7 +981,33 @@ func (e *StrategyEngine) formatTimeframeSeriesData(sb *strings.Builder, data *ma
 		sb.WriteString(fmt.Sprintf("BOLL Lower: %s\n", formatFloatSlice(data.BOLLLower)))
 	}
 
+	// ADX is a single current reading rather than a series (it needs a long
+	// warmup), so it is surfaced as a scalar with its regime interpretation.
+	if indicators.EnableADX && data.ADX14 > 0 {
+		sb.WriteString(fmt.Sprintf("ADX14: %.2f%s\n", data.ADX14, adxRegimeNote(data.ADX14, indicators.ADXThreshold)))
+	}
+
+	if indicators.EnableKeltner && len(data.KCUpper) > 0 {
+		sb.WriteString(fmt.Sprintf("Keltner Upper: %s\n", formatFloatSlice(data.KCUpper)))
+		sb.WriteString(fmt.Sprintf("Keltner Middle: %s\n", formatFloatSlice(data.KCMiddle)))
+		sb.WriteString(fmt.Sprintf("Keltner Lower: %s\n", formatFloatSlice(data.KCLower)))
+	}
+
 	sb.WriteString("\n")
+}
+
+// adxRegimeNote annotates an ADX reading with whether it clears the configured
+// trend threshold. Inlining this next to the number keeps the model from having
+// to remember the threshold, which reduces the odds it treats a ranging market
+// as tradeable.
+func adxRegimeNote(adx float64, threshold int) string {
+	if threshold <= 0 {
+		threshold = store.DefaultADXThreshold
+	}
+	if adx >= float64(threshold) {
+		return fmt.Sprintf("  <- trending (>= %d)", threshold)
+	}
+	return fmt.Sprintf("  <- ranging/choppy (< %d)", threshold)
 }
 
 func (e *StrategyEngine) formatQuantData(data *QuantData) string {

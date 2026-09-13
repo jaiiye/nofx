@@ -136,6 +136,14 @@ export interface IndicatorConfig {
   enable_volume: boolean;
   enable_oi: boolean;
   enable_funding_rate: boolean;
+  // ADX (trend strength) - used as a chop filter, not a directional signal
+  enable_adx?: boolean;
+  // Min ADX to treat a trend as established (default 20)
+  adx_threshold?: number;
+  // Keltner Channel: EMA(20) +/- 2xATR(14). The multiplier is fixed in Go.
+  enable_keltner?: boolean;
+  // false (default) logs which gate would block; true rejects the order
+  entry_gates_enforced?: boolean;
   ema_periods?: number[];
   rsi_periods?: number[];
   atr_periods?: number[];
@@ -203,6 +211,12 @@ export interface RiskControlConfig {
   // Risk Parameters
   max_margin_usage: number;        // Max margin utilization, e.g. 0.9 = 90% (CODE ENFORCED)
   min_position_size: number;       // Min position size in USDT (CODE ENFORCED)
-  min_risk_reward_ratio: number;   // Min take_profit / stop_loss ratio (AI guided)
-  min_confidence: number;          // Min AI confidence to open position (AI guided)
+  min_risk_reward_ratio: number;   // Min take_profit / stop_loss ratio (CODE ENFORCED)
+  // Percent of equity risked per trade. Caps the position at
+  // budget / stop-distance, so a tighter stop allows a larger size.
+  // 0 disables the derived-size check. (CODE ENFORCED)
+  risk_per_trade_pct?: number;     // default: 1.0
+  // Recorded self-assessment only - NOT an entry gate. Entry is gated by
+  // ADX, EMA200 and the Keltner breakout instead.
+  min_confidence: number;
 }
