@@ -44,11 +44,23 @@ const (
 	MinConfidence          = 50
 	MaxConfidence          = 100
 
+	// ADX trend-strength gate. 20 is the lenient setting (25 is the textbook
+	// "trend established" level); the user picked 20 to suit mid/short-term
+	// trading where waiting for 25 would suppress too many valid breakouts.
+	DefaultADXThreshold = 20
+	MinADXThreshold     = 10
+	MaxADXThreshold     = 60
+
 	// Keltner ATR multiplier. Not configurable: calculateKeltner is called with
 	// this value at every call site, so a user-settable multiplier could
 	// disagree with the bands actually computed.
 	KeltnerATRMultiplier = 2.0
 
+	// Fraction of account equity risked per trade, in percent. Drives the
+	// ATR-based position size: size = (equity × pct/100) / stopDistance.
+	DefaultRiskPerTradePct = 1.0
+	MinRiskPerTradePct     = 0.1
+	MaxRiskPerTradePct     = 5.0
 )
 
 // EffectiveMaxPositions resolves the position cap for a config, applying the
@@ -72,6 +84,26 @@ func (c *RiskControlConfig) EffectiveMinPositionSize() float64 {
 		return DefaultMinPositionSize
 	}
 	return c.MinPositionSize
+}
+
+// EffectiveRiskPerTradePct resolves the per-trade risk budget as a percentage
+// of equity. A non-positive value means "risk sizing disabled", which is
+// reported as 0 so callers can skip the check rather than silently applying a
+// default the user did not ask for.
+func (c *RiskControlConfig) EffectiveRiskPerTradePct() float64 {
+	if c == nil || c.RiskPerTradePct <= 0 {
+		return 0
+	}
+	return c.RiskPerTradePct
+}
+
+// EffectiveADXThreshold resolves the ADX trend gate, falling back to the
+// documented default when unset.
+func (c *IndicatorConfig) EffectiveADXThreshold() int {
+	if c == nil || c.ADXThreshold <= 0 {
+		return DefaultADXThreshold
+	}
+	return c.ADXThreshold
 }
 
 // ClampLimits enforces product-level limits on strategy config to prevent token overflow.
@@ -170,6 +202,28 @@ func (c *StrategyConfig) ClampLimits() {
 	}
 	if c.RiskControl.MinConfidence > MaxConfidence {
 		c.RiskControl.MinConfidence = MaxConfidence
+	}
+
+	// Clamp the per-trade risk budget. Zero is left untouched so the check
+	// stays disabled rather than being silently forced to a default.
+	if c.RiskControl.RiskPerTradePct != 0 {
+		if c.RiskControl.RiskPerTradePct < MinRiskPerTradePct {
+			c.RiskControl.RiskPerTradePct = MinRiskPerTradePct
+		}
+		if c.RiskControl.RiskPerTradePct > MaxRiskPerTradePct {
+			c.RiskControl.RiskPerTradePct = MaxRiskPerTradePct
+		}
+	}
+
+	// Clamp the ADX gate. Zero is treated as "not configured" and left alone so
+	// EffectiveADXThreshold can apply the documented default.
+	if c.Indicators.ADXThreshold != 0 {
+		if c.Indicators.ADXThreshold < MinADXThreshold {
+			c.Indicators.ADXThreshold = MinADXThreshold
+		}
+		if c.Indicators.ADXThreshold > MaxADXThreshold {
+			c.Indicators.ADXThreshold = MaxADXThreshold
+		}
 	}
 }
 
@@ -851,6 +905,31 @@ type IndicatorConfig struct {
 	ATRPeriods []int `json:"atr_periods,omitempty"` // default [14]
 	// BOLL period configuration (period, standard deviation multiplier is fixed at 2)
 	BOLLPeriods []int `json:"boll_periods,omitempty"` // default [20] - can select multiple timeframes
+
+	// ADX (trend strength) switch. ADX measures trend STRENGTH, not direction,
+	// so it is wired up as a chop filter rather than a directional signal.
+	EnableADX bool `json:"enable_adx"`
+	// Minimum ADX to consider a trend established. Below this the market is
+	// treated as ranging and breakout entries are suppressed. CODE ENFORCED.
+	ADXThreshold int `json:"adx_threshold,omitempty"` // default 20 (lenient)
+
+	// Keltner Channel switch: EMA(20) ± 2×ATR(14).
+	//
+	// The ATR multiplier is intentionally NOT configurable. The bands are
+	// computed with a fixed 2.0 in calculateKeltner, so exposing a multiplier
+	// would let the configured value and the computed bands diverge — the gate
+	// would reason about a width the data never had.
+	EnableKeltner bool `json:"enable_keltner"`
+
+	// EntryGatesEnforced controls whether the ADX/EMA200/Keltner entry rules
+	// reject orders or merely log that they would have.
+	//
+	// Defaults to false on purpose. Three ANDed conditions rarely align, so the
+	// rules start in observation mode: the log line says exactly which gate
+	// would have blocked which symbol, which is what you need to calibrate the
+	// thresholds against real flow. Flip to true once the pass rate looks sane.
+	EntryGatesEnforced bool `json:"entry_gates_enforced"`
+
 	// external data sources
 	ExternalDataSources []ExternalDataSource `json:"external_data_sources,omitempty"`
 
@@ -928,7 +1007,17 @@ type RiskControlConfig struct {
 
 	// Min take_profit / stop_loss ratio (CODE ENFORCED)
 	MinRiskRewardRatio float64 `json:"min_risk_reward_ratio"`
-	// Min AI confidence to open position (CODE ENFORCED)
+
+	// Fraction of equity risked per trade, in percent. The ATR-based position
+	// size is derived from this: a tighter stop buys a larger position for the
+	// same dollar risk, which is the point of risk-based sizing. A non-positive
+	// value disables the derived-size check. (CODE ENFORCED)
+	RiskPerTradePct float64 `json:"risk_per_trade_pct"`
+
+	// Min AI confidence to open position. Kept for observability: the model
+	// still reports a score and it is written to the decision record, but it is
+	// no longer a code-enforced gate now that entry is driven by ADX, the
+	// long-term EMA and the Keltner breakout. (AI guided / recorded only)
 	MinConfidence int `json:"min_confidence"`
 }
 
@@ -1000,18 +1089,22 @@ func GetDefaultStrategyConfig(lang string) StrategyConfig {
 				SelectedTimeframes:   []string{"5m", "15m", "1h"},
 			},
 			EnableRawKlines:   true, // Required - raw OHLCV data for AI analysis
-			EnableEMA:         false,
+			EnableEMA:         true, // EMA200 is the long-term trend filter (code enforced)
 			EnableMACD:        false,
 			EnableRSI:         false,
-			EnableATR:         false,
+			EnableATR:         true, // ATR drives both the stop distance and the position size
 			EnableBOLL:        false,
 			EnableVolume:      true,
 			EnableOI:          true,
 			EnableFundingRate: true,
-			EMAPeriods:        []int{20, 50},
+			EMAPeriods:        []int{20, 50, 200},
 			RSIPeriods:        []int{7, 14},
-			ATRPeriods:        []int{14},
+			ATRPeriods:        []int{14}, // mid/short-term horizon: 14 keeps the stop responsive
 			BOLLPeriods:       []int{20},
+			// ADX + Keltner are the entry gate; 20 is the lenient trend threshold.
+			EnableADX:     true,
+			ADXThreshold:  DefaultADXThreshold,
+			EnableKeltner: true,
 			// Hyperliquid strategies must use native Hyperliquid market data by default.
 			// NofxOS datasets do not cover all Hyperliquid XYZ assets, so keep them off.
 			NofxOSAPIKey:           "",
@@ -1041,7 +1134,10 @@ func GetDefaultStrategyConfig(lang string) StrategyConfig {
 			MaxMarginUsage:               1.0,                    // Intentionally uses full margin when opening
 			MinPositionSize:              DefaultMinPositionSize, // CODE ENFORCED
 			MinRiskRewardRatio:           3.0,                    // Min 3:1 profit/loss ratio (CODE ENFORCED)
-			MinConfidence:                78,                     // Min 78% confidence (CODE ENFORCED)
+			// Risk 1% of equity per trade; position size is derived from the
+			// ATR stop distance so a tighter stop buys a larger position.
+			RiskPerTradePct: DefaultRiskPerTradePct, // CODE ENFORCED
+			MinConfidence:   78,                     // Recorded for observability; no longer a code gate
 		},
 	}
 

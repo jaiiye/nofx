@@ -132,3 +132,110 @@ func TestEffectiveMinPositionSizeCoversUnset(t *testing.T) {
 		t.Fatalf("explicit MinPositionSize resolved to %v, want 25", got)
 	}
 }
+
+// TestEffectiveRiskPerTradePctDisablesOnZero pins the "0 means disabled"
+// contract. Returning the default here would silently impose a risk budget the
+// user never configured, so zero must stay zero.
+func TestEffectiveRiskPerTradePctDisablesOnZero(t *testing.T) {
+	var nilCfg *RiskControlConfig
+	if got := nilCfg.EffectiveRiskPerTradePct(); got != 0 {
+		t.Fatalf("nil config resolved to %v, want 0 (disabled)", got)
+	}
+
+	unset := RiskControlConfig{}
+	if got := unset.EffectiveRiskPerTradePct(); got != 0 {
+		t.Fatalf("unset RiskPerTradePct resolved to %v, want 0 (disabled)", got)
+	}
+
+	explicit := RiskControlConfig{RiskPerTradePct: 1.5}
+	if got := explicit.EffectiveRiskPerTradePct(); got != 1.5 {
+		t.Fatalf("explicit RiskPerTradePct resolved to %v, want 1.5", got)
+	}
+}
+
+// TestEffectiveADXThresholdDefaults covers the lenient default the user chose
+// for mid/short-term trading.
+func TestEffectiveADXThresholdDefaults(t *testing.T) {
+	var nilCfg *IndicatorConfig
+	if got := nilCfg.EffectiveADXThreshold(); got != DefaultADXThreshold {
+		t.Fatalf("nil config resolved to %d, want %d", got, DefaultADXThreshold)
+	}
+
+	unset := IndicatorConfig{}
+	if got := unset.EffectiveADXThreshold(); got != DefaultADXThreshold {
+		t.Fatalf("unset ADXThreshold resolved to %d, want %d", got, DefaultADXThreshold)
+	}
+
+	explicit := IndicatorConfig{ADXThreshold: 30}
+	if got := explicit.EffectiveADXThreshold(); got != 30 {
+		t.Fatalf("explicit ADXThreshold resolved to %d, want 30", got)
+	}
+}
+
+// TestDefaultProfileEnablesTrendAndChopFilters pins the shipped entry-gate
+// defaults: EMA (for EMA200), ATR (stop + sizing), ADX and Keltner.
+func TestDefaultProfileEnablesTrendAndChopFilters(t *testing.T) {
+	cfg := GetDefaultStrategyConfig("zh")
+	cfg.ClampLimits()
+
+	ind := cfg.Indicators
+	if !ind.EnableEMA {
+		t.Fatal("default must enable EMA so EMA200 is available for the trend filter")
+	}
+	if !ind.EnableATR {
+		t.Fatal("default must enable ATR for stop distance and position sizing")
+	}
+	if !ind.EnableADX {
+		t.Fatal("default must enable ADX so the chop filter has data")
+	}
+	if !ind.EnableKeltner {
+		t.Fatal("default must enable the Keltner channel for breakout entries")
+	}
+	if ind.ADXThreshold != DefaultADXThreshold {
+		t.Fatalf("ADXThreshold = %d, want %d", ind.ADXThreshold, DefaultADXThreshold)
+	}
+	if cfg.RiskControl.RiskPerTradePct != DefaultRiskPerTradePct {
+		t.Fatalf("RiskPerTradePct = %v, want %v",
+			cfg.RiskControl.RiskPerTradePct, DefaultRiskPerTradePct)
+	}
+}
+
+// TestClampLimitsBoundsADXAndRiskBudget ensures out-of-range values are pulled
+// back rather than persisted as-is, while zero stays untouched so it keeps its
+// "disabled / use default" meaning.
+func TestClampLimitsBoundsADXAndRiskBudget(t *testing.T) {
+	cfg := GetDefaultStrategyConfig("zh")
+
+	cfg.Indicators.ADXThreshold = MaxADXThreshold + 100
+	cfg.RiskControl.RiskPerTradePct = MaxRiskPerTradePct + 10
+	cfg.ClampLimits()
+	if cfg.Indicators.ADXThreshold != MaxADXThreshold {
+		t.Fatalf("ADXThreshold = %d, want clamped to %d", cfg.Indicators.ADXThreshold, MaxADXThreshold)
+	}
+	if cfg.RiskControl.RiskPerTradePct != MaxRiskPerTradePct {
+		t.Fatalf("RiskPerTradePct = %v, want clamped to %v",
+			cfg.RiskControl.RiskPerTradePct, MaxRiskPerTradePct)
+	}
+
+	cfg.Indicators.ADXThreshold = 1
+	cfg.RiskControl.RiskPerTradePct = 0.001
+	cfg.ClampLimits()
+	if cfg.Indicators.ADXThreshold != MinADXThreshold {
+		t.Fatalf("ADXThreshold = %d, want raised to %d", cfg.Indicators.ADXThreshold, MinADXThreshold)
+	}
+	if cfg.RiskControl.RiskPerTradePct != MinRiskPerTradePct {
+		t.Fatalf("RiskPerTradePct = %v, want raised to %v",
+			cfg.RiskControl.RiskPerTradePct, MinRiskPerTradePct)
+	}
+
+	// Zero must survive clamping: it means "disabled", not "use the minimum".
+	cfg.Indicators.ADXThreshold = 0
+	cfg.RiskControl.RiskPerTradePct = 0
+	cfg.ClampLimits()
+	if cfg.Indicators.ADXThreshold != 0 {
+		t.Fatalf("zero ADXThreshold was rewritten to %d; it must stay 0", cfg.Indicators.ADXThreshold)
+	}
+	if cfg.RiskControl.RiskPerTradePct != 0 {
+		t.Fatalf("zero RiskPerTradePct was rewritten to %v; it must stay 0", cfg.RiskControl.RiskPerTradePct)
+	}
+}

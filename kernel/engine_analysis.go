@@ -104,6 +104,8 @@ func GetFullDecisionWithStrategy(ctx *Context, mcpClient mcp.AIClient, engine *S
 
 	// 2. Build System Prompt using strategy engine
 	riskConfig := engine.GetRiskControlConfig()
+	indicatorConfig := engine.GetConfig().Indicators
+	entryCtx := buildEntryContext(ctx, indicatorConfig.Klines.PrimaryTimeframe)
 	systemPrompt := engine.BuildSystemPrompt(ctx.Account.TotalEquity, variant)
 
 	// 3. Build User Prompt using strategy engine
@@ -118,7 +120,7 @@ func GetFullDecisionWithStrategy(ctx *Context, mcpClient mcp.AIClient, engine *S
 	}
 
 	// 5. Parse AI response
-	decision, err := parseFullDecisionResponse(aiResponse, ctx.Account.TotalEquity, riskConfig)
+	decision, err := parseFullDecisionResponse(aiResponse, ctx.Account.TotalEquity, riskConfig, indicatorConfig, entryCtx)
 
 	if decision != nil {
 		decision.Timestamp = time.Now()
@@ -236,7 +238,7 @@ func pruneCandidateCoinsWithoutMarketData(ctx *Context) {
 // AI Response Parsing
 // ============================================================================
 
-func parseFullDecisionResponse(aiResponse string, accountEquity float64, risk store.RiskControlConfig) (*FullDecision, error) {
+func parseFullDecisionResponse(aiResponse string, accountEquity float64, risk store.RiskControlConfig, indicators store.IndicatorConfig, entry entryContext) (*FullDecision, error) {
 	cotTrace := extractCoTTrace(aiResponse)
 
 	decisions, err := extractDecisions(aiResponse)
@@ -247,7 +249,7 @@ func parseFullDecisionResponse(aiResponse string, accountEquity float64, risk st
 		}, fmt.Errorf("failed to extract decisions: %w", err)
 	}
 
-	if err := validateDecisions(decisions, accountEquity, risk); err != nil {
+	if err := validateDecisions(decisions, accountEquity, risk, indicators, entry); err != nil {
 		return &FullDecision{
 			CoTTrace:  cotTrace,
 			Decisions: decisions,
@@ -258,6 +260,49 @@ func parseFullDecisionResponse(aiResponse string, accountEquity float64, risk st
 		CoTTrace:  cotTrace,
 		Decisions: decisions,
 	}, nil
+}
+
+// buildEntryContext extracts the indicator snapshot the entry gates need from
+// the primary timeframe of the already-fetched market data.
+//
+// Only the primary timeframe is used: that is the timeframe the strategy trades
+// on, and mixing in a longer timeframe here would let the two disagree about
+// which regime the symbol is in.
+func buildEntryContext(ctx *Context, primaryTimeframe string) entryContext {
+	if ctx == nil || len(ctx.MarketDataMap) == 0 {
+		return entryContext{}
+	}
+
+	// The context has no explicit "primary symbol" when scanning a universe, so
+	// the snapshot is resolved per symbol by the gate checks.
+	return entryContext{
+		marketDataBySymbol: ctx.MarketDataMap,
+		primaryTimeframe:   primaryTimeframe,
+	}
+}
+
+// entryContextForSymbol resolves the indicator snapshot for one symbol.
+func entryContextForSymbol(ctx entryContext, symbol string) entryContext {
+	data, ok := ctx.marketDataBySymbol[symbol]
+	if !ok || data == nil {
+		return entryContext{}
+	}
+
+	series := data.PrimarySeries(ctx.primaryTimeframe)
+	if series == nil {
+		return entryContext{}
+	}
+
+	return entryContext{
+		Price:            series.LastClose(),
+		EMA200:           series.LastEMA200(),
+		ADX14:            series.ADX14,
+		KCUpper:          series.LastKCUpper(),
+		KCMiddle:         series.LastKCMiddle(),
+		KCLower:          series.LastKCLower(),
+		ATR14:            series.ATR14,
+		primaryTimeframe: ctx.primaryTimeframe,
+	}
 }
 
 func extractCoTTrace(response string) string {
