@@ -96,6 +96,10 @@ services:
     build:
       context: .
       dockerfile: ./docker/Dockerfile.backend
+    # Tag local builds to the fork's ghcr so `docker compose push`
+    # publishes exactly what CI would (docker-build.yml derives the
+    # same path from the repo name).
+    image: ghcr.io/jaiiye/nofx/nofx-backend:latest
     container_name: nofx-trading
     restart: unless-stopped
     stop_grace_period: 30s  # Allow the app 30 seconds for graceful shutdown
@@ -138,6 +142,7 @@ services:
     build:
       context: .
       dockerfile: ./docker/Dockerfile.frontend
+    image: ghcr.io/jaiiye/nofx/nofx-frontend:latest
     container_name: nofx-frontend
     restart: unless-stopped
     ports:

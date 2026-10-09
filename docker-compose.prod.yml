@@ -1,5 +1,10 @@
 # NOFX Production Deployment
-# 用户部署专用 - 使用官方预构建镜像
+# 用户部署专用 - 使用预构建镜像
+#
+# Self-hosted data plane edition: pulls YOUR fork's images (built by
+# .github/workflows/docker-build.yml on push to main/dev) and runs the
+# hl-* data-plane services from the same image. Set IMAGE_BASE below to
+# your GitHub account/repo (lowercase), e.g. image_base=yourname/nofx.
 #
 # 一键部署命令:
 # curl -fsSL https://raw.githubusercontent.com/NoFxAiOS/nofx/main/install.sh | bash
@@ -9,8 +14,92 @@
 # docker compose -f docker-compose.prod.yml up -d
 
 services:
+  # Self-hosted data-plane Postgres (cvd_bars / candidate_active /
+  # liq_levels / oi_snapshots). nofx itself keeps its default SQLite;
+  # only HLSCRAPER_DSN must point here.
+  scraper-postgres:
+    image: postgres:16-alpine
+    container_name: nofx-scraper-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${HLSCRAPER_DB_USER:-nofx}
+      POSTGRES_PASSWORD: ${HLSCRAPER_DB_PASSWORD:-nofx}
+      POSTGRES_DB: ${HLSCRAPER_DB_NAME:-nofx}
+    volumes:
+      - scraper-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${HLSCRAPER_DB_USER:-nofx}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - nofx-network
+
+  # ──────────────────────────────────────────────────────────────
+  # Self-hosted Hyperliquid data plane. Schema auto-initializes on
+  # first boot (advisory-locked across containers). Remove these four
+  # services and HLSCRAPER_DSN below to fall back to paid sources.
+  # ──────────────────────────────────────────────────────────────
+  hl-collector:
+    image: ${IMAGE_BASE:-ghcr.io/jaiiye/nofx/nofx-backend}:latest
+    container_name: nofx-hl-collector
+    restart: unless-stopped
+    command: ["./hl-collector"]
+    depends_on:
+      scraper-postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${HLSCRAPER_DB_USER:-nofx}:${HLSCRAPER_DB_PASSWORD:-nofx}@scraper-postgres:5432/${HLSCRAPER_DB_NAME:-nofx}?sslmode=disable
+      COLLECTOR_COINS: ${HLSCRAPER_COINS:-BTC,ETH,SOL,BNB,XRP,DOGE,ADA,AVAX,LINK,DOT,TRX,LTC,ATOM,UNI,APT,ARB,OP,SUI,TON,CRV}
+      SCREENER_REFRESH_SEC: ${HLSCRAPER_SCREENER_REFRESH_SEC:-1800}
+    networks:
+      - nofx-network
+
+  hl-cvd-recorder:
+    image: ${IMAGE_BASE:-ghcr.io/jaiiye/nofx/nofx-backend}:latest
+    container_name: nofx-hl-cvd
+    restart: unless-stopped
+    # --ws: persistent trade-tape subscription (<200ms CVD latency)
+    command: ["./hl-cvd-recorder", "--ws"]
+    depends_on:
+      scraper-postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${HLSCRAPER_DB_USER:-nofx}:${HLSCRAPER_DB_PASSWORD:-nofx}@scraper-postgres:5432/${HLSCRAPER_DB_NAME:-nofx}?sslmode=disable
+      COLLECTOR_COINS: ${HLSCRAPER_COINS:-BTC,ETH,SOL,BNB,XRP,DOGE,ADA,AVAX,LINK,DOT,TRX,LTC,ATOM,UNI,APT,ARB,OP,SUI,TON,CRV}
+    networks:
+      - nofx-network
+
+  hl-liq-collector:
+    image: ${IMAGE_BASE:-ghcr.io/jaiiye/nofx/nofx-backend}:latest
+    container_name: nofx-hl-liq
+    restart: unless-stopped
+    command: ["./hl-liq-collector"]
+    depends_on:
+      scraper-postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${HLSCRAPER_DB_USER:-nofx}:${HLSCRAPER_DB_PASSWORD:-nofx}@scraper-postgres:5432/${HLSCRAPER_DB_NAME:-nofx}?sslmode=disable
+      COLLECTOR_COINS: ${HLSCRAPER_COINS:-BTC,ETH,SOL,BNB,XRP,DOGE,ADA,AVAX,LINK,DOT,TRX,LTC,ATOM,UNI,APT,ARB,OP,SUI,TON,CRV}
+      LIQ_SNAPSHOT_INTERVAL_SEC: "60"
+    networks:
+      - nofx-network
+
+  hl-retention:
+    image: ${IMAGE_BASE:-ghcr.io/jaiiye/nofx/nofx-backend}:latest
+    container_name: nofx-hl-retention
+    restart: unless-stopped
+    command: ["./hl-retention"]
+    depends_on:
+      scraper-postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${HLSCRAPER_DB_USER:-nofx}:${HLSCRAPER_DB_PASSWORD:-nofx}@scraper-postgres:5432/${HLSCRAPER_DB_NAME:-nofx}?sslmode=disable
+    networks:
+      - nofx-network
+
   nofx:
-    image: ghcr.io/nofxaios/nofx/nofx-backend:latest
+    image: ${IMAGE_BASE:-ghcr.io/jaiiye/nofx/nofx-backend}:latest
     container_name: nofx-trading
     restart: unless-stopped
     stop_grace_period: 30s
@@ -25,8 +114,15 @@ services:
     environment:
       - TZ=${TZ:-Asia/Shanghai}
       - AI_MAX_TOKENS=8000
+      # Self-hosted data plane: netflow/OI/price rankings and the
+      # "hl_pool" coin source read from the scraper Postgres. Remove to
+      # fall back to the paid nofxos/vergex sources.
+      - HLSCRAPER_DSN=postgres://${HLSCRAPER_DB_USER:-nofx}:${HLSCRAPER_DB_PASSWORD:-nofx}@scraper-postgres:5432/${HLSCRAPER_DB_NAME:-nofx}?sslmode=disable
     networks:
       - nofx-network
+    depends_on:
+      scraper-postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/api/health"]
       interval: 30s
@@ -35,7 +131,7 @@ services:
       start_period: 60s
 
   nofx-frontend:
-    image: ghcr.io/nofxaios/nofx/nofx-frontend:latest
+    image: ${IMAGE_BASE:-ghcr.io/jaiiye/nofx/nofx-frontend}:latest
     container_name: nofx-frontend
     restart: unless-stopped
     ports:
@@ -54,3 +150,6 @@ services:
 networks:
   nofx-network:
     driver: bridge
+
+volumes:
+  scraper-pgdata:
