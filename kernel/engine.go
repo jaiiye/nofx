@@ -9,6 +9,7 @@ import (
 	"nofx/logger"
 	"nofx/market"
 	"nofx/provider/hyperliquid"
+	"nofx/provider/nofxhl"
 	"nofx/provider/nofxos"
 	"nofx/provider/vergex"
 	"nofx/security"
@@ -190,11 +191,21 @@ type StrategyEngine struct {
 	nofxosClient       *nofxos.Client
 	vergexClient       *vergex.Client
 	vergexRankingCache map[string]*vergex.SignalRankItem
+	hlScraper          *nofxhl.Client // self-hosted Hyperliquid data plane (nil = disabled)
 }
 
 // NewStrategyEngine creates strategy execution engine.
 // claw402WalletKey is optional — if provided, nofxos data requests are routed through claw402.
 func NewStrategyEngine(config *store.StrategyConfig, claw402WalletKey ...string) *StrategyEngine {
+	// Self-hosted Hyperliquid data plane (nofx-hl-screener). When
+	// HLSCRAPER_DSN is set, the ranking fetches below source from it
+	// (CVD flow / candidate pool / liq heatmap) and the live Hyperliquid
+	// info API (OI/price) instead of the paid nofxos/vergex endpoints.
+	hlScraper := nofxhl.NewClientFromEnv()
+	if hlScraper.Enabled() {
+		logger.Infof("🔗 Self-hosted HL data plane enabled (%s) — paid nofxos/vergex ranking calls will be bypassed", os.Getenv(nofxhl.DefaultDSNEnv))
+	}
+
 	// Create NofxOS client with API key from config
 	apiKey := config.Indicators.NofxOSAPIKey
 	if apiKey == "" {
@@ -234,6 +245,7 @@ func NewStrategyEngine(config *store.StrategyConfig, claw402WalletKey ...string)
 			nofxosClient:       client,
 			vergexClient:       vergexClient,
 			vergexRankingCache: make(map[string]*vergex.SignalRankItem),
+			hlScraper:          hlScraper,
 		}
 	}
 
@@ -241,6 +253,7 @@ func NewStrategyEngine(config *store.StrategyConfig, claw402WalletKey ...string)
 		config:             config,
 		nofxosClient:       client,
 		vergexRankingCache: make(map[string]*vergex.SignalRankItem),
+		hlScraper:          hlScraper,
 	}
 }
 
@@ -410,6 +423,38 @@ func (e *StrategyEngine) GetCandidateCoins() ([]CandidateCoin, error) {
 			return nil, err
 		}
 		return e.filterExcludedCoins(coins), nil
+
+	case "hl_pool":
+		// Self-hosted candidate pool: the nofx-hl-screener's 5-layer
+		// filter output (candidate_active table). Falls back to static
+		// coins when the data plane is not running or the pool is empty.
+		fallbackStatic := func(reason string) ([]CandidateCoin, error) {
+			logger.Infof("⚠️  [nofxhl] %s — falling back to static coins", reason)
+			for _, symbol := range coinSource.StaticCoins {
+				candidates = append(candidates, CandidateCoin{
+					Symbol:  market.Normalize(symbol),
+					Sources: []string{"static"},
+				})
+			}
+			return e.filterExcludedCoins(candidates), nil
+		}
+		if !e.hlScraper.Enabled() {
+			return fallbackStatic("source_type is 'hl_pool' but HLSCRAPER_DSN is not set")
+		}
+		poolCoins, err := e.hlScraper.TopPoolCoins(context.Background(), coinSource.HLPoolLimit)
+		if err != nil {
+			return fallbackStatic(fmt.Sprintf("pool fetch failed: %v", err))
+		}
+		if len(poolCoins) == 0 {
+			return fallbackStatic("candidate pool empty (screener may still be collecting)")
+		}
+		for _, pc := range poolCoins {
+			candidates = append(candidates, CandidateCoin{
+				Symbol:  market.Normalize(pc.Coin),
+				Sources: []string{"hl_pool"},
+			})
+		}
+		return e.filterExcludedCoins(candidates), nil
 
 	case "vergex_signal":
 		coins, err := e.getVergexSignalCoins(
@@ -1401,6 +1446,22 @@ func (e *StrategyEngine) FetchOIRankingData() *nofxos.OIRankingData {
 	if !indicators.EnableOIRanking {
 		return nil
 	}
+	// Self-hosted source first: free HL metaAndAssetCtxs + oi_snapshots
+	// history. Bypasses the paid nofxos/claw402 endpoint entirely.
+	if e.hlScraper.Enabled() {
+		duration := indicators.OIRankingDuration
+		if duration == "" {
+			duration = "24h"
+		}
+		data, err := e.hlScraper.OIRanking(context.Background(), duration, indicators.OIRankingLimit)
+		if err != nil {
+			logger.Warnf("⚠️  [nofxhl] OI ranking: %v", err)
+			return nil
+		}
+		logger.Infof("✓ [nofxhl] OI ranking ready: %d top, %d low positions",
+			len(data.TopPositions), len(data.LowPositions))
+		return data
+	}
 	if e.usesHyperliquidNativeUniverse() {
 		logger.Infof("⏭️  Skipping NofxOS OI ranking for Hyperliquid strategy; native Hyperliquid universe is the source of truth")
 		return nil
@@ -1435,6 +1496,23 @@ func (e *StrategyEngine) FetchNetFlowRankingData() *nofxos.NetFlowRankingData {
 	indicators := e.config.Indicators
 	if !indicators.EnableNetFlowRanking {
 		return nil
+	}
+	// Self-hosted source first: CVD ranking from the screener's trade-
+	// tape recording. This replaces the paid nofxos/vergex netflow with
+	// real Hyperliquid taker flow.
+	if e.hlScraper.Enabled() {
+		duration := indicators.NetFlowRankingDuration
+		if duration == "" {
+			duration = "24h"
+		}
+		data, err := e.hlScraper.NetFlowRanking(context.Background(), duration, indicators.NetFlowRankingLimit)
+		if err != nil {
+			logger.Warnf("⚠️  [nofxhl] NetFlow ranking: %v", err)
+			return nil
+		}
+		logger.Infof("✓ [nofxhl] NetFlow (CVD) ranking ready: in=%d, out=%d",
+			len(data.InstitutionFutureTop), len(data.InstitutionFutureLow))
+		return data
 	}
 	if e.usesHyperliquidNativeUniverse() {
 		logger.Infof("⏭️  Skipping NofxOS netflow ranking for Hyperliquid strategy; native Hyperliquid universe is the source of truth")
@@ -1471,6 +1549,20 @@ func (e *StrategyEngine) FetchPriceRankingData() *nofxos.PriceRankingData {
 	indicators := e.config.Indicators
 	if !indicators.EnablePriceRanking {
 		return nil
+	}
+	// Self-hosted source first: live prevDayPx from HL metaAndAssetCtxs.
+	if e.hlScraper.Enabled() {
+		durations := indicators.PriceRankingDuration
+		if durations == "" {
+			durations = "24h"
+		}
+		data, err := e.hlScraper.PriceRanking(context.Background(), durations, indicators.PriceRankingLimit)
+		if err != nil {
+			logger.Warnf("⚠️  [nofxhl] Price ranking: %v", err)
+			return nil
+		}
+		logger.Infof("✓ [nofxhl] Price ranking ready for %d durations", len(data.Durations))
+		return data
 	}
 	if e.usesHyperliquidNativeUniverse() {
 		logger.Infof("⏭️  Skipping NofxOS price ranking for Hyperliquid strategy; native Hyperliquid universe is the source of truth")

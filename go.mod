@@ -7,6 +7,7 @@ require (
 	github.com/agiledragon/gomonkey/v2 v2.13.0
 	github.com/antihax/optional v1.0.0
 	github.com/bybit-exchange/bybit.go.api v0.0.0-20250727214011-c9347d6804d6
+	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0
 	github.com/elliottech/lighter-go v0.0.0-20251104171447-78b9b55ebc48
 	github.com/ethereum/go-ethereum v1.17.3
 	github.com/gateio/gateapi-go/v6 v6.104.3
@@ -14,12 +15,15 @@ require (
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
+	github.com/gorilla/websocket v1.5.3
+	github.com/jackc/pgx/v5 v5.9.2
 	github.com/joho/godotenv v1.5.1
 	github.com/lib/pq v1.10.9
 	github.com/rs/zerolog v1.34.0
 	github.com/sirupsen/logrus v1.9.3
 	github.com/sonirico/go-hyperliquid v0.36.0
 	github.com/stretchr/testify v1.11.1
+	github.com/vmihailenco/msgpack/v5 v5.4.1
 	golang.org/x/crypto v0.52.0
 	golang.org/x/net v0.55.0
 	golang.org/x/term v0.43.0
@@ -40,7 +44,6 @@ require (
 	github.com/consensys/gnark-crypto v0.19.2 // indirect
 	github.com/crate-crypto/go-eth-kzg v1.5.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
-	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/elastic/go-sysinfo v1.15.4 // indirect
 	github.com/elastic/go-windows v1.0.2 // indirect
@@ -53,11 +56,9 @@ require (
 	github.com/go-playground/validator/v10 v10.27.0 // indirect
 	github.com/goccy/go-json v0.10.4 // indirect
 	github.com/goccy/go-yaml v1.18.0 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/holiman/uint256 v1.3.2 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
-	github.com/jackc/pgx/v5 v5.9.2 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
@@ -87,7 +88,6 @@ require (
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.3.0 // indirect
 	github.com/valyala/fastjson v1.6.10 // indirect
-	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	go.elastic.co/apm/module/apmzerolog/v2 v2.7.2 // indirect
 	go.elastic.co/apm/v2 v2.7.2 // indirect

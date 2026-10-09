@@ -49,6 +49,9 @@ func (c *StrategyConfig) ClampLimits() {
 	if c.CoinSource.VergexLimit > MaxCandidateCoins {
 		c.CoinSource.VergexLimit = MaxCandidateCoins
 	}
+	if c.CoinSource.HLPoolLimit > MaxCandidateCoins {
+		c.CoinSource.HLPoolLimit = MaxCandidateCoins
+	}
 
 	// Clamp static coins
 	if len(c.CoinSource.StaticCoins) > MaxCandidateCoins {
@@ -295,6 +298,8 @@ func normalizeCoinSourceType(value string) string {
 		return "vergex_signal"
 	case strings.Contains(compact, "hyperall"):
 		return "hyper_all"
+	case strings.Contains(compact, "hlpool") || strings.Contains(value, "hl pool") || strings.Contains(value, "screener pool"):
+		return "hl_pool"
 	case strings.Contains(compact, "hypermain"):
 		return "hyper_main"
 	case strings.Contains(value, "static") || strings.Contains(value, "fixed"):
@@ -827,6 +832,11 @@ type CoinSourceConfig struct {
 	VergexChain string `json:"vergex_chain,omitempty"`
 	// Vergex liquidation band query parameter.
 	VergexLiqBand string `json:"vergex_liq_band,omitempty"`
+	// HLPoolLimit caps the self-hosted candidate pool ("hl_pool" source
+	// type) — coins from the nofx-hl-screener's candidate_active table.
+	// Defaults to 10 (see TopPoolCoins) and is hard capped at
+	// MaxCandidateCoins like the other sources.
+	HLPoolLimit int `json:"hl_pool_limit,omitempty"`
 	// Note: API URLs are now built automatically using NofxOSAPIKey from IndicatorConfig
 }
 
