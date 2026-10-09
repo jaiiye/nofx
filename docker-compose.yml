@@ -1,4 +1,96 @@
 services:
+  # Self-hosted data-plane Postgres (nofx-hl-screener tables: cvd_bars,
+  # candidate_active, liq_levels, oi_snapshots). nofx itself can keep
+  # its default SQLite; only the scraper DSN below must point here.
+  scraper-postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    container_name: nofx-scraper-postgres
+    environment:
+      POSTGRES_USER: ${HLSCRAPER_DB_USER:-nofx}
+      POSTGRES_PASSWORD: ${HLSCRAPER_DB_PASSWORD:-nofx}
+      POSTGRES_DB: ${HLSCRAPER_DB_NAME:-nofx}
+    volumes:
+      - scraper-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${HLSCRAPER_DB_USER:-nofx}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - nofx-network
+
+  # ──────────────────────────────────────────────────────────────
+  # Self-hosted Hyperliquid data plane (no paid subscriptions).
+  # Enabled by default; remove these services (and HLSCRAPER_DSN on
+  # the nofx service) to fall back to the paid nofxos/vergex sources.
+  # ──────────────────────────────────────────────────────────────
+  hl-collector:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.backend
+    container_name: nofx-hl-collector
+    restart: unless-stopped
+    command: ["./hl-collector"]
+    depends_on:
+      scraper-postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${HLSCRAPER_DB_USER:-nofx}:${HLSCRAPER_DB_PASSWORD:-nofx}@scraper-postgres:5432/${HLSCRAPER_DB_NAME:-nofx}?sslmode=disable
+      COLLECTOR_COINS: ${HLSCRAPER_COINS:-BTC,ETH,SOL,BNB,XRP,DOGE,ADA,AVAX,LINK,DOT,TRX,LTC,ATOM,UNI,APT,ARB,OP,SUI,TON,CRV}
+      SCREENER_REFRESH_SEC: ${HLSCRAPER_SCREENER_REFRESH_SEC:-1800}
+    networks:
+      - nofx-network
+
+  hl-cvd-recorder:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.backend
+    container_name: nofx-hl-cvd
+    restart: unless-stopped
+    # --ws: persistent trade-tape subscription (<200ms CVD latency)
+    command: ["./hl-cvd-recorder", "--ws"]
+    depends_on:
+      scraper-postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${HLSCRAPER_DB_USER:-nofx}:${HLSCRAPER_DB_PASSWORD:-nofx}@scraper-postgres:5432/${HLSCRAPER_DB_NAME:-nofx}?sslmode=disable
+      COLLECTOR_COINS: ${HLSCRAPER_COINS:-BTC,ETH,SOL,BNB,XRP,DOGE,ADA,AVAX,LINK,DOT,TRX,LTC,ATOM,UNI,APT,ARB,OP,SUI,TON,CRV}
+    networks:
+      - nofx-network
+
+  hl-liq-collector:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.backend
+    container_name: nofx-hl-liq
+    restart: unless-stopped
+    command: ["./hl-liq-collector"]
+    depends_on:
+      scraper-postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${HLSCRAPER_DB_USER:-nofx}:${HLSCRAPER_DB_PASSWORD:-nofx}@scraper-postgres:5432/${HLSCRAPER_DB_NAME:-nofx}?sslmode=disable
+      COLLECTOR_COINS: ${HLSCRAPER_COINS:-BTC,ETH,SOL,BNB,XRP,DOGE,ADA,AVAX,LINK,DOT,TRX,LTC,ATOM,UNI,APT,ARB,OP,SUI,TON,CRV}
+      LIQ_SNAPSHOT_INTERVAL_SEC: "60"
+    networks:
+      - nofx-network
+
+  hl-retention:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.backend
+    container_name: nofx-hl-retention
+    restart: unless-stopped
+    command: ["./hl-retention"]
+    depends_on:
+      scraper-postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${HLSCRAPER_DB_USER:-nofx}:${HLSCRAPER_DB_PASSWORD:-nofx}@scraper-postgres:5432/${HLSCRAPER_DB_NAME:-nofx}?sslmode=disable
+    networks:
+      - nofx-network
+
   # Backend service (API and core logic)
   nofx:
     build:
@@ -25,8 +117,15 @@ services:
     environment:
       - TZ=${TZ:-Asia/Shanghai}
       - AI_MAX_TOKENS=8000
+      # Self-hosted data plane: netflow/OI/price rankings and the
+      # "hl_pool" coin source read from the scraper Postgres. Remove to
+      # fall back to the paid nofxos/vergex sources.
+      - HLSCRAPER_DSN=postgres://${HLSCRAPER_DB_USER:-nofx}:${HLSCRAPER_DB_PASSWORD:-nofx}@scraper-postgres:5432/${HLSCRAPER_DB_NAME:-nofx}?sslmode=disable
     networks:
       - nofx-network
+    depends_on:
+      scraper-postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/api/health"]
       interval: 30s
@@ -57,3 +156,6 @@ services:
 networks:
   nofx-network:
     driver: bridge
+
+volumes:
+  scraper-pgdata:

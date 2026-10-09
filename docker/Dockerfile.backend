@@ -51,6 +51,13 @@ RUN CGO_ENABLED=1 GOOS=linux \
     CGO_CFLAGS="-D_LARGEFILE64_SOURCE" \
     go build -trimpath -ldflags="-s -w" -o nofx .
 
+# Self-hosted Hyperliquid data plane (provider/nofxhl reads the tables
+# these binaries write; see docker-compose.yml hl-* services). CGO off —
+# they only touch Postgres and HTTP.
+RUN for cmd in hl-collector hl-cvd-recorder hl-liq-collector hl-retention hl-screener; do \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o $cmd ./cmd/$cmd; \
+    done
+
 # ──────────────────────────────────────────────────────────────
 # Runtime Stage (Minimal Executable Environment)
 # ──────────────────────────────────────────────────────────────
@@ -61,6 +68,11 @@ RUN apk update && apk add --no-cache ca-certificates tzdata sqlite
 COPY --from=ta-lib-builder /usr/local /usr/local
 WORKDIR /app
 COPY --from=backend-builder /app/nofx .
+COPY --from=backend-builder /app/hl-collector .
+COPY --from=backend-builder /app/hl-cvd-recorder .
+COPY --from=backend-builder /app/hl-liq-collector .
+COPY --from=backend-builder /app/hl-retention .
+COPY --from=backend-builder /app/hl-screener .
 
 EXPOSE 8080
 
