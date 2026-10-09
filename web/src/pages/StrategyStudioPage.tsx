@@ -27,7 +27,7 @@ import type {
   Strategy,
   StrategyConfig,
 } from '../types'
-import { launchAutopilot } from '../lib/launch/launchAutopilot'
+import type { AIModel, Exchange } from '../types'
 import type {
   MarketSymbol,
   VergexHeatmapBin,
@@ -36,7 +36,7 @@ import type {
   VergexSignalItem,
   VergexSignalLabResponse,
 } from '../lib/api/data'
-import { buildDashboardPath, ROUTES } from '../router/paths'
+import { buildDashboardPath } from '../router/paths'
 
 const API_BASE = import.meta.env.VITE_API_BASE || ''
 
@@ -51,12 +51,12 @@ type Scope =
 type ListMode = 'claw402' | 'pool'
 
 const scopeOptions: Array<{ value: Scope; zh: string; en: string }> = [
-  { value: 'all', zh: 'All Claw402', en: 'All Claw402' },
-  { value: 'stock', zh: 'US Stocks', en: 'US Stocks' },
-  { value: 'crypto', zh: 'Crypto', en: 'Crypto' },
-  { value: 'commodity', zh: 'Commodities', en: 'Commodities' },
-  { value: 'index', zh: 'Indices', en: 'Indices' },
-  { value: 'forex', zh: 'FX', en: 'FX' },
+  { value: 'all', zh: '全部 Claw402', en: 'All Claw402' },
+  { value: 'stock', zh: '美股', en: 'US Stocks' },
+  { value: 'crypto', zh: '加密货币', en: 'Crypto' },
+  { value: 'commodity', zh: '大宗商品', en: 'Commodities' },
+  { value: 'index', zh: '指数', en: 'Indices' },
+  { value: 'forex', zh: '外汇', en: 'FX' },
   { value: 'pre_ipo', zh: 'Pre-IPO', en: 'Pre-IPO' },
 ]
 
@@ -79,6 +79,48 @@ const confidenceOptions = [65, 75, 82]
 const text = (language: string, zh: string, en: string) =>
   language === 'zh' ? zh : en
 
+function modelHasCredential(model: AIModel) {
+  return Boolean(model.has_api_key || model.apiKey)
+}
+
+function pickTradingModel(models: AIModel[]) {
+  return (
+    models.find(
+      (model) =>
+        model.provider === 'claw402' &&
+        model.enabled &&
+        modelHasCredential(model)
+    ) ||
+    models.find((model) => model.enabled && modelHasCredential(model)) ||
+    null
+  )
+}
+
+function isHyperliquidExchange(exchange: Exchange) {
+  return exchange.exchange_type === 'hyperliquid'
+}
+
+function hyperliquidWalletAddress(exchange: Exchange) {
+  return exchange.hyperliquidWalletAddr || ''
+}
+
+function pickTradingExchange(exchanges: Exchange[]) {
+  return (
+    exchanges.find(
+      (exchange) =>
+        isHyperliquidExchange(exchange) &&
+        exchange.enabled &&
+        modelHasExchangeKey(exchange) &&
+        Boolean(exchange.hyperliquidBuilderApproved) &&
+        hyperliquidWalletAddress(exchange).trim() !== ''
+    ) || null
+  )
+}
+
+function modelHasExchangeKey(exchange: Exchange) {
+  return Boolean(exchange.has_api_key || exchange.apiKey)
+}
+
 type Profile = 'careful' | 'balanced' | 'active'
 
 const profileOptions: Array<{
@@ -99,9 +141,9 @@ const profileOptions: Array<{
 }> = [
   {
     value: 'careful',
-    zh: 'Careful',
+    zh: '稳健',
     en: 'Careful',
-    zhNote: 'Fewer trades, only aligned signals',
+    zhNote: '少交易，只做信号一致的机会',
     enNote: 'Fewer trades, only aligned signals',
     maxPositions: 1,
     leverage: 10,
@@ -111,15 +153,15 @@ const profileOptions: Array<{
     bars: 30,
     margin: 1.0,
     promptZh:
-      'Careful mode: open only when the Claw402 board direction, Signal Lab, cost/liquidation heatmap and raw candles agree; wait on conflicts.',
+      '稳健模式：只有 Claw402 榜单方向、Signal Lab、成本/清算热力图和原始 K 线同时支持时才开仓；信号冲突时等待。',
     promptEn:
       'Careful mode: open only when the Claw402 board direction, Signal Lab, cost/liquidation heatmap and raw candles agree; wait on conflicts.',
   },
   {
     value: 'balanced',
-    zh: 'Balanced',
+    zh: '均衡',
     en: 'Balanced',
-    zhNote: 'Recommended balance of opportunity and risk',
+    zhNote: '默认推荐，机会和风控平衡',
     enNote: 'Recommended balance of opportunity and risk',
     maxPositions: 2,
     leverage: 10,
@@ -129,15 +171,15 @@ const profileOptions: Array<{
     bars: 30,
     margin: 1.0,
     promptZh:
-      'Balanced mode: prioritize top Claw402-ranked symbols when Signal Lab agrees with raw candles; use the liquidation heatmap for stop and target zones.',
+      '均衡模式：优先交易 Claw402 排名靠前且 Signal Lab 与 K 线同向的标的；用清算热力图确定止损和止盈区域。',
     promptEn:
       'Balanced mode: prioritize top Claw402-ranked symbols when Signal Lab agrees with raw candles; use the liquidation heatmap for stop and target zones.',
   },
   {
     value: 'active',
-    zh: 'Active',
+    zh: '进取',
     en: 'Active',
-    zhNote: 'Faster trend capture with more positions',
+    zhNote: '更快捕捉强趋势，仓位更多',
     enNote: 'Faster trend capture with more positions',
     maxPositions: 3,
     leverage: 10,
@@ -147,7 +189,7 @@ const profileOptions: Array<{
     bars: 50,
     margin: 1.0,
     promptZh:
-      'Active mode: follow strong Claw402 signals faster, but require Signal Lab confirmation, avoid crowded liquidation zones, and always set explicit stops.',
+      '进取模式：可以更快跟随 Claw402 强信号，但必须用 Signal Lab 二次确认，用热力图区避开拥挤清算位，止损必须明确。',
     promptEn:
       'Active mode: follow strong Claw402 signals faster, but require Signal Lab confirmation, avoid crowded liquidation zones, and always set explicit stops.',
   },
@@ -322,7 +364,7 @@ function signalBiasInfo(bias: string | undefined) {
     return {
       label: 'Long Bias',
       hint: 'Long bias',
-      classes: 'border-nofx-success/35 bg-nofx-success/10 text-nofx-success',
+      classes: 'border-emerald-400/35 bg-emerald-400/10 text-emerald-200',
       icon: ArrowUpRight,
     }
   }
@@ -330,15 +372,14 @@ function signalBiasInfo(bias: string | undefined) {
     return {
       label: 'Short Bias',
       hint: 'Short bias',
-      classes: 'border-nofx-danger/35 bg-nofx-danger/10 text-nofx-danger',
+      classes: 'border-red-400/35 bg-red-400/10 text-red-200',
       icon: ArrowDownRight,
     }
   }
   return {
     label: 'Neutral',
     hint: 'Neutral bias',
-    classes:
-      'border-[rgba(26,24,19,0.14)] bg-nofx-bg-deeper text-nofx-text-muted',
+    classes: 'border-white/15 bg-white/[0.04] text-nofx-text-muted',
     icon: Target,
   }
 }
@@ -421,24 +462,24 @@ function directionStyle(direction?: string) {
   const normalized = (direction || '').toLowerCase()
   if (normalized === 'bullish') {
     return {
-      dot: 'bg-nofx-success',
-      text: 'text-nofx-success',
-      chip: 'border-nofx-success/25 bg-nofx-success/10 text-nofx-success',
-      bar: 'bg-nofx-success/70',
+      dot: 'bg-emerald-400',
+      text: 'text-emerald-300',
+      chip: 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300',
+      bar: 'bg-emerald-400/70',
     }
   }
   if (normalized === 'bearish') {
     return {
-      dot: 'bg-nofx-danger',
-      text: 'text-nofx-danger',
-      chip: 'border-nofx-danger/25 bg-nofx-danger/10 text-nofx-danger',
-      bar: 'bg-nofx-danger/70',
+      dot: 'bg-rose-400',
+      text: 'text-rose-300',
+      chip: 'border-rose-400/25 bg-rose-400/10 text-rose-300',
+      bar: 'bg-rose-400/70',
     }
   }
   return {
     dot: 'bg-slate-400',
     text: 'text-nofx-text-muted',
-    chip: 'border-[rgba(26,24,19,0.14)] bg-nofx-bg-deeper text-nofx-text-muted',
+    chip: 'border-white/10 bg-white/[0.05] text-nofx-text-muted',
     bar: 'bg-slate-500/70',
   }
 }
@@ -452,7 +493,7 @@ function SignalDimensionRow({ item }: { item: VergexSignalDimension }) {
   const chipLabel = [item.direction, item.strength].filter(Boolean).join(' · ')
 
   return (
-    <div className="border-t border-[rgba(26,24,19,0.14)] px-3 py-3">
+    <div className="border-t border-white/10 px-3 py-3">
       <div className="grid gap-3 md:grid-cols-[1fr_150px]">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -474,7 +515,7 @@ function SignalDimensionRow({ item }: { item: VergexSignalDimension }) {
         </div>
         {percentile !== null ? (
           <div className="flex items-center gap-2">
-            <div className="h-2 flex-1 overflow-hidden rounded-full bg-nofx-bg-deeper">
+            <div className="h-2 flex-1 overflow-hidden rounded-full bg-white/10">
               <div
                 className={`h-full rounded-full ${style.bar}`}
                 style={{ width: `${percentile}%` }}
@@ -503,17 +544,17 @@ function DetailMetricCard({
 }) {
   const toneClass =
     tone === 'green'
-      ? 'text-nofx-success'
+      ? 'text-emerald-300'
       : tone === 'red'
-        ? 'text-nofx-danger'
+        ? 'text-rose-300'
         : tone === 'cyan'
-          ? 'text-nofx-gold'
+          ? 'text-cyan-300'
           : tone === 'gold'
             ? 'text-nofx-gold'
             : 'text-nofx-text'
 
   return (
-    <div className="rounded-lg border border-[rgba(26,24,19,0.14)] bg-nofx-bg-deeper p-3">
+    <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
       <div className="text-xs text-nofx-text-muted">{label}</div>
       <div className={`mt-2 font-mono text-lg ${toneClass}`}>{value}</div>
       {note ? (
@@ -544,8 +585,8 @@ function BandSelector({
           disabled={loading}
           className={`rounded-lg border px-4 py-2 font-mono text-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${
             activeBand === band
-              ? 'border-nofx-gold/60 bg-nofx-gold/12 text-nofx-gold'
-              : 'border-[rgba(26,24,19,0.14)] bg-nofx-bg-deeper text-nofx-text-muted hover:border-[rgba(26,24,19,0.24)] hover:text-nofx-text'
+              ? 'border-cyan-300/60 bg-cyan-300/12 text-cyan-200 shadow-[0_0_24px_rgba(103,232,249,0.12)]'
+              : 'border-white/10 bg-white/[0.03] text-nofx-text-muted hover:border-white/25 hover:text-white'
           }`}
         >
           ±{band}%
@@ -569,7 +610,7 @@ function SignalLabPanel({
   const data = lab?.data
   if (!data) {
     return (
-      <div className="rounded-lg border border-[rgba(26,24,19,0.14)] bg-nofx-bg-deeper p-4 text-sm text-nofx-text-muted">
+      <div className="rounded-lg border border-white/10 bg-black/20 p-4 text-sm text-nofx-text-muted">
         Signal Lab has not loaded yet.
       </div>
     )
@@ -582,8 +623,8 @@ function SignalLabPanel({
   const dimensions = data.dimensions || []
 
   return (
-    <section className="overflow-hidden rounded-lg border border-[rgba(26,24,19,0.14)] bg-nofx-bg-lighter shadow-lg">
-      <div className="border-b border-[rgba(26,24,19,0.14)] bg-nofx-bg-lighter px-5 py-4">
+    <section className="overflow-hidden rounded-lg border border-white/10 bg-[#0d121a] shadow-[0_18px_80px_rgba(0,0,0,0.28)]">
+      <div className="border-b border-white/10 bg-white/[0.015] px-5 py-4">
         <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-start">
           <div>
             <div className="text-base font-semibold text-nofx-text">
@@ -601,7 +642,7 @@ function SignalLabPanel({
             </div>
           </div>
           <div className="flex flex-col items-start gap-2 lg:items-end">
-            <div className="rounded-full bg-nofx-success/10 px-3 py-1 text-xs font-semibold text-nofx-success">
+            <div className="rounded-full bg-emerald-400/10 px-3 py-1 text-xs font-semibold text-emerald-300">
               live
             </div>
             {data.confidence ? (
@@ -621,12 +662,12 @@ function SignalLabPanel({
             {bias.label}
           </div>
           {data.rank ? (
-            <div className="pb-1 font-mono text-base text-nofx-success">
+            <div className="pb-1 font-mono text-base text-emerald-300">
               market #{data.rank}/{data.universeSize || 30}
             </div>
           ) : null}
           {typeof data.compositeZ === 'number' ? (
-            <div className="pb-1 font-mono text-base text-nofx-success">
+            <div className="pb-1 font-mono text-base text-emerald-300">
               z {data.compositeZ >= 0 ? '+' : ''}
               {data.compositeZ.toFixed(2)}
             </div>
@@ -638,7 +679,7 @@ function SignalLabPanel({
       </div>
 
       {data.structureRead ? (
-        <div className="mx-5 rounded-md border-l-4 border-nofx-gold/35 bg-nofx-bg-deeper px-4 py-4 text-base leading-8 text-nofx-text">
+        <div className="mx-5 rounded-md border-l-4 border-cyan-300/35 bg-white/[0.04] px-4 py-4 text-base leading-8 text-nofx-text">
           {data.structureRead}
         </div>
       ) : null}
@@ -660,7 +701,7 @@ function SignalLabPanel({
         </div>
       ) : null}
 
-      <div className="border-t border-[rgba(26,24,19,0.14)] p-5">
+      <div className="border-t border-white/10 p-5">
         <div className="text-base font-semibold text-nofx-text">
           Key levels price {formatPrice(levels.markPrice)}
         </div>
@@ -769,7 +810,7 @@ function ChartGridLines() {
         <div
           key={left}
           className={`absolute top-0 h-full w-px ${
-            left === 50 ? 'bg-[rgba(26,24,19,0.24)]' : 'bg-nofx-bg-deeper'
+            left === 50 ? 'bg-white/25' : 'bg-white/[0.07]'
           }`}
           style={{ left: `${left}%` }}
         />
@@ -817,23 +858,23 @@ function HeatmapChartRow({
       </div>
       <div
         className={`relative h-6 overflow-visible rounded-sm ${
-          isCurrent ? 'bg-nofx-gold/10' : 'bg-nofx-bg-lighter'
+          isCurrent ? 'bg-nofx-gold/10' : 'bg-white/[0.015]'
         }`}
       >
         {isCurrent ? (
           <>
             <div className="absolute inset-x-0 top-1/2 h-px bg-nofx-gold" />
-            <div className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md bg-nofx-gold px-2 py-1 font-mono text-xs font-bold text-nofx-bg">
+            <div className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md bg-nofx-gold px-2 py-1 font-mono text-xs font-bold text-black">
               Mark {formatPrice(markPrice)}
             </div>
           </>
         ) : null}
         <div
-          className="absolute right-1/2 top-[5px] h-2 rounded-l bg-nofx-danger/80"
+          className="absolute right-1/2 top-[5px] h-2 rounded-l bg-rose-500/80"
           style={{ width: sideBarWidth(bin.shortCost, maxLeft) }}
         />
         <div
-          className="absolute left-1/2 top-[5px] h-2 rounded-r bg-nofx-success/80"
+          className="absolute left-1/2 top-[5px] h-2 rounded-r bg-emerald-500/80"
           style={{ width: sideBarWidth(bin.longCost, maxRight) }}
         />
         <div
@@ -841,7 +882,7 @@ function HeatmapChartRow({
           style={{ width: sideBarWidth(bin.longLiq, maxLeft) }}
         />
         <div
-          className="absolute left-1/2 bottom-[5px] h-2 rounded-r bg-nofx-gold"
+          className="absolute left-1/2 bottom-[5px] h-2 rounded-r bg-cyan-300"
           style={{ width: sideBarWidth(bin.shortLiq, maxRight) }}
         />
       </div>
@@ -862,7 +903,7 @@ function CostLiquidationHeatmap({
 
   if (!data || bins.length === 0) {
     return (
-      <div className="rounded-lg border border-[rgba(26,24,19,0.14)] bg-nofx-bg-deeper p-4 text-sm text-nofx-text-muted">
+      <div className="rounded-lg border border-white/10 bg-black/20 p-4 text-sm text-nofx-text-muted">
         Cost/liquidation heatmap has not loaded yet.
       </div>
     )
@@ -886,8 +927,8 @@ function CostLiquidationHeatmap({
   const includedLiq = data.liqAddrs || 0
 
   return (
-    <section className="overflow-hidden rounded-lg border border-[rgba(26,24,19,0.14)] bg-nofx-bg-lighter shadow-lg">
-      <div className="border-b border-[rgba(26,24,19,0.14)] bg-nofx-bg-lighter px-5 py-4">
+    <section className="overflow-hidden rounded-lg border border-white/10 bg-[#0d121a] shadow-[0_18px_80px_rgba(0,0,0,0.28)]">
+      <div className="border-b border-white/10 bg-white/[0.015] px-5 py-4">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <div className="text-base font-semibold text-nofx-text">
@@ -913,7 +954,7 @@ function CostLiquidationHeatmap({
               </div>
             ) : null}
           </div>
-          <div className="rounded-full bg-nofx-success/10 px-3 py-1 text-xs font-semibold text-nofx-success">
+          <div className="rounded-full bg-emerald-400/10 px-3 py-1 text-xs font-semibold text-emerald-300">
             live
           </div>
         </div>
@@ -922,24 +963,24 @@ function CostLiquidationHeatmap({
       <div className="px-5 py-5">
         <div className="mb-4 flex flex-wrap justify-center gap-4 text-sm text-nofx-text-muted">
           <span className="inline-flex items-center gap-1">
-            <span className="h-3 w-3 rounded bg-nofx-success/70" />
+            <span className="h-3 w-3 rounded bg-emerald-500/70" />
             Long cost
           </span>
           <span className="inline-flex items-center gap-1">
-            <span className="h-3 w-3 rounded bg-nofx-danger/70" />
+            <span className="h-3 w-3 rounded bg-rose-500/70" />
             Short cost
           </span>
           <span className="inline-flex items-center gap-1 text-orange-300">
             <span className="h-3 w-3 rounded bg-orange-400" />
             Long liquidation
           </span>
-          <span className="inline-flex items-center gap-1 text-nofx-gold">
-            <span className="h-3 w-3 rounded bg-nofx-gold" />
+          <span className="inline-flex items-center gap-1 text-cyan-300">
+            <span className="h-3 w-3 rounded bg-cyan-300" />
             Short liquidation
           </span>
         </div>
 
-        <div className="relative rounded-lg border border-[rgba(26,24,19,0.14)] bg-nofx-bg-deeper px-4 py-5">
+        <div className="relative rounded-lg border border-white/10 bg-black/20 px-4 py-5">
           <ChartGridLines />
           <div className="relative z-10 max-h-[720px] space-y-1 overflow-y-auto pr-2">
             {bins.map((bin, index) => (
@@ -1292,12 +1333,12 @@ export function StrategyStudioPage() {
       const created = await api.createStrategy({
         name: text(
           language,
-          'NOFX Claw402 Auto Strategy',
+          'NOFX Claw402 自动策略',
           'NOFX Claw402 Auto Strategy'
         ),
         description: text(
           language,
-          'The single built-in strategy: read the Claw402.ai board, fetch per-symbol details, then trade with raw candles.',
+          '唯一内置策略：读取 Claw402.ai 榜单，逐个拉取详情，再结合原始 K 线自动交易。',
           'The single built-in strategy: read the Claw402.ai board, fetch per-symbol details, then trade with raw candles.'
         ),
         config: defaultConfig,
@@ -1347,12 +1388,8 @@ export function StrategyStudioPage() {
       notify.success(
         successMessage ||
           (activateAfter
-            ? text(
-                language,
-                'Strategy saved and activated',
-                'Strategy saved and activated'
-              )
-            : text(language, 'Strategy saved', 'Strategy saved'))
+            ? text(language, '策略已保存并启用', 'Strategy saved and activated')
+            : text(language, '策略已保存', 'Strategy saved'))
       )
       await loadStrategies(selectedStrategy.id)
     } catch (err) {
@@ -1391,10 +1428,8 @@ export function StrategyStudioPage() {
         max_positions: 2,
         btc_eth_max_leverage: 10,
         altcoin_max_leverage: 10,
-        // Few, concentrated positions held for big moves. 10x leverage keeps a
-        // wide (-5%) stop survivable; 2 positions × 5x = 10x total.
-        btc_eth_max_position_value_ratio: 5,
-        altcoin_max_position_value_ratio: 5,
+        btc_eth_max_position_value_ratio: 10,
+        altcoin_max_position_value_ratio: 10,
         max_margin_usage: 1.0,
         min_confidence: 78,
         min_risk_reward_ratio: 3,
@@ -1406,48 +1441,143 @@ export function StrategyStudioPage() {
     return base
   }
 
+  const resolveOneClickModel = async () => {
+    let models = await api.getModelConfigs()
+    let model = pickTradingModel(models)
+    if (model) return model
+
+    const onboarding = await api.prepareBeginnerOnboarding()
+    models = await api.getModelConfigs()
+    model =
+      models.find(
+        (item) =>
+          item.id === onboarding.configured_model_id &&
+          item.enabled &&
+          modelHasCredential(item)
+      ) || pickTradingModel(models)
+
+    if (!model && onboarding.configured_model_id && onboarding.private_key) {
+      await api.updateModelConfigs({
+        models: {
+          [onboarding.configured_model_id]: {
+            enabled: true,
+            api_key: onboarding.private_key,
+            custom_api_url: '',
+            custom_model_name: onboarding.default_model,
+          },
+        },
+      })
+      models = await api.getModelConfigs()
+      model =
+        models.find(
+          (item) =>
+            item.id === onboarding.configured_model_id &&
+            item.enabled &&
+            modelHasCredential(item)
+        ) || pickTradingModel(models)
+    }
+
+    if (!model) {
+      throw new Error(
+        'No enabled AI model is ready. Create or fund the Claw402 wallet first.'
+      )
+    }
+
+    return model
+  }
+
+  const resolveOneClickExchange = async () => {
+    const exchanges = await api.getExchangeConfigs()
+    const exchange = pickTradingExchange(exchanges)
+    if (exchange) return exchange
+
+    const hyperliquid = exchanges.find(isHyperliquidExchange)
+    if (!hyperliquid) {
+      throw new Error(
+        'No Hyperliquid account is ready. Connect Hyperliquid and authorize the NOFX agent first.'
+      )
+    }
+    if (!hyperliquid.enabled) {
+      throw new Error('The Hyperliquid account is disabled. Enable it first.')
+    }
+    if (!modelHasExchangeKey(hyperliquid)) {
+      throw new Error(
+        'The Hyperliquid agent key is missing. Reconnect Hyperliquid and save the agent wallet.'
+      )
+    }
+    if (!hyperliquid.hyperliquidBuilderApproved) {
+      throw new Error(
+        'Hyperliquid builder authorization is not complete. Finish wallet authorization first.'
+      )
+    }
+    if (!hyperliquidWalletAddress(hyperliquid).trim()) {
+      throw new Error(
+        'The Hyperliquid wallet address is missing. Reconnect Hyperliquid first.'
+      )
+    }
+
+    throw new Error(
+      'No ready Hyperliquid account found. Check the wallet authorization.'
+    )
+  }
+
   const startUnifiedClaw402Agent = async () => {
     if (!selectedStrategy) return
+    const config = buildUnifiedClaw402Config()
+    const traderName = 'NOFX Autopilot'
 
     setSaving(true)
     try {
-      // The shared launcher runs the server-side preflight (fresh wallet and
-      // exchange balances) BEFORE ensureStrategy, so a failed launch never
-      // mutates or activates the strategy as a side effect.
-      const outcome = await launchAutopilot({
-        scanIntervalMinutes: 15,
-        ensureStrategy: async () => {
-          const config = buildUnifiedClaw402Config()
-          setEditingConfig(config)
-          await api.updateStrategy(selectedStrategy.id, {
-            name: selectedStrategy.name,
-            description:
-              selectedStrategy.description ||
-              'Autonomous market selection powered by Claw402.ai Signal Lab, liquidation structure, and raw candles.',
-            config,
-          })
-          await api.activateStrategy(selectedStrategy.id)
-          return selectedStrategy.id
-        },
+      setEditingConfig(config)
+      setHasChanges(true)
+
+      await api.updateStrategy(selectedStrategy.id, {
+        name: selectedStrategy.name,
+        description:
+          selectedStrategy.description ||
+          'Autonomous market selection powered by Claw402.ai Signal Lab, liquidation structure, and raw candles.',
+        config,
       })
+      await api.activateStrategy(selectedStrategy.id)
 
-      if (!outcome.ok) {
-        notify.error(outcome.message)
-        const setupTarget =
-          outcome.kind === 'error' ? null : outcome.setupTarget
-        if (setupTarget) {
-          navigate(`${ROUTES.traders}?setup=${setupTarget}`)
-        }
-        return
+      const [model, exchange] = await Promise.all([
+        resolveOneClickModel(),
+        resolveOneClickExchange(),
+      ])
+
+      const traderRequest = {
+        name: traderName,
+        ai_model_id: model.id,
+        exchange_id: exchange.id,
+        strategy_id: selectedStrategy.id,
+        scan_interval_minutes: 15,
+        is_cross_margin: true,
+        show_in_competition: true,
       }
 
-      if (outcome.warning) {
-        notify.warning(outcome.warning)
+      const existingTraders = await api.getTraders(true)
+      const existingAutopilot = existingTraders.find(
+        (trader) => trader.trader_name === traderName
+      )
+      const autopilot = existingAutopilot
+        ? await api.updateTrader(existingAutopilot.trader_id, traderRequest)
+        : await api.createTrader(traderRequest)
+
+      if (autopilot.startup_warning) {
+        notify.warning(autopilot.startup_warning)
       }
-      notify.success('NOFX Autopilot started')
+
+      if (!autopilot.is_running) {
+        await api.startTrader(autopilot.trader_id)
+      }
+      notify.success(`${traderName} started`)
       setHasChanges(false)
       await loadStrategies(selectedStrategy.id)
-      navigate(buildDashboardPath(outcome.traderId))
+      navigate(buildDashboardPath(autopilot.trader_id))
+    } catch (err) {
+      notify.error(
+        err instanceof Error ? err.message : 'Failed to launch NOFX Autopilot'
+      )
     } finally {
       setSaving(false)
     }
@@ -1457,7 +1587,7 @@ export function StrategyStudioPage() {
     if (!selectedStrategy) return
     try {
       await api.activateStrategy(selectedStrategy.id)
-      notify.success(text(language, 'Strategy activated', 'Strategy activated'))
+      notify.success(text(language, '已设为当前策略', 'Strategy activated'))
       await loadStrategies(selectedStrategy.id)
     } catch (err) {
       notify.error(
@@ -1469,17 +1599,17 @@ export function StrategyStudioPage() {
   const deleteStrategy = async () => {
     if (!selectedStrategy || selectedStrategy.is_active) return
     const ok = await confirmToast(
-      text(language, 'Delete this strategy?', 'Delete this strategy?'),
+      text(language, '删除这个策略？', 'Delete this strategy?'),
       {
-        title: text(language, 'Confirm delete', 'Confirm delete'),
-        okText: text(language, 'Delete', 'Delete'),
-        cancelText: text(language, 'Cancel', 'Cancel'),
+        title: text(language, '确认删除', 'Confirm delete'),
+        okText: text(language, '删除', 'Delete'),
+        cancelText: text(language, '取消', 'Cancel'),
       }
     )
     if (!ok) return
     try {
       await api.deleteStrategy(selectedStrategy.id)
-      notify.success(text(language, 'Strategy deleted', 'Strategy deleted'))
+      notify.success(text(language, '策略已删除', 'Strategy deleted'))
       await loadStrategies()
     } catch (err) {
       notify.error(
@@ -1589,7 +1719,7 @@ export function StrategyStudioPage() {
 
   return (
     <DeepVoidBackground className="min-h-[calc(100vh-64px)] bg-nofx-bg">
-      <div className="border-b border-[rgba(26,24,19,0.14)] bg-nofx-bg/75 px-5 py-4 backdrop-blur">
+      <div className="border-b border-white/10 bg-nofx-bg/75 px-5 py-4 backdrop-blur">
         <div className="flex items-center justify-between gap-4">
           <div>
             <h1 className="text-xl font-semibold text-nofx-text">
@@ -1607,7 +1737,7 @@ export function StrategyStudioPage() {
             type="button"
             onClick={startUnifiedClaw402Agent}
             disabled={saving || !selectedStrategy}
-            className="inline-flex items-center gap-2 rounded-lg bg-nofx-gold px-4 py-2 text-sm font-semibold text-nofx-bg hover:bg-nofx-gold-highlight"
+            className="inline-flex items-center gap-2 rounded-lg bg-nofx-gold px-4 py-2 text-sm font-semibold text-black hover:bg-yellow-400"
           >
             {saving ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -1620,9 +1750,9 @@ export function StrategyStudioPage() {
       </div>
 
       <div className="grid min-h-[calc(100vh-137px)] grid-cols-1">
-        <aside className="hidden border-r border-[rgba(26,24,19,0.14)] bg-nofx-bg-deeper p-3">
+        <aside className="hidden border-r border-white/10 bg-black/15 p-3">
           <div className="mb-2 px-2 text-xs font-medium uppercase tracking-wide text-nofx-text-muted">
-            {text(language, 'My strategies', 'My strategies')}
+            {text(language, '我的策略', 'My strategies')}
           </div>
           <div className="space-y-2">
             {strategies.map((strategy) => (
@@ -1637,7 +1767,7 @@ export function StrategyStudioPage() {
                 className={`w-full rounded-lg border px-3 py-3 text-left transition ${
                   selectedStrategy?.id === strategy.id
                     ? 'border-nofx-gold bg-nofx-gold/10'
-                    : 'border-[rgba(26,24,19,0.14)] bg-nofx-bg-lighter hover:border-[rgba(26,24,19,0.24)]'
+                    : 'border-white/10 bg-white/[0.02] hover:border-white/20'
                 }`}
               >
                 <div className="flex items-center justify-between gap-2">
@@ -1645,8 +1775,8 @@ export function StrategyStudioPage() {
                     {strategy.name}
                   </span>
                   {strategy.is_active ? (
-                    <span className="rounded bg-nofx-success/15 px-1.5 py-0.5 text-[10px] text-nofx-success">
-                      {text(language, 'Active', 'Active')}
+                    <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-emerald-300">
+                      {text(language, '使用中', 'Active')}
                     </span>
                   ) : null}
                 </div>
@@ -1663,7 +1793,7 @@ export function StrategyStudioPage() {
         <main className="overflow-y-auto p-5">
           {selectedStrategy && aiConfig && coinSource && indicators && risk ? (
             <div className="mx-auto max-w-7xl space-y-4">
-              <section className="hidden rounded-lg border border-[rgba(26,24,19,0.14)] bg-nofx-bg-lighter p-4">
+              <section className="hidden rounded-lg border border-white/10 bg-nofx-bg-lighter p-4">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div className="min-w-0 flex-1">
                     <input
@@ -1688,14 +1818,14 @@ export function StrategyStudioPage() {
                       }}
                       placeholder={text(
                         language,
-                        'One-line strategy note',
+                        '一句话说明这个策略',
                         'One-line strategy note'
                       )}
                       className="mt-1 w-full bg-transparent text-sm text-nofx-text-muted outline-none placeholder:text-nofx-text-muted/50"
                     />
                     {hasChanges ? (
                       <div className="mt-2 text-xs text-nofx-gold">
-                        {text(language, 'Unsaved changes', 'Unsaved changes')}
+                        {text(language, '有未保存修改', 'Unsaved changes')}
                       </div>
                     ) : null}
                   </div>
@@ -1704,53 +1834,53 @@ export function StrategyStudioPage() {
                       type="button"
                       onClick={() => saveStrategy(true)}
                       disabled={saving}
-                      className="inline-flex items-center gap-2 rounded-lg bg-nofx-success px-3 py-2 text-sm font-semibold text-nofx-bg disabled:cursor-not-allowed disabled:opacity-45"
+                      className="inline-flex items-center gap-2 rounded-lg bg-emerald-400 px-3 py-2 text-sm font-semibold text-black disabled:cursor-not-allowed disabled:opacity-45"
                     >
                       {saving ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
                       ) : (
                         <Check className="h-4 w-4" />
                       )}
-                      {text(language, 'Save and use', 'Save and use')}
+                      {text(language, '保存并使用', 'Save and use')}
                     </button>
                     <button
                       type="button"
                       onClick={() => saveStrategy()}
                       disabled={saving || !hasChanges}
-                      className="inline-flex items-center gap-2 rounded-lg bg-nofx-gold px-3 py-2 text-sm font-semibold text-nofx-bg disabled:cursor-not-allowed disabled:opacity-45"
+                      className="inline-flex items-center gap-2 rounded-lg bg-nofx-gold px-3 py-2 text-sm font-semibold text-black disabled:cursor-not-allowed disabled:opacity-45"
                     >
                       {saving ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
                       ) : (
                         <Save className="h-4 w-4" />
                       )}
-                      {text(language, 'Save', 'Save')}
+                      {text(language, '保存', 'Save')}
                     </button>
                     {!selectedStrategy.is_active ? (
                       <button
                         type="button"
                         onClick={activateStrategy}
-                        className="inline-flex items-center gap-2 rounded-lg border border-nofx-success/30 bg-nofx-success/10 px-3 py-2 text-sm text-nofx-success hover:bg-nofx-success/15"
+                        className="inline-flex items-center gap-2 rounded-lg border border-emerald-400/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-300 hover:bg-emerald-500/15"
                       >
                         <Check className="h-4 w-4" />
-                        {text(language, 'Activate only', 'Activate only')}
+                        {text(language, '仅设为当前', 'Activate only')}
                       </button>
                     ) : null}
                     {!selectedStrategy.is_active ? (
                       <button
                         type="button"
                         onClick={deleteStrategy}
-                        className="inline-flex items-center gap-2 rounded-lg border border-nofx-danger/25 bg-nofx-danger/10 px-3 py-2 text-sm text-nofx-danger hover:bg-nofx-danger/15"
+                        className="inline-flex items-center gap-2 rounded-lg border border-red-400/25 bg-red-500/10 px-3 py-2 text-sm text-red-300 hover:bg-red-500/15"
                       >
                         <Trash2 className="h-4 w-4" />
-                        {text(language, 'Delete', 'Delete')}
+                        {text(language, '删除', 'Delete')}
                       </button>
                     ) : null}
                   </div>
                 </div>
               </section>
 
-              <section className="rounded-lg border border-[rgba(26,24,19,0.14)] bg-nofx-bg-lighter p-4">
+              <section className="rounded-lg border border-white/10 bg-nofx-bg-lighter p-4">
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <div className="flex items-center gap-2 text-sm font-semibold text-nofx-text">
@@ -1775,7 +1905,7 @@ export function StrategyStudioPage() {
                       className={`hidden items-center gap-2 rounded-lg border px-3 py-2 text-xs disabled:opacity-50 ${
                         listMode === 'claw402'
                           ? 'border-nofx-gold bg-nofx-gold/10 text-nofx-gold'
-                          : 'border-[rgba(26,24,19,0.14)] text-nofx-text-muted hover:text-nofx-text'
+                          : 'border-white/10 text-nofx-text-muted hover:text-white'
                       }`}
                     >
                       <Sparkles className="h-3.5 w-3.5" />
@@ -1789,8 +1919,8 @@ export function StrategyStudioPage() {
                       disabled={symbolsLoading}
                       className={`hidden items-center gap-2 rounded-lg border px-3 py-2 text-xs disabled:opacity-50 ${
                         listMode === 'pool'
-                          ? 'border-[rgba(26,24,19,0.24)] bg-nofx-bg-deeper text-nofx-text'
-                          : 'border-[rgba(26,24,19,0.14)] text-nofx-text-muted hover:text-nofx-text'
+                          ? 'border-white/30 bg-white/10 text-white'
+                          : 'border-white/10 text-nofx-text-muted hover:text-white'
                       }`}
                     >
                       <RefreshCw
@@ -1804,7 +1934,7 @@ export function StrategyStudioPage() {
                         void loadSignals()
                       }}
                       disabled={signalsLoading}
-                      className="inline-flex items-center gap-2 rounded-lg border border-[rgba(26,24,19,0.14)] bg-nofx-bg-deeper px-3 py-2 text-xs text-nofx-text-muted hover:text-nofx-text disabled:opacity-50"
+                      className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-nofx-text-muted hover:text-white disabled:opacity-50"
                     >
                       <RefreshCw
                         className={`h-3.5 w-3.5 ${signalsLoading ? 'animate-spin' : ''}`}
@@ -1820,7 +1950,7 @@ export function StrategyStudioPage() {
                             vergex_market_type: 'all',
                           })
                         }
-                        className="hidden rounded-lg border border-[rgba(26,24,19,0.14)] px-3 py-2 text-xs text-nofx-text-muted hover:text-nofx-text"
+                        className="hidden rounded-lg border border-white/10 px-3 py-2 text-xs text-nofx-text-muted hover:text-white"
                       >
                         Clear selected
                       </button>
@@ -1853,7 +1983,7 @@ export function StrategyStudioPage() {
                         className={`rounded-lg border px-3 py-2 text-xs transition ${
                           scope === option.value
                             ? 'border-nofx-gold bg-nofx-gold/10 text-nofx-gold'
-                            : 'border-[rgba(26,24,19,0.14)] bg-nofx-bg-deeper text-nofx-text-muted hover:text-nofx-text'
+                            : 'border-white/10 bg-black/15 text-nofx-text-muted hover:text-white'
                         }`}
                       >
                         {option.en}
@@ -1880,8 +2010,8 @@ export function StrategyStudioPage() {
                     }}
                     className={`rounded-lg border p-4 text-left transition ${
                       selectedSymbols.length === 0
-                        ? 'border-nofx-success bg-nofx-success/10'
-                        : 'border-[rgba(26,24,19,0.14)] bg-nofx-bg-deeper hover:border-[rgba(26,24,19,0.24)]'
+                        ? 'border-emerald-300 bg-emerald-400/10'
+                        : 'border-white/10 bg-black/15 hover:border-white/25'
                     }`}
                   >
                     <div className="flex items-center justify-between gap-3">
@@ -1889,7 +2019,7 @@ export function StrategyStudioPage() {
                         Follow Claw402.ai board dynamically
                       </div>
                       {selectedSymbols.length === 0 ? (
-                        <Check className="h-4 w-4 text-nofx-success" />
+                        <Check className="h-4 w-4 text-emerald-300" />
                       ) : null}
                     </div>
                     <div className="mt-2 text-xs text-nofx-text-muted">
@@ -1910,7 +2040,7 @@ export function StrategyStudioPage() {
                     className={`rounded-lg border p-4 text-left transition ${
                       selectedSymbols.length > 0
                         ? 'border-nofx-gold bg-nofx-gold/10'
-                        : 'border-[rgba(26,24,19,0.14)] bg-nofx-bg-deeper hover:border-[rgba(26,24,19,0.24)]'
+                        : 'border-white/10 bg-black/15 hover:border-white/25'
                     }`}
                   >
                     <div className="flex items-center justify-between gap-3">
@@ -1943,7 +2073,7 @@ export function StrategyStudioPage() {
                           vergex_limit: Math.max(Number(event.target.value), 5),
                         })
                       }
-                      className="rounded-lg border border-[rgba(26,24,19,0.14)] bg-nofx-bg px-3 py-2 text-sm text-nofx-text"
+                      className="rounded-lg border border-white/10 bg-nofx-bg px-3 py-2 text-sm text-nofx-text"
                     >
                       {topNOptions.map((value) => (
                         <option key={value} value={value}>
@@ -1955,7 +2085,7 @@ export function StrategyStudioPage() {
                 </div>
 
                 {symbolsError || signalsError ? (
-                  <div className="mb-4 rounded-lg border border-nofx-gold/20 bg-nofx-gold/10 px-3 py-2 text-xs text-nofx-gold">
+                  <div className="mb-4 rounded-lg border border-amber-400/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
                     {symbolsError || signalsError}
                   </div>
                 ) : null}
@@ -2001,7 +2131,7 @@ export function StrategyStudioPage() {
                             className={`cursor-pointer rounded-lg border p-3 text-left transition ${
                               detailSelected || selected
                                 ? 'border-nofx-gold bg-nofx-gold/10'
-                                : 'border-[rgba(26,24,19,0.14)] bg-nofx-bg-deeper hover:border-[rgba(26,24,19,0.24)]'
+                                : 'border-white/10 bg-black/20 hover:border-white/25'
                             }`}
                           >
                             <div className="flex items-center justify-between gap-2">
@@ -2023,7 +2153,7 @@ export function StrategyStudioPage() {
                                 {formatSignalStrength(item)}
                               </span>
                             </div>
-                            <div className="mt-4 flex items-center justify-between gap-3 border-t border-[rgba(26,24,19,0.14)] pt-3 text-[11px] uppercase tracking-wide text-nofx-text-muted">
+                            <div className="mt-4 flex items-center justify-between gap-3 border-t border-white/10 pt-3 text-[11px] uppercase tracking-wide text-nofx-text-muted">
                               <span>{categoryLabel(item.category, 'en')}</span>
                               <span>{signalMarketType(item)}</span>
                             </div>
@@ -2042,7 +2172,7 @@ export function StrategyStudioPage() {
                             className={`rounded-lg border p-3 text-left transition ${
                               selected
                                 ? 'border-nofx-gold bg-nofx-gold/10'
-                                : 'border-[rgba(26,24,19,0.14)] bg-nofx-bg-deeper hover:border-[rgba(26,24,19,0.24)]'
+                                : 'border-white/10 bg-black/20 hover:border-white/25'
                             }`}
                           >
                             <div className="flex items-center justify-between gap-2">
@@ -2076,7 +2206,7 @@ export function StrategyStudioPage() {
                   >
                     {detailSignal ? (
                       <>
-                        <section className="rounded-lg border border-[rgba(26,24,19,0.14)] bg-nofx-bg-lighter px-4 py-3">
+                        <section className="rounded-lg border border-white/10 bg-[#0d121a] px-4 py-3">
                           <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-center">
                             <div className="min-w-0">
                               <div className="flex flex-wrap items-center gap-2">
@@ -2086,7 +2216,7 @@ export function StrategyStudioPage() {
                                 <span className="rounded-md bg-nofx-gold/10 px-2 py-1 text-xs font-semibold text-nofx-gold">
                                   #{detailSignal.rank || '-'}
                                 </span>
-                                <span className="rounded-md bg-nofx-bg-deeper px-2 py-1 text-xs text-nofx-text-muted">
+                                <span className="rounded-md bg-white/[0.05] px-2 py-1 text-xs text-nofx-text-muted">
                                   {categoryLabel(detailSignal.category, 'en')}
                                 </span>
                               </div>
@@ -2112,7 +2242,7 @@ export function StrategyStudioPage() {
                                   )
                                 }
                                 disabled={detailLoading}
-                                className="inline-flex items-center gap-2 rounded-lg border border-[rgba(26,24,19,0.14)] bg-nofx-bg-deeper px-3 py-2 text-xs text-nofx-text-muted hover:text-nofx-text disabled:opacity-50"
+                                className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-nofx-text-muted hover:text-white disabled:opacity-50"
                               >
                                 <RefreshCw
                                   className={`h-3.5 w-3.5 ${
@@ -2130,7 +2260,7 @@ export function StrategyStudioPage() {
                             </div>
                           ) : null}
                           {detailError ? (
-                            <div className="mt-3 rounded-md border border-nofx-gold/20 bg-nofx-gold/10 px-3 py-2 text-xs text-nofx-gold">
+                            <div className="mt-3 rounded-md border border-amber-400/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
                               {detailError}
                             </div>
                           ) : null}
@@ -2145,7 +2275,7 @@ export function StrategyStudioPage() {
                         />
                       </>
                     ) : (
-                      <div className="rounded-lg border border-[rgba(26,24,19,0.14)] bg-nofx-bg-deeper px-4 py-4 text-sm text-nofx-text-muted">
+                      <div className="rounded-lg border border-white/10 bg-black/20 px-4 py-4 text-sm text-nofx-text-muted">
                         NOFX Autopilot reviews the Claw402 board, Signal Lab,
                         liquidation structure, and raw candles automatically.
                       </div>
@@ -2156,7 +2286,7 @@ export function StrategyStudioPage() {
                 {listMode === 'claw402' &&
                 signals.length > 0 &&
                 visibleSignalItems.length === 0 ? (
-                  <div className="rounded-lg border border-[rgba(26,24,19,0.14)] bg-nofx-bg-deeper px-3 py-3 text-sm text-nofx-text-muted">
+                  <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-3 text-sm text-nofx-text-muted">
                     No Claw402 markets available.
                   </div>
                 ) : null}
@@ -2164,19 +2294,19 @@ export function StrategyStudioPage() {
                 {listMode === 'pool' &&
                 visibleSymbols.length === 0 &&
                 !symbolsLoading ? (
-                  <div className="rounded-lg border border-[rgba(26,24,19,0.14)] bg-nofx-bg-deeper px-3 py-3 text-sm text-nofx-text-muted">
+                  <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-3 text-sm text-nofx-text-muted">
                     No markets available.
                   </div>
                 ) : null}
               </section>
 
-              <details className="hidden rounded-lg border border-[rgba(26,24,19,0.14)] bg-nofx-bg-deeper p-4">
+              <details className="hidden rounded-lg border border-white/10 bg-black/15 p-4">
                 <summary className="cursor-pointer text-sm font-semibold text-nofx-text">
-                  {text(language, 'Advanced settings', 'Advanced settings')}
+                  {text(language, '高级设置', 'Advanced settings')}
                 </summary>
-                <div className="mt-4 rounded-lg border border-[rgba(26,24,19,0.14)] bg-nofx-bg-lighter p-4">
+                <div className="mt-4 rounded-lg border border-white/10 bg-nofx-bg-lighter p-4">
                   <div className="mb-3 text-sm font-semibold text-nofx-text">
-                    {text(language, 'Trading style', 'Trading style')}
+                    {text(language, '交易风格', 'Trading style')}
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {profileOptions.map((profile) => (
@@ -2187,7 +2317,7 @@ export function StrategyStudioPage() {
                         className={`rounded-lg border px-3 py-2 text-sm transition ${
                           activeProfile === profile.value
                             ? 'border-nofx-gold bg-nofx-gold/10 text-nofx-gold'
-                            : 'border-[rgba(26,24,19,0.14)] text-nofx-text-muted hover:text-nofx-text'
+                            : 'border-white/10 text-nofx-text-muted hover:text-white'
                         }`}
                       >
                         {text(language, profile.zh, profile.en)}
@@ -2196,15 +2326,15 @@ export function StrategyStudioPage() {
                   </div>
                 </div>
                 <div className="mt-4 grid gap-4 lg:grid-cols-2">
-                  <div className="rounded-lg border border-[rgba(26,24,19,0.14)] bg-nofx-bg-lighter p-4">
+                  <div className="rounded-lg border border-white/10 bg-nofx-bg-lighter p-4">
                     <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-nofx-text">
                       <Sparkles className="h-4 w-4 text-nofx-gold" />
-                      {text(language, 'Raw candles', 'Raw candles')}
+                      {text(language, '原始 K 线', 'Raw candles')}
                     </div>
                     <div className="space-y-4">
                       <div>
                         <div className="mb-2 text-xs text-nofx-text-muted">
-                          {text(language, 'Timeframe', 'Timeframe')}
+                          {text(language, '时间周期', 'Timeframe')}
                         </div>
                         <div className="flex flex-wrap gap-2">
                           {timeframeOptions.map((timeframe) => (
@@ -2216,7 +2346,7 @@ export function StrategyStudioPage() {
                                 indicators.klines.primary_timeframe ===
                                 timeframe
                                   ? 'border-nofx-gold bg-nofx-gold/10 text-nofx-gold'
-                                  : 'border-[rgba(26,24,19,0.14)] text-nofx-text-muted hover:text-nofx-text'
+                                  : 'border-white/10 text-nofx-text-muted hover:text-white'
                               }`}
                             >
                               {timeframe}
@@ -2226,7 +2356,7 @@ export function StrategyStudioPage() {
                       </div>
                       <div>
                         <div className="mb-2 text-xs text-nofx-text-muted">
-                          {text(language, 'Bars', 'Bars')}
+                          {text(language, 'K 线根数', 'Bars')}
                         </div>
                         <div className="flex flex-wrap gap-2">
                           {barCountOptions.map((count) => (
@@ -2237,7 +2367,7 @@ export function StrategyStudioPage() {
                               className={`rounded-lg border px-3 py-2 text-sm ${
                                 indicators.klines.primary_count === count
                                   ? 'border-nofx-gold bg-nofx-gold/10 text-nofx-gold'
-                                  : 'border-[rgba(26,24,19,0.14)] text-nofx-text-muted hover:text-nofx-text'
+                                  : 'border-white/10 text-nofx-text-muted hover:text-white'
                               }`}
                             >
                               {count}
@@ -2248,19 +2378,15 @@ export function StrategyStudioPage() {
                     </div>
                   </div>
 
-                  <div className="rounded-lg border border-[rgba(26,24,19,0.14)] bg-nofx-bg-lighter p-4">
+                  <div className="rounded-lg border border-white/10 bg-nofx-bg-lighter p-4">
                     <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-nofx-text">
-                      <Shield className="h-4 w-4 text-nofx-success" />
-                      {text(
-                        language,
-                        'Trading parameters',
-                        'Trading parameters'
-                      )}
+                      <Shield className="h-4 w-4 text-emerald-300" />
+                      {text(language, '交易参数', 'Trading parameters')}
                     </div>
                     <div className="grid gap-4 sm:grid-cols-3">
                       <label className="space-y-2">
                         <span className="text-xs text-nofx-text-muted">
-                          {text(language, 'Max positions', 'Max positions')}
+                          {text(language, '最多持仓', 'Max positions')}
                         </span>
                         <select
                           value={risk.max_positions}
@@ -2269,7 +2395,7 @@ export function StrategyStudioPage() {
                               max_positions: Number(event.target.value),
                             })
                           }
-                          className="w-full rounded-lg border border-[rgba(26,24,19,0.14)] bg-nofx-bg px-3 py-2 text-sm text-nofx-text"
+                          className="w-full rounded-lg border border-white/10 bg-nofx-bg px-3 py-2 text-sm text-nofx-text"
                         >
                           {[1, 2, 3, 4, 5].map((value) => (
                             <option key={value} value={value}>
@@ -2280,14 +2406,14 @@ export function StrategyStudioPage() {
                       </label>
                       <label className="space-y-2">
                         <span className="text-xs text-nofx-text-muted">
-                          {text(language, 'Leverage', 'Leverage')}
+                          {text(language, '杠杆', 'Leverage')}
                         </span>
                         <select
                           value={risk.altcoin_max_leverage}
                           onChange={(event) =>
                             setLeverage(Number(event.target.value))
                           }
-                          className="w-full rounded-lg border border-[rgba(26,24,19,0.14)] bg-nofx-bg px-3 py-2 text-sm text-nofx-text"
+                          className="w-full rounded-lg border border-white/10 bg-nofx-bg px-3 py-2 text-sm text-nofx-text"
                         >
                           {[1, 2, 3, 5, 8, 10].map((value) => (
                             <option key={value} value={value}>
@@ -2298,11 +2424,7 @@ export function StrategyStudioPage() {
                       </label>
                       <label className="space-y-2">
                         <span className="text-xs text-nofx-text-muted">
-                          {text(
-                            language,
-                            'Entry confidence',
-                            'Entry confidence'
-                          )}
+                          {text(language, '开仓置信度', 'Entry confidence')}
                         </span>
                         <select
                           value={risk.min_confidence}
@@ -2311,7 +2433,7 @@ export function StrategyStudioPage() {
                               min_confidence: Number(event.target.value),
                             })
                           }
-                          className="w-full rounded-lg border border-[rgba(26,24,19,0.14)] bg-nofx-bg px-3 py-2 text-sm text-nofx-text"
+                          className="w-full rounded-lg border border-white/10 bg-nofx-bg px-3 py-2 text-sm text-nofx-text"
                         >
                           {confidenceOptions.map((value) => (
                             <option key={value} value={value}>
@@ -2324,9 +2446,9 @@ export function StrategyStudioPage() {
                   </div>
                 </div>
 
-                <div className="mt-4 rounded-lg border border-[rgba(26,24,19,0.14)] bg-nofx-bg-lighter p-4">
+                <div className="mt-4 rounded-lg border border-white/10 bg-nofx-bg-lighter p-4">
                   <div className="mb-2 text-sm font-semibold text-nofx-text">
-                    {text(language, 'Strategy note', 'Strategy note')}
+                    {text(language, '策略备注', 'Strategy note')}
                   </div>
                   <textarea
                     value={aiConfig.custom_prompt || ''}
@@ -2335,10 +2457,10 @@ export function StrategyStudioPage() {
                     }
                     placeholder={text(
                       language,
-                      'Example: only trade clean trends; skip entries when board signals conflict with candles.',
+                      '例如：只做趋势清晰的标的；如果榜单信号和 K 线冲突就不开仓。',
                       'Example: only trade clean trends; skip entries when board signals conflict with candles.'
                     )}
-                    className="h-28 w-full resize-none rounded-lg border border-[rgba(26,24,19,0.14)] bg-nofx-bg px-3 py-2 text-sm text-nofx-text outline-none placeholder:text-nofx-text-muted/50"
+                    className="h-28 w-full resize-none rounded-lg border border-white/10 bg-nofx-bg px-3 py-2 text-sm text-nofx-text outline-none placeholder:text-nofx-text-muted/50"
                   />
                 </div>
               </details>
@@ -2348,7 +2470,7 @@ export function StrategyStudioPage() {
               <button
                 type="button"
                 onClick={createStrategy}
-                className="inline-flex items-center gap-2 rounded-lg bg-nofx-gold px-4 py-2 text-sm font-semibold text-nofx-bg hover:bg-nofx-gold-highlight"
+                className="inline-flex items-center gap-2 rounded-lg bg-nofx-gold px-4 py-2 text-sm font-semibold text-black hover:bg-yellow-400"
               >
                 <Plus className="h-4 w-4" />
                 {text(language, 'Initialize Autopilot', 'Initialize Autopilot')}

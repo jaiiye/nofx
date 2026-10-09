@@ -1,4 +1,4 @@
-// Get a friendly display name for the AI model
+// 获取友好的AI模型名称
 export function getModelDisplayName(modelId: string): string {
   switch (modelId.toLowerCase()) {
     case 'deepseek':
@@ -12,7 +12,7 @@ export function getModelDisplayName(modelId: string): string {
   }
 }
 
-// Extract the name part after the underscore
+// 提取下划线后面的名称部分
 export function getShortName(fullName: string): string {
   const parts = fullName.split('_')
   return parts.length > 1 ? parts[parts.length - 1] : fullName

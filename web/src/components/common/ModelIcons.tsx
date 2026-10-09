@@ -15,12 +15,11 @@ const MODEL_COLORS: Record<string, string> = {
   openai: '#10A37F',
   minimax: '#E45735',
   claw402: '#7C3AED',
-  zhipu: '#3859F3',
 }
 
-// Returns the icon for an AI model
+// 获取AI模型图标的函数
 export const getModelIcon = (modelType: string, props: IconProps = {}) => {
-  // Supports full ID or type name
+  // 支持完整ID或类型名
   const type = modelType.includes('_') ? modelType.split('_').pop() : modelType
 
   let iconPath: string | null = null
@@ -68,8 +67,8 @@ export const getModelIcon = (modelType: string, props: IconProps = {}) => {
   )
 }
 
-// Returns the model color (fallback for when there is no icon)
+// 获取模型颜色（用于没有图标时的fallback）
 export const getModelColor = (modelType: string): string => {
   const type = modelType.includes('_') ? modelType.split('_').pop() : modelType
-  return MODEL_COLORS[type || ''] || '#E0483B'
+  return MODEL_COLORS[type || ''] || '#60a5fa'
 }

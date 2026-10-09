@@ -2,8 +2,6 @@ import { useState, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import useSWR from 'swr'
 import { api } from '../../lib/api'
-import { ApiError } from '../../lib/httpClient'
-import { ROUTES } from '../../router/paths'
 import type {
   TraderInfo,
   CreateTraderRequest,
@@ -307,15 +305,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
 
       await mutateTraders()
     } catch (error) {
-      // Launch preflight rejections carry an actionable reason (e.g. "AI fee
-      // wallet is empty") — show it instead of a generic failure toast.
-      if (
-        error instanceof ApiError &&
-        error.errorKey === 'trader.start.preflight_failed'
-      ) {
-        toast.error(error.message)
-        return
-      }
+      console.error('Failed to toggle trader:', error)
       toast.error(t('operationFailed', language))
     }
   }
@@ -668,20 +658,10 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
     if (!setupTarget) return
 
     if (setupTarget === 'claw402') {
-      // The welcome page shows the deposit QR, auto-creates the wallet if
-      // needed, and polls the balance — friendlier than the key-config modal.
-      navigate(ROUTES.welcome)
+      if (supportedModels.length === 0 && allModels.length === 0) return
+      handleOpenClaw402Config()
     } else if (setupTarget === 'hyperliquid') {
       handleOpenHyperliquidConfig()
-    } else if (setupTarget === 'hyperliquid-funds') {
-      // Funding shortfall: bring the guided launch panel (with the trading
-      // balance step and live preflight polling) into view.
-      document
-        .getElementById('autopilot-launch-panel')
-        ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      toast.info(
-        'Deposit USDC to your Hyperliquid account, the balance check updates automatically.'
-      )
     } else {
       return
     }
@@ -695,42 +675,27 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
     await Promise.all([loadConfigs(), mutateTraders()])
   }
 
-  const hasRunningTrader = (traders || []).some((trader) => trader.is_running)
-  const launchPanel = (
-    <AutopilotLaunchPanel
-      models={allModels}
-      exchanges={allExchanges}
-      exchangeAccountStates={exchangeAccountStates}
-      traders={traders || []}
-      isLoggedIn={Boolean(user && token)}
-      language={language}
-      onRefresh={refreshLaunchState}
-      onOpenClaw402Config={handleOpenClaw402Config}
-      onOpenHyperliquidConfig={handleOpenHyperliquidConfig}
-    />
-  )
-
   return (
     <DeepVoidBackground className="py-8" disableAnimation>
       <div className="w-full px-4 md:px-8 space-y-8 animate-fade-in">
         {/* Header - Terminal Style */}
-        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b border-nofx-gold/20 pb-6">
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b border-white/10 pb-6">
           <div className="flex items-center gap-4">
             <div className="relative group">
-              <div className="absolute -inset-1 bg-transparent rounded-xl opacity-0 group-hover:opacity-100 transition duration-500"></div>
-              <div className="w-12 h-12 md:w-14 md:h-14 rounded-xl flex items-center justify-center bg-nofx-bg-lighter border border-nofx-gold/30 text-nofx-gold relative z-10">
+              <div className="absolute -inset-1 bg-nofx-gold/20 rounded-xl blur opacity-0 group-hover:opacity-100 transition duration-500"></div>
+              <div className="w-12 h-12 md:w-14 md:h-14 rounded-xl flex items-center justify-center bg-black border border-nofx-gold/30 text-nofx-gold relative z-10 shadow-[0_0_15px_rgba(240,185,11,0.1)]">
                 <Bot className="w-6 h-6 md:w-7 md:h-7" />
               </div>
             </div>
             <div>
-              <h1 className="text-2xl md:text-3xl font-bold font-mono tracking-tight text-nofx-text flex items-center gap-3 uppercase">
+              <h1 className="text-2xl md:text-3xl font-bold font-mono tracking-tight text-white flex items-center gap-3 uppercase">
                 {t('aiTraders', language)}
                 <span className="text-xs font-mono font-normal px-2 py-0.5 rounded bg-nofx-gold/10 text-nofx-gold border border-nofx-gold/20 tracking-wider">
                   {traders?.length || 0} ACTIVE_NODES
                 </span>
               </h1>
-              <p className="text-xs font-mono text-nofx-text-muted uppercase tracking-widest mt-1 ml-1 flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-nofx-success animate-pulse"></span>
+              <p className="text-xs font-mono text-zinc-500 uppercase tracking-widest mt-1 ml-1 flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
                 SYSTEM_READY
               </p>
             </div>
@@ -739,7 +704,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
           <div className="flex gap-2 w-full md:w-auto overflow-x-auto pb-1 md:pb-0 hide-scrollbar">
             <button
               onClick={handleAddModel}
-              className="px-4 py-2 rounded text-xs font-mono uppercase tracking-wider transition-all border border-nofx-gold/20 bg-nofx-bg-lighter text-nofx-text-muted hover:text-nofx-text hover:border-nofx-gold/40 whitespace-nowrap"
+              className="px-4 py-2 rounded text-xs font-mono uppercase tracking-wider transition-all border border-zinc-700 bg-black/20 text-zinc-400 hover:text-white hover:border-zinc-500 whitespace-nowrap backdrop-blur-sm"
             >
               <div className="flex items-center gap-2">
                 <Plus className="w-3 h-3" />
@@ -749,7 +714,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
 
             <button
               onClick={handleAddExchange}
-              className="px-4 py-2 rounded text-xs font-mono uppercase tracking-wider transition-all border border-nofx-gold/20 bg-nofx-bg-lighter text-nofx-text-muted hover:text-nofx-text hover:border-nofx-gold/40 whitespace-nowrap"
+              className="px-4 py-2 rounded text-xs font-mono uppercase tracking-wider transition-all border border-zinc-700 bg-black/20 text-zinc-400 hover:text-white hover:border-zinc-500 whitespace-nowrap backdrop-blur-sm"
             >
               <div className="flex items-center gap-2">
                 <Plus className="w-3 h-3" />
@@ -759,7 +724,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
 
             <button
               onClick={() => setShowTelegramModal(true)}
-              className="px-4 py-2 rounded text-xs font-mono uppercase tracking-wider transition-all border border-nofx-accent/30 bg-nofx-bg-lighter text-nofx-accent hover:text-nofx-gold hover:border-nofx-accent/50 whitespace-nowrap"
+              className="px-4 py-2 rounded text-xs font-mono uppercase tracking-wider transition-all border border-sky-900/50 bg-black/20 text-sky-500 hover:text-sky-300 hover:border-sky-700 whitespace-nowrap backdrop-blur-sm"
             >
               <div className="flex items-center gap-2">
                 <MessageCircle className="w-3 h-3" />
@@ -773,7 +738,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
                 configuredModels.length === 0 ||
                 configuredExchanges.length === 0
               }
-              className="group relative px-6 py-2 rounded text-xs font-bold font-mono uppercase tracking-wider transition-all disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap overflow-hidden bg-nofx-gold text-white hover:bg-nofx-accent"
+              className="group relative px-6 py-2 rounded text-xs font-bold font-mono uppercase tracking-wider transition-all disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap overflow-hidden bg-nofx-gold text-black hover:bg-yellow-400 shadow-[0_0_20px_rgba(240,185,11,0.2)] hover:shadow-[0_0_30px_rgba(240,185,11,0.4)]"
             >
               <span className="relative z-10 flex items-center gap-2">
                 <Plus className="w-4 h-4" />
@@ -783,10 +748,6 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
             </button>
           </div>
         </div>
-
-        {/* Newcomers see the guided launch FIRST — the config grid is detail.
-            Once an autopilot is running, the running bot takes back the top. */}
-        {!hasRunningTrader && launchPanel}
 
         {/* Configuration Status Grid */}
         <ConfigStatusGrid
@@ -805,7 +766,17 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
           onCopyAddress={handleCopyAddress}
         />
 
-        {hasRunningTrader && launchPanel}
+        <AutopilotLaunchPanel
+          models={allModels}
+          exchanges={allExchanges}
+          exchangeAccountStates={exchangeAccountStates}
+          traders={traders || []}
+          isLoggedIn={Boolean(user && token)}
+          language={language}
+          onRefresh={refreshLaunchState}
+          onOpenClaw402Config={handleOpenClaw402Config}
+          onOpenHyperliquidConfig={handleOpenHyperliquidConfig}
+        />
 
         {/* Traders List */}
         <TradersList

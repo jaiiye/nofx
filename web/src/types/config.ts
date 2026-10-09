@@ -99,11 +99,11 @@ export interface CreateTraderRequest {
   name: string
   ai_model_id: string
   exchange_id: string
-  strategy_id?: string // Strategy ID (new version, uses saved strategy config)
+  strategy_id?: string // 策略ID（新版，使用保存的策略配置）
   scan_interval_minutes?: number
   is_cross_margin?: boolean
-  show_in_competition?: boolean // Whether to show in the competition arena
-  // Fields below are kept for backward compatibility; new version uses strategy config
+  show_in_competition?: boolean // 是否在竞技场显示
+  // 以下字段为向后兼容保留，新版使用策略配置
   btc_eth_leverage?: number
   altcoin_leverage?: number
   trading_symbols?: string
@@ -133,15 +133,15 @@ export interface UpdateExchangeConfigRequest {
       secret_key: string
       passphrase?: string
       testnet?: boolean
-      // Hyperliquid specific fields
+      // Hyperliquid 特定字段
       hyperliquid_wallet_addr?: string
       hyperliquid_unified_account?: boolean
       hyperliquid_builder_approved?: boolean
-      // Aster specific fields
+      // Aster 特定字段
       aster_user?: string
       aster_signer?: string
       aster_private_key?: string
-      // LIGHTER specific fields
+      // LIGHTER 特定字段
       lighter_wallet_addr?: string
       lighter_private_key?: string
       lighter_api_key_private_key?: string

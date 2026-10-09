@@ -2,13 +2,13 @@ import { create } from 'zustand'
 import type { TraderConfigData } from '../types'
 
 interface TradersModalState {
-  // Modal visibility state
+  // Modal 显示状态
   showCreateModal: boolean
   showEditModal: boolean
   showModelModal: boolean
   showExchangeModal: boolean
 
-  // Editing state
+  // 编辑状态
   editingModel: string | null
   editingExchange: string | null
   editingTrader: TraderConfigData | null
@@ -23,13 +23,13 @@ interface TradersModalState {
   setEditingExchange: (exchangeId: string | null) => void
   setEditingTrader: (trader: TraderConfigData | null) => void
 
-  // Convenience methods
+  // 便捷方法
   openModelModal: (modelId?: string) => void
   closeModelModal: () => void
   openExchangeModal: (exchangeId?: string) => void
   closeExchangeModal: () => void
 
-  // Reset
+  // 重置
   reset: () => void
 }
 

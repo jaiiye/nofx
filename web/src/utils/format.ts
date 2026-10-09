@@ -1,18 +1,16 @@
 /**
- * Number formatting utilities
+ * 数字格式化工具
  *
- * formatPrice: adapts display precision to the magnitude of the value,
- * avoiding very small numbers being shown as 0.0000
+ * formatPrice: 根据数值大小自适应显示精度，避免极小数显示为 0.0000
  */
 
 /**
- * Format a price, adapting precision to the magnitude of the value.
- * For very small numbers (e.g. meme coin price 0.000000166), it keeps
- * enough significant digits.
+ * 格式化价格，根据数值大小自适应精度
+ * 对于极小的数字（如 meme 币价格 0.000000166），会保留足够的有效数字
  *
- * @param price the price value
- * @param minDecimals minimum number of decimal places (default 2)
- * @returns the formatted string
+ * @param price 价格数值
+ * @param minDecimals 最少小数位数（默认 2）
+ * @returns 格式化后的字符串
  */
 export function formatPrice(price: number | undefined | null, minDecimals = 2): string {
   if (price === undefined || price === null || isNaN(price)) {
@@ -25,39 +23,39 @@ export function formatPrice(price: number | undefined | null, minDecimals = 2): 
 
   const absPrice = Math.abs(price)
 
-  // Determine display precision based on price magnitude
+  // 根据价格大小决定显示精度
   let decimals: number
   if (absPrice < 0.000001) {
-    // Extremely small price (e.g. meme coins like CHEEMS, SHIB)
+    // 极小价格 (如 CHEEMS, SHIB 等 meme 币)
     decimals = 15
   } else if (absPrice < 0.0001) {
-    // Very small price (e.g. PEPE, FLOKI, BONK)
+    // 很小价格 (如 PEPE, FLOKI, BONK)
     decimals = 12
   } else if (absPrice < 0.01) {
-    // Small price
+    // 小价格
     decimals = 10
   } else if (absPrice < 1) {
-    // Medium price
+    // 中等价格
     decimals = 8
   } else if (absPrice < 1000) {
-    // Normal price
+    // 正常价格
     decimals = 4
   } else {
-    // Large price (e.g. BTC)
+    // 大价格 (如 BTC)
     decimals = 2
   }
 
-  // Ensure at least minDecimals decimal places
+  // 确保至少有 minDecimals 位小数
   decimals = Math.max(decimals, minDecimals)
 
-  // Format and strip extra trailing zeros
+  // 格式化并去除尾部多余的零
   let formatted = price.toFixed(decimals)
 
-  // Strip trailing zeros (keep at least minDecimals decimal places)
+  // 去除尾部零（保留小数点后至少 minDecimals 位）
   if (formatted.includes('.')) {
-    // First remove all trailing zeros
+    // 先去掉所有尾部零
     formatted = formatted.replace(/\.?0+$/, '')
-    // Pad with zeros if there are fewer than minDecimals decimals
+    // 如果小数位不足 minDecimals，补零
     const dotIndex = formatted.indexOf('.')
     if (dotIndex === -1) {
       formatted += '.' + '0'.repeat(minDecimals)
@@ -73,11 +71,11 @@ export function formatPrice(price: number | undefined | null, minDecimals = 2): 
 }
 
 /**
- * Format a quantity, adapting precision to the magnitude of the value.
+ * 格式化数量，根据数值大小自适应精度
  *
- * @param quantity the quantity
- * @param minDecimals minimum number of decimal places (default 2)
- * @returns the formatted string
+ * @param quantity 数量
+ * @param minDecimals 最少小数位数（默认 2）
+ * @returns 格式化后的字符串
  */
 export function formatQuantity(quantity: number | undefined | null, minDecimals = 2): string {
   if (quantity === undefined || quantity === null || isNaN(quantity)) {
@@ -121,11 +119,11 @@ export function formatQuantity(quantity: number | undefined | null, minDecimals 
 }
 
 /**
- * Format a percentage
+ * 格式化百分比
  *
- * @param value the percentage value
- * @param decimals number of decimal places (default 2)
- * @returns the formatted string
+ * @param value 百分比值
+ * @param decimals 小数位数（默认 2）
+ * @returns 格式化后的字符串
  */
 export function formatPercent(value: number | undefined | null, decimals = 2): string {
   if (value === undefined || value === null || isNaN(value)) {

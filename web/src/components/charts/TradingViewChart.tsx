@@ -3,7 +3,7 @@ import { useLanguage } from '../../contexts/LanguageContext'
 import { t } from '../../i18n/translations'
 import { ChevronDown, TrendingUp, X } from 'lucide-react'
 
-// Supported exchanges list (futures format)
+// 支持的交易所列表 (合约格式)
 const EXCHANGES = [
   { id: 'BINANCE', name: 'Binance', prefix: 'BINANCE:', suffix: '.P' },
   { id: 'BYBIT', name: 'Bybit', prefix: 'BYBIT:', suffix: '.P' },
@@ -13,7 +13,7 @@ const EXCHANGES = [
   { id: 'GATEIO', name: 'Gate.io', prefix: 'GATEIO:', suffix: '.P' },
 ] as const
 
-// Popular trading pairs
+// 热门交易对
 const POPULAR_SYMBOLS = [
   'BTCUSDT',
   'ETHUSDT',
@@ -29,7 +29,7 @@ const POPULAR_SYMBOLS = [
   'LTCUSDT',
 ]
 
-// Time interval options
+// 时间周期选项
 const INTERVALS = [
   { id: '1', label: '1m' },
   { id: '5', label: '5m' },
@@ -46,7 +46,7 @@ interface TradingViewChartProps {
   defaultExchange?: string
   height?: number
   showToolbar?: boolean
-  embedded?: boolean // Embedded mode (does not show the outer card)
+  embedded?: boolean // 嵌入模式（不显示外层卡片）
 }
 
 function TradingViewChartComponent({
@@ -66,26 +66,26 @@ function TradingViewChartComponent({
   const [showSymbolDropdown, setShowSymbolDropdown] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
 
-  // Update the internal symbol when the external defaultSymbol changes
+  // 当外部传入的 defaultSymbol 变化时，更新内部 symbol
   useEffect(() => {
     if (defaultSymbol && defaultSymbol !== symbol) {
-      // console.log('[TradingViewChart] Updating symbol:', defaultSymbol)
+      // console.log('[TradingViewChart] 更新币种:', defaultSymbol)
       setSymbol(defaultSymbol)
     }
   }, [defaultSymbol])
 
-  // Update the internal exchange when the external defaultExchange changes
+  // 当外部传入的 defaultExchange 变化时，更新内部 exchange
   useEffect(() => {
     if (defaultExchange && defaultExchange !== exchange) {
       const normalizedExchange = defaultExchange.toUpperCase()
-      // console.log('[TradingViewChart] Updating exchange:', normalizedExchange)
+      // console.log('[TradingViewChart] 更新交易所:', normalizedExchange)
       if (EXCHANGES.some(e => e.id === normalizedExchange)) {
         setExchange(normalizedExchange)
       }
     }
   }, [defaultExchange])
 
-  // Get the full trading pair symbol (futures format: BINANCE:BTCUSDT.P)
+  // 获取完整的交易对符号 (合约格式: BINANCE:BTCUSDT.P)
   const getFullSymbol = () => {
     const exchangeInfo = EXCHANGES.find((e) => e.id === exchange)
     const prefix = exchangeInfo?.prefix || 'BINANCE:'
@@ -93,14 +93,14 @@ function TradingViewChartComponent({
     return `${prefix}${symbol}${suffix}`
   }
 
-  // Load the TradingView Widget
+  // 加载 TradingView Widget
   useEffect(() => {
     if (!containerRef.current) return
 
-    // Clear the container
+    // 清空容器
     containerRef.current.innerHTML = ''
 
-    // Create the widget container
+    // 创建 widget 容器
     const widgetContainer = document.createElement('div')
     widgetContainer.className = 'tradingview-widget-container'
     widgetContainer.style.height = '100%'
@@ -114,7 +114,7 @@ function TradingViewChartComponent({
     widgetContainer.appendChild(widgetDiv)
     containerRef.current.appendChild(widgetContainer)
 
-    // Load the TradingView script
+    // 加载 TradingView 脚本
     const script = document.createElement('script')
     script.src =
       'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js'
@@ -126,12 +126,12 @@ function TradingViewChartComponent({
       symbol: getFullSymbol(),
       interval: timeInterval,
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai',
-      theme: 'light',
+      theme: 'dark',
       style: '1',
       locale: language === 'zh' ? 'zh_CN' : 'en',
       enable_publishing: false,
-      backgroundColor: 'rgba(241, 236, 226, 1)',
-      gridColor: 'rgba(26, 24, 19, 0.08)',
+      backgroundColor: 'rgba(11, 14, 17, 1)',
+      gridColor: 'rgba(43, 49, 57, 0.5)',
       hide_top_toolbar: !showToolbar,
       hide_legend: false,
       save_image: false,
@@ -149,11 +149,11 @@ function TradingViewChartComponent({
     }
   }, [exchange, symbol, timeInterval, language, showToolbar])
 
-  // Handle custom trading pair input
+  // 处理自定义交易对输入
   const handleCustomSymbolSubmit = () => {
     if (customSymbol.trim()) {
       let sym = customSymbol.trim().toUpperCase()
-      // If there is no USDT suffix, add it automatically
+      // 如果没有 USDT 后缀，自动加上
       if (!sym.endsWith('USDT')) {
         sym = sym + 'USDT'
       }
@@ -169,19 +169,19 @@ function TradingViewChartComponent({
           ? 'fixed inset-0 z-50 rounded-none flex flex-col'
           : ''
         }`}
-      style={isFullscreen ? { background: '#F1ECE2' } : undefined}
+      style={isFullscreen ? { background: '#0B0E11' } : undefined}
     >
       {/* Header */}
       <div
         className="flex flex-wrap items-center gap-2 p-3 sm:p-4"
-        style={{ borderBottom: embedded ? 'none' : '1px solid rgba(26, 24, 19, 0.14)' }}
+        style={{ borderBottom: embedded ? 'none' : '1px solid #2B3139' }}
       >
         {!embedded && (
           <div className="flex items-center gap-2">
-            <TrendingUp className="w-5 h-5" style={{ color: '#E0483B' }} />
+            <TrendingUp className="w-5 h-5" style={{ color: '#F0B90B' }} />
             <h3
               className="text-base sm:text-lg font-bold"
-              style={{ color: '#1A1813' }}
+              style={{ color: '#EAECEF' }}
             >
               {t('marketChart', language)}
             </h3>
@@ -199,21 +199,21 @@ function TradingViewChartComponent({
               }}
               className="flex items-center gap-1 px-3 py-1.5 rounded text-sm font-medium transition-all"
               style={{
-                background: '#F7F4EC',
-                border: '1px solid rgba(26, 24, 19, 0.14)',
-                color: '#1A1813',
+                background: '#1E2329',
+                border: '1px solid #2B3139',
+                color: '#EAECEF',
               }}
             >
               {EXCHANGES.find((e) => e.id === exchange)?.name || exchange}
-              <ChevronDown className="w-4 h-4" style={{ color: '#8A8478' }} />
+              <ChevronDown className="w-4 h-4" style={{ color: '#848E9C' }} />
             </button>
 
             {showExchangeDropdown && (
               <div
                 className="absolute top-full left-0 mt-1 py-1 rounded-lg shadow-xl z-20 min-w-[120px]"
                 style={{
-                  background: '#F7F4EC',
-                  border: '1px solid rgba(26, 24, 19, 0.14)',
+                  background: '#1E2329',
+                  border: '1px solid #2B3139',
                 }}
               >
                 {EXCHANGES.map((ex) => (
@@ -225,10 +225,10 @@ function TradingViewChartComponent({
                     }}
                     className="w-full px-4 py-2 text-left text-sm transition-all hover:bg-opacity-50"
                     style={{
-                      color: exchange === ex.id ? '#E0483B' : '#1A1813',
+                      color: exchange === ex.id ? '#F0B90B' : '#EAECEF',
                       background:
                         exchange === ex.id
-                          ? 'rgba(224, 72, 59, 0.1)'
+                          ? 'rgba(240, 185, 11, 0.1)'
                           : 'transparent',
                     }}
                   >
@@ -248,9 +248,9 @@ function TradingViewChartComponent({
               }}
               className="flex items-center gap-1 px-3 py-1.5 rounded text-sm font-bold transition-all"
               style={{
-                background: 'rgba(224, 72, 59, 0.1)',
-                border: '1px solid rgba(224, 72, 59, 0.3)',
-                color: '#E0483B',
+                background: 'rgba(240, 185, 11, 0.1)',
+                border: '1px solid rgba(240, 185, 11, 0.3)',
+                color: '#F0B90B',
               }}
             >
               {symbol}
@@ -261,12 +261,12 @@ function TradingViewChartComponent({
               <div
                 className="absolute top-full left-0 mt-1 py-2 rounded-lg shadow-xl z-20 w-[280px]"
                 style={{
-                  background: '#F7F4EC',
-                  border: '1px solid rgba(26, 24, 19, 0.14)',
+                  background: '#1E2329',
+                  border: '1px solid #2B3139',
                 }}
               >
                 {/* Custom Input */}
-                <div className="px-3 pb-2" style={{ borderBottom: '1px solid rgba(26, 24, 19, 0.14)' }}>
+                <div className="px-3 pb-2" style={{ borderBottom: '1px solid #2B3139' }}>
                   <div className="flex gap-2">
                     <input
                       type="text"
@@ -276,17 +276,17 @@ function TradingViewChartComponent({
                       placeholder={t('enterSymbol', language)}
                       className="flex-1 px-3 py-1.5 rounded text-sm"
                       style={{
-                        background: '#F1ECE2',
-                        border: '1px solid rgba(26, 24, 19, 0.14)',
-                        color: '#1A1813',
+                        background: '#0B0E11',
+                        border: '1px solid #2B3139',
+                        color: '#EAECEF',
                       }}
                     />
                     <button
                       onClick={handleCustomSymbolSubmit}
                       className="px-3 py-1.5 rounded text-sm font-medium"
                       style={{
-                        background: '#E0483B',
-                        color: '#F1ECE2',
+                        background: '#F0B90B',
+                        color: '#0B0E11',
                       }}
                     >
                       OK
@@ -298,7 +298,7 @@ function TradingViewChartComponent({
                 <div className="px-2 pt-2">
                   <div
                     className="text-xs px-2 py-1 mb-1"
-                    style={{ color: '#8A8478' }}
+                    style={{ color: '#848E9C' }}
                   >
                     {t('popularSymbols', language)}
                   </div>
@@ -312,11 +312,11 @@ function TradingViewChartComponent({
                         }}
                         className="px-2 py-1.5 rounded text-xs font-medium transition-all"
                         style={{
-                          color: symbol === sym ? '#E0483B' : '#1A1813',
+                          color: symbol === sym ? '#F0B90B' : '#EAECEF',
                           background:
                             symbol === sym
-                              ? 'rgba(224, 72, 59, 0.1)'
-                              : 'rgba(26, 24, 19, 0.04)',
+                              ? 'rgba(240, 185, 11, 0.1)'
+                              : 'rgba(43, 49, 57, 0.3)',
                         }}
                       >
                         {sym.replace('USDT', '')}
@@ -331,7 +331,7 @@ function TradingViewChartComponent({
           {/* Interval Selector */}
           <div
             className="flex gap-0.5 p-0.5 rounded"
-            style={{ background: '#E8E2D5', border: '1px solid rgba(26, 24, 19, 0.14)' }}
+            style={{ background: '#0B0E11', border: '1px solid #2B3139' }}
           >
             {INTERVALS.map((int) => (
               <button
@@ -339,8 +339,8 @@ function TradingViewChartComponent({
                 onClick={() => setTimeInterval(int.id)}
                 className="px-2 py-1 rounded text-xs font-medium transition-all"
                 style={{
-                  background: timeInterval === int.id ? '#E0483B' : 'transparent',
-                  color: timeInterval === int.id ? '#F1ECE2' : '#8A8478',
+                  background: timeInterval === int.id ? '#F0B90B' : 'transparent',
+                  color: timeInterval === int.id ? '#0B0E11' : '#848E9C',
                 }}
               >
                 {int.label}
@@ -353,9 +353,9 @@ function TradingViewChartComponent({
             onClick={() => setIsFullscreen(!isFullscreen)}
             className="p-1.5 rounded transition-all"
             style={{
-              background: isFullscreen ? '#E0483B' : 'transparent',
-              color: isFullscreen ? '#F1ECE2' : '#8A8478',
-              border: '1px solid rgba(26, 24, 19, 0.14)',
+              background: isFullscreen ? '#F0B90B' : 'transparent',
+              color: isFullscreen ? '#0B0E11' : '#848E9C',
+              border: '1px solid #2B3139',
             }}
             title={isFullscreen ? t('exitFullscreen', language) : t('fullscreen', language)}
           >
@@ -375,7 +375,7 @@ function TradingViewChartComponent({
         ref={containerRef}
         style={{
           height: isFullscreen ? 'calc(100vh - 65px)' : height,
-          background: '#F1ECE2',
+          background: '#0B0E11',
           overflow: 'hidden',
         }}
       />
@@ -394,5 +394,5 @@ function TradingViewChartComponent({
   )
 }
 
-// Use memo to avoid unnecessary re-renders
+// 使用 memo 避免不必要的重渲染
 export const TradingViewChart = memo(TradingViewChartComponent)
