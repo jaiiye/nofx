@@ -7,7 +7,7 @@ import (
 	"nofx/store"
 )
 
-func TestCreateDefaultStrategiesUsesOneReadyToRunClaw402Preset(t *testing.T) {
+func TestCreateDefaultStrategiesUsesOneReadyToRunSelfHostedPreset(t *testing.T) {
 	st, err := store.New(t.TempDir() + "/nofx.db")
 	if err != nil {
 		t.Fatalf("store.New failed: %v", err)
@@ -43,27 +43,30 @@ func TestCreateDefaultStrategiesUsesOneReadyToRunClaw402Preset(t *testing.T) {
 		t.Fatalf("expected exactly one active strategy, got %d", activeCount)
 	}
 
-	defaultStrategy := byName["NOFX Claw402 Auto Strategy"]
+	defaultStrategy := byName["NOFX Self-Hosted Auto Strategy"]
 	if defaultStrategy == nil || !defaultStrategy.IsActive {
-		t.Fatalf("NOFX Claw402 Auto Strategy should exist and be active")
+		t.Fatalf("NOFX Self-Hosted Auto Strategy should exist and be active")
 	}
 	trendCfg, err := defaultStrategy.ParseConfig()
 	if err != nil {
 		t.Fatalf("default ParseConfig failed: %v", err)
 	}
-	if trendCfg.CoinSource.SourceType != "vergex_signal" || trendCfg.CoinSource.VergexLimit != 10 || trendCfg.CoinSource.VergexMarketType != "all" {
-		t.Fatalf("default strategy should use the Claw402/Vergex all-market signal ranking, got %+v", trendCfg.CoinSource)
+	if trendCfg.CoinSource.SourceType != "hl_pool" || trendCfg.CoinSource.HLPoolLimit != 10 {
+		t.Fatalf("default strategy should use the self-hosted candidate pool, got %+v", trendCfg.CoinSource)
+	}
+	if len(trendCfg.CoinSource.StaticCoins) == 0 {
+		t.Fatalf("default strategy must carry a static-coin fallback, got %+v", trendCfg.CoinSource)
 	}
 	if trendCfg.CoinSource.UseAI500 || trendCfg.RiskControl.MaxPositions != 2 {
-		t.Fatalf("default strategy should be Claw402/Vergex native with a 2-position concentrated book, got coin=%+v risk=%+v", trendCfg.CoinSource, trendCfg.RiskControl)
+		t.Fatalf("default strategy should be self-hosted native with a 2-position concentrated book, got coin=%+v risk=%+v", trendCfg.CoinSource, trendCfg.RiskControl)
 	}
 	if trendCfg.RiskControl.BTCETHMaxLeverage != 10 || trendCfg.RiskControl.AltcoinMaxLeverage != 10 {
-		t.Fatalf("default strategy should use 10x leverage for all Claw402 opens, got risk=%+v", trendCfg.RiskControl)
+		t.Fatalf("default strategy should use 10x leverage for all opens, got risk=%+v", trendCfg.RiskControl)
 	}
 	if trendCfg.RiskControl.BTCETHMaxPositionValueRatio != 5.0 ||
 		trendCfg.RiskControl.AltcoinMaxPositionValueRatio != 5.0 ||
 		trendCfg.RiskControl.MaxMarginUsage != 1.0 {
-		t.Fatalf("default strategy should size Claw402 opens at 5x equity notional (2 positions = 10x total at 10x), got risk=%+v", trendCfg.RiskControl)
+		t.Fatalf("default strategy should size opens at 5x equity notional (2 positions = 10x total at 10x), got risk=%+v", trendCfg.RiskControl)
 	}
 }
 
@@ -127,8 +130,8 @@ func TestCreateDefaultStrategiesMigratesLegacyPresetsWithoutOverridingActiveCust
 	if byName["Balanced Strategy"] != 0 {
 		t.Fatalf("legacy preset should be removed, got names=%+v", byName)
 	}
-	if byName["NOFX Claw402 Auto Strategy"] != 1 {
-		t.Fatalf("expected exactly one NOFX Claw402 Auto Strategy, got names=%+v", byName)
+	if byName["NOFX Self-Hosted Auto Strategy"] != 1 {
+		t.Fatalf("expected exactly one NOFX Self-Hosted Auto Strategy, got names=%+v", byName)
 	}
 	if len(activeNames) != 1 || activeNames[0] != "aa" {
 		t.Fatalf("existing active custom strategy should stay the only active one, got %+v", activeNames)

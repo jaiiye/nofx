@@ -229,13 +229,13 @@ func (s *Server) createDefaultStrategies(userID string, lang string) error {
 	}
 	locales := map[string]strategyLocale{
 		"zh": {
-			defaultStrategy: strategyI18n{"NOFX Claw402 Auto Strategy", "The only built-in strategy: read the Claw402.ai board each cycle, fetch Signal Lab and cost/liquidation heatmap per candidate, then decide with raw candles."},
+			defaultStrategy: strategyI18n{"NOFX Self-Hosted Auto Strategy", "The built-in strategy: rank the market each cycle from the self-hosted Hyperliquid data plane (candidate pool, CVD flow, OI, liquidation levels) with static-coin fallback, then decide with raw candles."},
 		},
 		"en": {
-			defaultStrategy: strategyI18n{"NOFX Claw402 Auto Strategy", "The only built-in strategy: read the Claw402.ai board each cycle, fetch Signal Lab and cost/liquidation heatmap per candidate, then decide with raw candles."},
+			defaultStrategy: strategyI18n{"NOFX Self-Hosted Auto Strategy", "The built-in strategy: rank the market each cycle from the self-hosted Hyperliquid data plane (candidate pool, CVD flow, OI, liquidation levels) with static-coin fallback, then decide with raw candles."},
 		},
 		"id": {
-			defaultStrategy: strategyI18n{"Strategi Otomatis NOFX Claw402", "Satu strategi bawaan: membaca papan Claw402.ai, mengambil Signal Lab dan heatmap biaya/likuidasi per kandidat, lalu memutuskan dengan candle mentah."},
+			defaultStrategy: strategyI18n{"Strategi Otomatis NOFX Self-Hosted", "Strategi bawaan: memeringkat pasar tiap siklus dari data plane Hyperliquid mandiri (kumpulan kandidat, arus CVD, OI, level likuidasi) dengan cadangan koin statis, lalu memutuskan dengan candle mentah."},
 		},
 	}
 	locale, ok := locales[lang]
@@ -250,18 +250,22 @@ func (s *Server) createDefaultStrategies(userID string, lang string) error {
 		applyConfig func(*store.StrategyConfig)
 	}
 
-	setClaw402Strategy := func(c *store.StrategyConfig) {
-		c.CoinSource.SourceType = "vergex_signal"
-		c.CoinSource.StaticCoins = nil
+	// Default strategy for new users: self-hosted candidate pool with a
+	// static-coin fallback, so it works out of the box without any paid
+	// subscription (claw402/vergex remain opt-in via Strategy Studio).
+	setSelfHostedStrategy := func(c *store.StrategyConfig) {
+		c.CoinSource.SourceType = "hl_pool"
+		c.CoinSource.StaticCoins = []string{"BTC", "ETH", "SOL"}
 		c.CoinSource.UseAI500 = false
 		c.CoinSource.UseOITop = false
 		c.CoinSource.UseOILow = false
 		c.CoinSource.UseHyperAll = false
 		c.CoinSource.UseHyperMain = false
 		c.CoinSource.HyperRankCategory = "all"
-		c.CoinSource.VergexLimit = 10
-		c.CoinSource.VergexMarketType = "all"
-		c.CoinSource.VergexChain = "hyperliquid"
+		c.CoinSource.HLPoolLimit = 10
+		c.CoinSource.VergexLimit = 0
+		c.CoinSource.VergexMarketType = ""
+		c.CoinSource.VergexChain = ""
 		c.RiskControl.MaxPositions = 2
 		c.RiskControl.BTCETHMaxLeverage = 10
 		c.RiskControl.AltcoinMaxLeverage = 10
@@ -288,7 +292,7 @@ func (s *Server) createDefaultStrategies(userID string, lang string) error {
 			description: locale.defaultStrategy.description,
 			isActive:    true,
 			applyConfig: func(c *store.StrategyConfig) {
-				setClaw402Strategy(c)
+				setSelfHostedStrategy(c)
 			},
 		},
 	}
@@ -321,6 +325,7 @@ func (s *Server) createDefaultStrategies(userID string, lang string) error {
 	}
 
 	legacyDefaultNames := []string{
+		"NOFX Claw402 Auto Strategy", "Strategi Otomatis NOFX Claw402",
 		"Balanced Strategy", "Steady Strategy", "Aggressive Strategy",
 		"US Stock Trend Strategy", "US Stock Steady Strategy", "US Stock Breakout Strategy",
 		"Balanced Strategy", "Conservative Strategy", "Aggressive Strategy",

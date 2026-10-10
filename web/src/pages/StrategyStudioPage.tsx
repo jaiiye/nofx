@@ -220,8 +220,8 @@ function defaultCoinSource(
     10
   )
   return {
-    source_type: 'vergex_signal',
-    static_coins: staticCoins,
+    source_type: 'hl_pool',
+    static_coins: staticCoins.length > 0 ? staticCoins : ['BTC', 'ETH', 'SOL'],
     excluded_coins: [],
     use_ai500: false,
     ai500_limit: 0,

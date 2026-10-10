@@ -345,7 +345,7 @@ CRITICAL: Always use the "id" field for strategy_id.`,
 IMPORTANT: For most use cases just POST {"name":"<name>"} — the backend fills everything in. Only include "config" when the user explicitly requests custom settings (specific coins, custom leverage, custom timeframes).
 
 StrategyConfig fields:
-  coin_source.source_type: "vergex_signal" (Claw402/Vergex signal-ranking; default and recommended)
+  coin_source.source_type: "hl_pool" (self-hosted candidate pool from the local data plane; default) | "static" | "vergex_signal" (Claw402, opt-in)
   coin_source.vergex_limit: number of Claw402 candidates enriched with detail data (default 10, max 10)
   coin_source.vergex_market_type: "all" for the full Claw402 board; detail calls use each ranking item's market_type
   coin_source.vergex_chain: "hyperliquid"

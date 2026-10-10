@@ -28,6 +28,13 @@ type Screener struct {
 	src   PriceSource
 	store StoreReader
 	th    Thresholds
+	// minPool is the minimum number of coins written to the active
+	// pool. When fewer coins pass all 5 layers, the top-scoring
+	// near-misses are promoted so the pool is never empty — downstream
+	// consumers (nofx "hl_pool" source) otherwise skip every cycle.
+	// Each promoted coin keeps its per-layer detail in Reasons with
+	// selection="top_score" so the AI can see what did not pass.
+	minPool int
 }
 
 // PriceSource is the minimal interface the screener needs. The production
@@ -71,7 +78,13 @@ func New(src PriceSource, st StoreReader, th Thresholds) *Screener {
 	if th.Min24hVolUSD == 0 {
 		th = DefaultThresholds()
 	}
-	return &Screener{src: src, store: st, th: th}
+	return &Screener{src: src, store: st, th: th, minPool: 3}
+}
+
+// WithMinPool overrides the minimum active-pool size (default 3).
+func (s *Screener) WithMinPool(n int) *Screener {
+	s.minPool = n
+	return s
 }
 
 type Result struct {
@@ -426,8 +439,31 @@ func parseF(s string) float64 {
 func (s *Screener) PersistResults(ctx context.Context, results []Result) error {
 	now := time.Now().UnixMilli()
 	expires := now + 4*3600*1000
-	cands := make([]store.Candidate, 0, len(results))
+
+	// Split strict passes from near-misses; keep both score-descending.
+	strict := make([]Result, 0, len(results))
+	rest := make([]Result, 0, len(results))
 	for _, r := range results {
+		if r.InPool {
+			strict = append(strict, r)
+		} else {
+			rest = append(rest, r)
+		}
+	}
+	sort.Slice(strict, func(i, j int) bool { return strict[i].Score > strict[j].Score })
+	sort.Slice(rest, func(i, j int) bool { return rest[i].Score > rest[j].Score })
+
+	// Promote near-misses until the pool reaches minPool (never empty
+	// while the screener has any scored coins).
+	selected := strict
+	promoted := map[string]bool{}
+	for i := 0; i < len(rest) && len(selected) < s.minPool; i++ {
+		selected = append(selected, rest[i])
+		promoted[rest[i].Coin] = true
+	}
+
+	cands := make([]store.Candidate, 0, len(selected))
+	for _, r := range selected {
 		reasons := map[string]any{}
 		for k, v := range r.Layers {
 			reasons[k] = map[string]any{
@@ -437,11 +473,16 @@ func (s *Screener) PersistResults(ctx context.Context, results []Result) error {
 				"reason":  v.Reason,
 			}
 		}
+		if promoted[r.Coin] {
+			reasons["selection"] = "top_score"
+		} else {
+			reasons["selection"] = "strict"
+		}
 		cands = append(cands, store.Candidate{
 			Coin:        r.Coin,
 			Score:       r.Score,
 			Reasons:     reasons,
-			InPool:      r.InPool,
+			InPool:      true,
 			GeneratedAt: now,
 			ExpiresAt:   expires,
 		})

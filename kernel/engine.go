@@ -334,7 +334,8 @@ func (e *StrategyEngine) GetCandidateCoins() ([]CandidateCoin, error) {
 		}
 		coins, err := e.getAI500Coins(coinSource.AI500Limit)
 		if err != nil {
-			return nil, err
+			logger.Warnf("⚠️ ai500 unavailable (%v) — falling back to self-hosted source", err)
+			return e.filterExcludedCoins(e.selfHostedFallback(coinSource)), nil
 		}
 		// Empty list is a normal condition, return directly
 		return e.filterExcludedCoins(coins), nil
@@ -354,7 +355,8 @@ func (e *StrategyEngine) GetCandidateCoins() ([]CandidateCoin, error) {
 		}
 		coins, err := e.getOITopCoins(coinSource.OITopLimit)
 		if err != nil {
-			return nil, err
+			logger.Warnf("⚠️ oi_top unavailable (%v) — falling back to self-hosted source", err)
+			return e.filterExcludedCoins(e.selfHostedFallback(coinSource)), nil
 		}
 		// Empty list is a normal condition, return directly
 		return e.filterExcludedCoins(coins), nil
@@ -374,7 +376,8 @@ func (e *StrategyEngine) GetCandidateCoins() ([]CandidateCoin, error) {
 		}
 		coins, err := e.getOILowCoins(coinSource.OILowLimit)
 		if err != nil {
-			return nil, err
+			logger.Warnf("⚠️ oi_low unavailable (%v) — falling back to self-hosted source", err)
+			return e.filterExcludedCoins(e.selfHostedFallback(coinSource)), nil
 		}
 		// Empty list is a normal condition, return directly
 		return e.filterExcludedCoins(coins), nil
@@ -425,36 +428,7 @@ func (e *StrategyEngine) GetCandidateCoins() ([]CandidateCoin, error) {
 		return e.filterExcludedCoins(coins), nil
 
 	case "hl_pool":
-		// Self-hosted candidate pool: the nofx-hl-screener's 5-layer
-		// filter output (candidate_active table). Falls back to static
-		// coins when the data plane is not running or the pool is empty.
-		fallbackStatic := func(reason string) ([]CandidateCoin, error) {
-			logger.Infof("⚠️  [nofxhl] %s — falling back to static coins", reason)
-			for _, symbol := range coinSource.StaticCoins {
-				candidates = append(candidates, CandidateCoin{
-					Symbol:  market.Normalize(symbol),
-					Sources: []string{"static"},
-				})
-			}
-			return e.filterExcludedCoins(candidates), nil
-		}
-		if !e.hlScraper.Enabled() {
-			return fallbackStatic("source_type is 'hl_pool' but HLSCRAPER_DSN is not set")
-		}
-		poolCoins, err := e.hlScraper.TopPoolCoins(context.Background(), coinSource.HLPoolLimit)
-		if err != nil {
-			return fallbackStatic(fmt.Sprintf("pool fetch failed: %v", err))
-		}
-		if len(poolCoins) == 0 {
-			return fallbackStatic("candidate pool empty (screener may still be collecting)")
-		}
-		for _, pc := range poolCoins {
-			candidates = append(candidates, CandidateCoin{
-				Symbol:  market.Normalize(pc.Coin),
-				Sources: []string{"hl_pool"},
-			})
-		}
-		return e.filterExcludedCoins(candidates), nil
+		return e.filterExcludedCoins(e.selfHostedFallback(coinSource)), nil
 
 	case "vergex_signal":
 		coins, err := e.getVergexSignalCoins(
@@ -466,7 +440,12 @@ func (e *StrategyEngine) GetCandidateCoins() ([]CandidateCoin, error) {
 			coinSource.StaticCoins,
 		)
 		if err != nil {
-			return nil, err
+			// The paid vergex source is optional: without a claw402
+			// wallet it is unavailable by design. Degrade to the
+			// self-hosted pool / static coins instead of returning an
+			// empty list (which silently skips every trading cycle).
+			logger.Warnf("⚠️ vergex_signal unavailable (%v) — falling back to self-hosted source", err)
+			return e.filterExcludedCoins(e.selfHostedFallback(coinSource)), nil
 		}
 		return e.filterExcludedCoins(coins), nil
 
@@ -548,7 +527,47 @@ func (e *StrategyEngine) GetCandidateCoins() ([]CandidateCoin, error) {
 	}
 }
 
-// filterExcludedCoins removes excluded coins from the candidates list
+// selfHostedFallback resolves candidate coins without any paid source:
+// the self-hosted screener pool first (candidate_active via nofxhl),
+// then the strategy's static coins. Returns an empty list only when
+// both are unavailable — callers treat that as "no candidates".
+//
+// Used by the hl_pool source and as the degrade path when a paid
+// source (vergex_signal) is not configured or upstream fails, so a
+// missing subscription never silently skips every trading cycle.
+func (e *StrategyEngine) selfHostedFallback(coinSource store.CoinSourceConfig) []CandidateCoin {
+	if e.hlScraper.Enabled() {
+		if poolCoins, err := e.hlScraper.TopPoolCoins(context.Background(), coinSource.HLPoolLimit); err != nil {
+			logger.Warnf("⚠️  [nofxhl] pool fetch failed: %v — falling back to static coins", err)
+		} else if len(poolCoins) > 0 {
+			out := make([]CandidateCoin, 0, len(poolCoins))
+			for _, pc := range poolCoins {
+				out = append(out, CandidateCoin{
+					Symbol:  market.Normalize(pc.Coin),
+					Sources: []string{"hl_pool"},
+				})
+			}
+			return out
+		} else {
+			logger.Infof("ℹ️  [nofxhl] candidate pool empty (screener may still be collecting) — falling back to static coins")
+		}
+	} else {
+		logger.Infof("ℹ️  [nofxhl] HLSCRAPER_DSN not set — using static coins")
+	}
+	out := make([]CandidateCoin, 0, len(coinSource.StaticCoins))
+	for _, symbol := range coinSource.StaticCoins {
+		out = append(out, CandidateCoin{
+			Symbol:  market.Normalize(symbol),
+			Sources: []string{"static"},
+		})
+	}
+	if len(out) == 0 {
+		logger.Warnf("⚠️  No self-hosted candidates: pool empty/unavailable and no static_coins configured — configure static_coins as a safety net")
+	}
+	return out
+}
+
+// filterExcludedCoins removes excluded coins from the candidates list.
 func (e *StrategyEngine) filterExcludedCoins(candidates []CandidateCoin) []CandidateCoin {
 	if len(e.config.CoinSource.ExcludedCoins) == 0 {
 		return candidates

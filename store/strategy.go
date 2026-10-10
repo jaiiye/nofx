@@ -235,29 +235,14 @@ func (c *StrategyConfig) NormalizeProductSchema() {
 		if c.CoinSource.VergexChain == "" {
 			c.CoinSource.VergexChain = "hyperliquid"
 		}
+	case "hl_pool":
+		normalizeSelfHostedCoinSource(&c.CoinSource)
 	default:
-		c.CoinSource.SourceType = "vergex_signal"
-		c.CoinSource.UseAI500 = false
-		c.CoinSource.UseOITop = false
-		c.CoinSource.UseOILow = false
-		c.CoinSource.UseHyperAll = false
-		c.CoinSource.UseHyperMain = false
-		minLimit := 10
-		if len(c.CoinSource.StaticCoins) > 0 {
-			minLimit = len(c.CoinSource.StaticCoins)
-			if minLimit > MaxCandidateCoins {
-				minLimit = MaxCandidateCoins
-			}
-		}
-		if c.CoinSource.VergexLimit < minLimit {
-			c.CoinSource.VergexLimit = minLimit
-		}
-		if c.CoinSource.VergexMarketType == "" {
-			c.CoinSource.VergexMarketType = "all"
-		}
-		if c.CoinSource.VergexChain == "" {
-			c.CoinSource.VergexChain = "hyperliquid"
-		}
+		// Unknown/legacy source type: default to the self-hosted pool
+		// (candidate_active from the local data plane) with static
+		// coins as the always-available fallback.
+		c.CoinSource.SourceType = "hl_pool"
+		normalizeSelfHostedCoinSource(&c.CoinSource)
 	}
 
 	c.Indicators.Klines.PrimaryTimeframe = normalizeTimeframe(c.Indicators.Klines.PrimaryTimeframe)
@@ -328,7 +313,43 @@ func inferCoinSourceType(source CoinSourceConfig) string {
 	case source.HyperRankCategory != "" || source.HyperRankDirection != "" || source.HyperRankLimit > 0:
 		return "hyper_rank"
 	default:
-		return "vergex_signal"
+		// No feature markers at all → self-hosted pool (static fallback
+		// is applied by normalizeSelfHostedCoinSource).
+		return "hl_pool"
+	}
+}
+
+// selfHostedFallbackCoins is the default static-coin safety net applied
+// to the self-hosted ("hl_pool") source, so an empty/absent candidate
+// pool still yields tradable candidates. Kept small and liquid.
+var selfHostedFallbackCoins = []string{"BTC", "ETH", "SOL"}
+
+// normalizeSelfHostedCoinSource normalizes a "hl_pool" coin source:
+// all paid/other source flags off, a sane pool cap, Vergex fields
+// cleared (so a later inferCoinSourceType cannot flip it back), and
+// the static-coin fallback seeded when the user left it empty.
+func normalizeSelfHostedCoinSource(c *CoinSourceConfig) {
+	c.SourceType = "hl_pool"
+	c.UseAI500 = false
+	c.UseOITop = false
+	c.UseOILow = false
+	c.UseHyperAll = false
+	c.UseHyperMain = false
+	if c.HLPoolLimit <= 0 {
+		c.HLPoolLimit = 10
+	}
+	if c.HLPoolLimit > MaxCandidateCoins {
+		c.HLPoolLimit = MaxCandidateCoins
+	}
+	// Clear vergex markers: they would otherwise make
+	// inferCoinSourceType (when source_type is empty) resolve to
+	// vergex_signal.
+	c.VergexLimit = 0
+	c.VergexMarketType = ""
+	c.VergexChain = ""
+	c.VergexLiqBand = ""
+	if len(c.StaticCoins) == 0 {
+		c.StaticCoins = append([]string(nil), selfHostedFallbackCoins...)
 	}
 }
 
@@ -970,7 +991,11 @@ func GetDefaultStrategyConfig(lang string) StrategyConfig {
 	config := StrategyConfig{
 		Language: normalizedLang,
 		CoinSource: CoinSourceConfig{
-			SourceType:        "vergex_signal",
+			// Default to the self-hosted candidate pool (candidate_active
+			// from the local nofx-hl-screener data plane), with static
+			// coins as the fallback when the pool is empty/unavailable.
+			SourceType:        "hl_pool",
+			StaticCoins:       []string{"BTC", "ETH", "SOL"},
 			UseAI500:          false,
 			AI500Limit:        3,
 			UseOITop:          false,
@@ -981,9 +1006,7 @@ func GetDefaultStrategyConfig(lang string) StrategyConfig {
 			UseHyperMain:      false,
 			HyperMainLimit:    30,
 			HyperRankCategory: "all",
-			VergexLimit:       10,
-			VergexMarketType:  "all",
-			VergexChain:       "hyperliquid",
+			HLPoolLimit:       10,
 		},
 		Indicators: IndicatorConfig{
 			Klines: KlineConfig{
@@ -1029,7 +1052,7 @@ func GetDefaultStrategyConfig(lang string) StrategyConfig {
 			AltcoinMaxLeverage:           10,  // Moderate leverage: a wide (-5%) stop is ~-50% margin, survivable, not an instant liquidation
 			BTCETHMaxPositionValueRatio:  5.0, // Per-position notional = equity × 5; 2 positions = 10x total (full margin at 10x, ~10% liquidation cushion)
 			AltcoinMaxPositionValueRatio: 5.0, // Per-position notional = equity × 5; 2 positions = 10x total (full margin at 10x, ~10% liquidation cushion)
-			MaxMarginUsage:               1.0, // Claw402 Autopilot intentionally uses full margin when opening
+			MaxMarginUsage:               1.0, // Autopilot intentionally uses full margin when opening
 			MinPositionSize:              12,  // Min 12 USDT per position (CODE ENFORCED)
 			MinRiskRewardRatio:           3.0, // Min 3:1 profit/loss ratio (AI guided)
 			MinConfidence:                78,  // Min 78% confidence (AI guided)
