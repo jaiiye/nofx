@@ -14,6 +14,7 @@ import (
 	"nofx/trader/binance"
 	"nofx/trader/bitget"
 	"nofx/trader/bybit"
+	"nofx/trader/connector"
 	"nofx/trader/execution"
 	"nofx/trader/gate"
 	"nofx/trader/hyperliquid"
@@ -144,6 +145,11 @@ type AutoTraderConfig struct {
 
 	// Competition visibility
 	ShowInCompetition bool // Whether to show in competition page
+
+	// PaperTrading runs the trader against an in-memory simulator instead of
+	// the exchange: orders, positions and balance are simulated, so nothing
+	// reaches the live account. Market prices are still read from the exchange.
+	PaperTrading bool
 
 	// Strategy configuration (use complete strategy config)
 	StrategyConfig *store.StrategyConfig // Strategy configuration (includes coin sources, indicators, risk control, prompts, etc.)
@@ -358,6 +364,14 @@ func NewAutoTrader(config AutoTraderConfig, st *store.Store, userID string) (*Au
 		} else {
 			return nil, fmt.Errorf("initial balance must be greater than 0, please set InitialBalance in config or ensure exchange account has balance")
 		}
+	}
+
+	// Paper trading runs the loop against an in-memory simulator; the real
+	// adapter is kept only as a read-only price source. This makes decisions,
+	// grid, recovery and monitors all operate on simulated state.
+	if config.PaperTrading {
+		trader = execution.NewSimulatedTrader(trader, config.InitialBalance, connector.FeeModelFor(config.Exchange))
+		logger.Warnf("📝 [%s] PAPER TRADING enabled — orders, positions and balance are simulated", config.Name)
 	}
 
 	// Get last cycle number (for recovery)

@@ -136,6 +136,7 @@ export interface TraderConfigData {
   strategy_name?: string  // 策略名称
   is_cross_margin: boolean
   show_in_competition: boolean  // 是否在竞技场显示
+  paper_trading?: boolean       // 模拟盘：订单/持仓/余额均为内存模拟
   scan_interval_minutes: number
   initial_balance: number
   is_running: boolean

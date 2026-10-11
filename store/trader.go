@@ -30,6 +30,7 @@ type Trader struct {
 	IsRunning           bool      `gorm:"column:is_running;default:false" json:"is_running"`
 	IsCrossMargin       bool      `gorm:"column:is_cross_margin;default:true" json:"is_cross_margin"`
 	ShowInCompetition   bool      `gorm:"column:show_in_competition;default:true" json:"show_in_competition"`
+	PaperTrading        bool      `gorm:"column:paper_trading;default:false" json:"paper_trading"`
 	CreatedAt           time.Time `gorm:"column:created_at;autoCreateTime" json:"created_at"`
 	UpdatedAt           time.Time `gorm:"column:updated_at;autoUpdateTime" json:"updated_at"`
 
@@ -63,6 +64,10 @@ func (s *TraderStore) initTables() error {
 		var tableExists int64
 		s.db.Raw(`SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'traders'`).Scan(&tableExists)
 		if tableExists > 0 {
+			// Add newer columns to pre-existing tables (AutoMigrate is skipped for PG).
+			if err := s.db.Exec(`ALTER TABLE traders ADD COLUMN IF NOT EXISTS paper_trading BOOLEAN DEFAULT false`).Error; err != nil {
+				return fmt.Errorf("failed to add paper_trading column: %w", err)
+			}
 			return nil
 		}
 	}
@@ -116,6 +121,7 @@ func (s *TraderStore) Update(trader *Trader) error {
 		"strategy_id":            trader.StrategyID,
 		"is_cross_margin":        trader.IsCrossMargin,
 		"show_in_competition":    trader.ShowInCompetition,
+		"paper_trading":          trader.PaperTrading,
 		"btc_eth_leverage":       trader.BTCETHLeverage,
 		"altcoin_leverage":       trader.AltcoinLeverage,
 		"trading_symbols":        trader.TradingSymbols,
