@@ -9,6 +9,13 @@ import (
 	"nofx/store"
 )
 
+// CheckOpenProtections exposes the code-enforced circuit breakers to callers
+// outside the trading loop (chat/agent-initiated orders) so every open intent
+// passes the same hard blocks. Empty string means allowed.
+func (at *AutoTrader) CheckOpenProtections(symbol string) string {
+	return at.checkOpenProtections(symbol)
+}
+
 // drawdownPeakCurrent returns the peak and latest value of the equity
 // curve selected by the protection's DrawdownBasis ("equity" watches
 // total equity incl. unrealized PnL, "balance" watches realized balance).

@@ -419,6 +419,10 @@ func (at *AutoTrader) Run() error {
 
 	// Pre-launch checks for claw402 users
 	at.runPreLaunchChecks()
+
+	// Rebuild in-memory state from persisted records (crash-only recovery).
+	at.RecoverState()
+
 	at.monitorWg.Add(1)
 	defer at.monitorWg.Done()
 

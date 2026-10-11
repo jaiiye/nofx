@@ -251,6 +251,7 @@ func (at *AutoTrader) runCycle() error {
 	}
 
 	// Execute decisions and record results
+	executedOpens := make(map[string]bool)
 	for _, d := range sortedDecisions {
 		// Check if trader is stopped before each decision (allow immediate stop during execution)
 		at.isRunningMutex.RLock()
@@ -275,6 +276,18 @@ func (at *AutoTrader) runCycle() error {
 			Success:    false,
 		}
 
+		// A stale positions cache can hide an order placed earlier in this
+		// same cycle from the risk gate's duplicate check — never open the
+		// same symbol+side twice in one cycle.
+		openKey := ""
+		if isOpenDecision(d.Action) {
+			openKey = strings.ToUpper(d.Symbol) + ":" + sideLabel(d.Action)
+			if executedOpens[openKey] {
+				at.logWarnf("🚫 Skipping duplicate %s %s within the same cycle", d.Action, d.Symbol)
+				continue
+			}
+		}
+
 		if err := at.executeDecisionWithRecord(&d, &actionRecord); err != nil {
 			at.logErrorf("❌ Failed to execute decision (%s %s): %v", d.Symbol, d.Action, err)
 			actionRecord.Error = err.Error()
@@ -282,6 +295,9 @@ func (at *AutoTrader) runCycle() error {
 		} else {
 			actionRecord.Success = true
 			record.ExecutionLog = append(record.ExecutionLog, fmt.Sprintf("✓ %s %s succeeded", d.Symbol, d.Action))
+			if openKey != "" {
+				executedOpens[openKey] = true
+			}
 			// Brief delay after successful execution
 			time.Sleep(1 * time.Second)
 		}

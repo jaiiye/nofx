@@ -26,6 +26,7 @@ const (
 type tradeSelectedTrader interface {
 	GetStrategyConfig() *store.StrategyConfig
 	GetAccountInfo() (map[string]interface{}, error)
+	CheckOpenProtections(symbol string) string
 }
 
 type tradeUnderlyingTrader interface {
@@ -184,6 +185,15 @@ func (a *Agent) executeTrade(ctx context.Context, trade *TradeAction) error {
 	}
 	if err := validateTradeAction(trade, wantStock, selectedTrader, underlyingTrader); err != nil {
 		return err
+	}
+
+	// Chat-initiated orders must pass the same code-enforced circuit breakers
+	// as the AI trading loop (drawdown halt, losing streak, cooldown, ...).
+	switch trade.Action {
+	case "open_long", "open_short":
+		if reason := selectedTrader.CheckOpenProtections(trade.Symbol); reason != "" {
+			return fmt.Errorf("🛡️ blocked by protection: %s", reason)
+		}
 	}
 
 	switch trade.Action {

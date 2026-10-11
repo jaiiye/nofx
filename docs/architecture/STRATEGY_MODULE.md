@@ -587,14 +587,22 @@ sort.SliceStable(decisions, func(i, j int) bool {
 
 ### 7.2 Risk Control Enforcement
 
-**File:** `trader/auto_trader.go:1769-1851`
+**File:** `trader/risk_gate.go`
 
-| Check | Method | Action |
-|-------|--------|--------|
-| Max positions | `enforceMaxPositions()` | Reject new opens |
-| Position value cap | `enforcePositionValueRatio()` | Auto reduce size |
-| Min position | `enforceMinPositionSize()` | Reject small orders |
-| Margin adjustment | Auto calculate | Adjust by available balance |
+All pre-open checks are consolidated into `EvaluateRiskGate()` (a pure function,
+reusable by the backtester) plus `(*AutoTrader).checkOpenRiskGate()` (which runs
+the DB-backed protections first, then the pure gate):
+
+| Check | Action |
+|-------|--------|
+| Circuit-breaker protections (drawdown / losing streak / cooldown / low-profit) | Reject new opens |
+| Max positions | Reject new opens |
+| Duplicate position (same symbol+side) | Reject new opens |
+| Leverage cap (per asset tier) | Clamp to limit |
+| Position value cap (equity × ratio) | Auto reduce size |
+| Available-balance sufficiency | Auto reduce size |
+| Min position | Reject small orders |
+| Max margin usage | Reject new opens |
 
 ### 7.3 Order Execution
 
@@ -659,7 +667,7 @@ at.store.Decision().LogDecision(record)
 | **CoT Extract** | `decision/engine.go:1327-1345` | `extractCoTTrace()` |
 | **JSON Extract** | `decision/engine.go:1347-1408` | `extractDecisions()` |
 | **Decision Valid** | `decision/engine.go:1480-1602` | `validateDecisions()` |
-| **Risk Enforce** | `trader/auto_trader.go:1769-1851` | `enforceMaxPositions()`, `enforcePositionValueRatio()` |
+| **Risk Enforce** | `trader/risk_gate.go` | `EvaluateRiskGate()`, `checkOpenRiskGate()` |
 | **Strategy Config** | `store/strategy.go` | `StrategyConfig`, `RiskControlConfig` |
 | **Data Provider** | `provider/data_provider.go` | `GetAI500Data()`, `GetOITopPositions()` |
 

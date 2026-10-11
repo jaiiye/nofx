@@ -587,14 +587,21 @@ sort.SliceStable(decisions, func(i, j int) bool {
 
 ### 7.2 风控强制执行
 
-**文件:** `trader/auto_trader.go:1769-1851`
+**文件:** `trader/risk_gate.go`
 
-| 检查项 | 方法 | 动作 |
-|--------|------|------|
-| 最大持仓数 | `enforceMaxPositions()` | 拒绝新开仓 |
-| 仓位价值上限 | `enforcePositionValueRatio()` | 自动缩减仓位 |
-| 最小仓位 | `enforceMinPositionSize()` | 拒绝过小订单 |
-| 保证金调整 | 自动计算 | 根据可用余额调整 |
+所有开仓前检查统一收敛到 `EvaluateRiskGate()`（纯函数，可被回测复用）与
+`(*AutoTrader).checkOpenRiskGate()`（先跑 DB 支持的 protections 熔断，再进纯函数）：
+
+| 检查项 | 动作 |
+|--------|------|
+| 熔断保护（回撤 / 连亏 / 冷却 / 低盈利币） | 拒绝新开仓 |
+| 最大持仓数 | 拒绝新开仓 |
+| 重复仓位（同币同向） | 拒绝新开仓 |
+| 杠杆上限（按币种档位） | 收敛到上限 |
+| 仓位价值上限（equity × ratio） | 自动缩减仓位 |
+| 可用余额充足性 | 自动缩减仓位 |
+| 最小仓位 | 拒绝过小订单 |
+| 保证金使用率上限 | 拒绝新开仓 |
 
 ### 7.3 订单执行
 
@@ -659,7 +666,7 @@ at.store.Decision().LogDecision(record)
 | **思维链提取** | `decision/engine.go:1327-1345` | `extractCoTTrace()` |
 | **JSON提取** | `decision/engine.go:1347-1408` | `extractDecisions()` |
 | **决策验证** | `decision/engine.go:1480-1602` | `validateDecisions()` |
-| **风控执行** | `trader/auto_trader.go:1769-1851` | `enforceMaxPositions()`, `enforcePositionValueRatio()` |
+| **风控执行** | `trader/risk_gate.go` | `EvaluateRiskGate()`, `checkOpenRiskGate()` |
 | **策略配置** | `store/strategy.go` | `StrategyConfig`, `RiskControlConfig` |
 | **数据提供者** | `provider/data_provider.go` | `GetAI500Data()`, `GetOITopPositions()` |
 

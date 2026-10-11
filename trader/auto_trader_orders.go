@@ -27,20 +27,8 @@ const (
 func (at *AutoTrader) executeDecisionWithRecord(decision *kernel.Decision, actionRecord *store.DecisionAction) error {
 	switch decision.Action {
 	case "open_long":
-		if reason := at.checkOpenProtections(decision.Symbol); reason != "" {
-			logger.Infof("🛡️ [%s] open_long blocked by protection — %s", at.name, reason)
-			actionRecord.Success = false
-			actionRecord.Error = "blocked by protection: " + reason
-			return fmt.Errorf("blocked by protection: %s", reason)
-		}
 		return at.executeOpenLongWithRecord(decision, actionRecord)
 	case "open_short":
-		if reason := at.checkOpenProtections(decision.Symbol); reason != "" {
-			logger.Infof("🛡️ [%s] open_short blocked by protection — %s", at.name, reason)
-			actionRecord.Success = false
-			actionRecord.Error = "blocked by protection: " + reason
-			return fmt.Errorf("blocked by protection: %s", reason)
-		}
 		return at.executeOpenShortWithRecord(decision, actionRecord)
 	case "close_long":
 		return at.executeCloseLongWithRecord(decision, actionRecord)
@@ -64,70 +52,38 @@ func (at *AutoTrader) executeOpenLongWithRecord(decision *kernel.Decision, actio
 		return fmt.Errorf("failed to get positions: %w", err)
 	}
 
-	// [CODE ENFORCED] Check max positions limit
-	if err := at.enforceMaxPositions(len(positions)); err != nil {
-		return err
-	}
-
-	// Check if there's already a position in the same symbol and direction
-	for _, pos := range positions {
-		if pos["symbol"] == decision.Symbol && pos["side"] == "long" {
-			return fmt.Errorf("❌ %s already has long position, close it first", decision.Symbol)
-		}
-	}
-
 	// Get current price
 	marketData, err := market.GetWithExchange(decision.Symbol, at.exchange)
 	if err != nil {
 		return fmt.Errorf("failed to get market data for %s: %w", decision.Symbol, err)
 	}
 
-	// Get balance (needed for multiple checks)
+	// Get balance (needed for the risk gate)
 	balance, err := at.trader.GetBalance()
 	if err != nil {
 		return fmt.Errorf("failed to get account balance: %w", err)
 	}
-	availableBalance := 0.0
-	if avail, ok := balance["availableBalance"].(float64); ok {
-		availableBalance = avail
+	equity, availableBalance := accountEquityAndAvailable(balance)
+
+	// [CODE ENFORCED] Unified pre-trade risk gate: protections, max positions,
+	// position-value cap, balance sufficiency, min size, max margin usage and
+	// leverage clamp, all in one place.
+	gate := at.checkOpenRiskGate(decision, positions, equity, availableBalance)
+	if !gate.Allowed {
+		logger.Infof("  🛡️ [RISK GATE] open_long blocked — %s", gate.Reason)
+		return fmt.Errorf("❌ [RISK GATE] %s", gate.Reason)
 	}
-
-	// Get equity for position value ratio check
-	equity := 0.0
-	if eq, ok := balance["totalEquity"].(float64); ok && eq > 0 {
-		equity = eq
-	} else if eq, ok := balance["totalWalletBalance"].(float64); ok && eq > 0 {
-		equity = eq
-	} else {
-		equity = availableBalance // Fallback to available balance
+	if gate.AdjustedSizeUSD > 0 && gate.AdjustedSizeUSD != decision.PositionSizeUSD {
+		logger.Infof("  ⚠️ [RISK GATE] position size %.2f → %.2f USDT", decision.PositionSizeUSD, gate.AdjustedSizeUSD)
+		decision.PositionSizeUSD = gate.AdjustedSizeUSD
 	}
-
-	// [CODE ENFORCED] Position Value Ratio Check: position_value <= equity × ratio
-	adjustedPositionSize, wasCapped := at.enforcePositionValueRatio(decision.PositionSizeUSD, equity, decision.Symbol)
-	if wasCapped {
-		decision.PositionSizeUSD = adjustedPositionSize
-	}
-
-	// ⚠️ Auto-adjust position size if insufficient margin
-	marginFactor := marginOverheadFactor/float64(decision.Leverage) + takerFeeRate
-	maxAffordablePositionSize := availableBalance / marginFactor
-
-	actualPositionSize := decision.PositionSizeUSD
-	if actualPositionSize > maxAffordablePositionSize {
-		adjustedSize := maxAffordablePositionSize * positionSizeSafetyFactor
-		logger.Infof("  ⚠️ Position size %.2f exceeds max affordable %.2f, auto-reducing to %.2f",
-			actualPositionSize, maxAffordablePositionSize, adjustedSize)
-		actualPositionSize = adjustedSize
-		decision.PositionSizeUSD = actualPositionSize
-	}
-
-	// [CODE ENFORCED] Minimum position size check
-	if err := at.enforceMinPositionSize(decision.PositionSizeUSD); err != nil {
-		return err
+	if gate.AdjustedLeverage > 0 && gate.AdjustedLeverage != decision.Leverage {
+		logger.Infof("  ⚠️ [RISK GATE] leverage %dx → %dx", decision.Leverage, gate.AdjustedLeverage)
+		decision.Leverage = gate.AdjustedLeverage
 	}
 
 	// Calculate quantity with adjusted position size
-	quantity := actualPositionSize / marketData.CurrentPrice
+	quantity := decision.PositionSizeUSD / marketData.CurrentPrice
 	actionRecord.Quantity = quantity
 	actionRecord.Price = marketData.CurrentPrice
 
@@ -178,70 +134,38 @@ func (at *AutoTrader) executeOpenShortWithRecord(decision *kernel.Decision, acti
 		return fmt.Errorf("failed to get positions: %w", err)
 	}
 
-	// [CODE ENFORCED] Check max positions limit
-	if err := at.enforceMaxPositions(len(positions)); err != nil {
-		return err
-	}
-
-	// Check if there's already a position in the same symbol and direction
-	for _, pos := range positions {
-		if pos["symbol"] == decision.Symbol && pos["side"] == "short" {
-			return fmt.Errorf("❌ %s already has short position, close it first", decision.Symbol)
-		}
-	}
-
 	// Get current price
 	marketData, err := market.GetWithExchange(decision.Symbol, at.exchange)
 	if err != nil {
 		return fmt.Errorf("failed to get market data for %s: %w", decision.Symbol, err)
 	}
 
-	// Get balance (needed for multiple checks)
+	// Get balance (needed for the risk gate)
 	balance, err := at.trader.GetBalance()
 	if err != nil {
 		return fmt.Errorf("failed to get account balance: %w", err)
 	}
-	availableBalance := 0.0
-	if avail, ok := balance["availableBalance"].(float64); ok {
-		availableBalance = avail
+	equity, availableBalance := accountEquityAndAvailable(balance)
+
+	// [CODE ENFORCED] Unified pre-trade risk gate: protections, max positions,
+	// position-value cap, balance sufficiency, min size, max margin usage and
+	// leverage clamp, all in one place.
+	gate := at.checkOpenRiskGate(decision, positions, equity, availableBalance)
+	if !gate.Allowed {
+		logger.Infof("  🛡️ [RISK GATE] open_short blocked — %s", gate.Reason)
+		return fmt.Errorf("❌ [RISK GATE] %s", gate.Reason)
 	}
-
-	// Get equity for position value ratio check
-	equity := 0.0
-	if eq, ok := balance["totalEquity"].(float64); ok && eq > 0 {
-		equity = eq
-	} else if eq, ok := balance["totalWalletBalance"].(float64); ok && eq > 0 {
-		equity = eq
-	} else {
-		equity = availableBalance // Fallback to available balance
+	if gate.AdjustedSizeUSD > 0 && gate.AdjustedSizeUSD != decision.PositionSizeUSD {
+		logger.Infof("  ⚠️ [RISK GATE] position size %.2f → %.2f USDT", decision.PositionSizeUSD, gate.AdjustedSizeUSD)
+		decision.PositionSizeUSD = gate.AdjustedSizeUSD
 	}
-
-	// [CODE ENFORCED] Position Value Ratio Check: position_value <= equity × ratio
-	adjustedPositionSize, wasCapped := at.enforcePositionValueRatio(decision.PositionSizeUSD, equity, decision.Symbol)
-	if wasCapped {
-		decision.PositionSizeUSD = adjustedPositionSize
-	}
-
-	// ⚠️ Auto-adjust position size if insufficient margin
-	marginFactor := marginOverheadFactor/float64(decision.Leverage) + takerFeeRate
-	maxAffordablePositionSize := availableBalance / marginFactor
-
-	actualPositionSize := decision.PositionSizeUSD
-	if actualPositionSize > maxAffordablePositionSize {
-		adjustedSize := maxAffordablePositionSize * positionSizeSafetyFactor
-		logger.Infof("  ⚠️ Position size %.2f exceeds max affordable %.2f, auto-reducing to %.2f",
-			actualPositionSize, maxAffordablePositionSize, adjustedSize)
-		actualPositionSize = adjustedSize
-		decision.PositionSizeUSD = actualPositionSize
-	}
-
-	// [CODE ENFORCED] Minimum position size check
-	if err := at.enforceMinPositionSize(decision.PositionSizeUSD); err != nil {
-		return err
+	if gate.AdjustedLeverage > 0 && gate.AdjustedLeverage != decision.Leverage {
+		logger.Infof("  ⚠️ [RISK GATE] leverage %dx → %dx", decision.Leverage, gate.AdjustedLeverage)
+		decision.Leverage = gate.AdjustedLeverage
 	}
 
 	// Calculate quantity with adjusted position size
-	quantity := actualPositionSize / marketData.CurrentPrice
+	quantity := decision.PositionSizeUSD / marketData.CurrentPrice
 	actionRecord.Quantity = quantity
 	actionRecord.Price = marketData.CurrentPrice
 
