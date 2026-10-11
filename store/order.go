@@ -37,9 +37,9 @@ type TraderOrder struct {
 	PriceProtect      bool    `gorm:"column:price_protect;default:false" json:"price_protect"`
 	OrderAction       string  `gorm:"column:order_action;default:''" json:"order_action"`
 	RelatedPositionID int64   `gorm:"column:related_position_id;default:0" json:"related_position_id"`
-	CreatedAt         int64   `gorm:"column:created_at" json:"created_at"`         // Unix milliseconds UTC
-	UpdatedAt         int64   `gorm:"column:updated_at" json:"updated_at"`         // Unix milliseconds UTC
-	FilledAt          int64   `gorm:"column:filled_at" json:"filled_at"`           // Unix milliseconds UTC
+	CreatedAt         int64   `gorm:"column:created_at" json:"created_at"` // Unix milliseconds UTC
+	UpdatedAt         int64   `gorm:"column:updated_at" json:"updated_at"` // Unix milliseconds UTC
+	FilledAt          int64   `gorm:"column:filled_at" json:"filled_at"`   // Unix milliseconds UTC
 }
 
 // TableName returns the table name for TraderOrder
@@ -64,6 +64,7 @@ type TraderFill struct {
 	QuoteQuantity   float64 `gorm:"column:quote_quantity;not null" json:"quote_quantity"`
 	Commission      float64 `gorm:"column:commission;not null" json:"commission"`
 	CommissionAsset string  `gorm:"column:commission_asset;not null" json:"commission_asset"`
+	FundingFee      float64 `gorm:"column:funding_fee;default:0" json:"funding_fee"`
 	RealizedPnL     float64 `gorm:"column:realized_pnl;default:0" json:"realized_pnl"`
 	IsMaker         bool    `gorm:"column:is_maker;default:false" json:"is_maker"`
 	CreatedAt       int64   `gorm:"column:created_at" json:"created_at"` // Unix milliseconds UTC
@@ -122,6 +123,12 @@ func (s *OrderStore) InitTables() error {
 					// Convert timestamp to Unix milliseconds (bigint)
 					s.db.Exec(fmt.Sprintf(`ALTER TABLE %s ALTER COLUMN %s TYPE BIGINT USING EXTRACT(EPOCH FROM %s) * 1000`, c.table, c.col, c.col))
 				}
+			}
+
+			// Add newer columns to pre-existing tables (AutoMigrate is skipped for PG).
+			// Fail fast: net-PnL queries reference this column.
+			if err := s.db.Exec(`ALTER TABLE trader_fills ADD COLUMN IF NOT EXISTS funding_fee DOUBLE PRECISION DEFAULT 0`).Error; err != nil {
+				return fmt.Errorf("failed to add funding_fee column to trader_fills: %w", err)
 			}
 
 			// Ensure indexes exist

@@ -248,7 +248,12 @@ func (t *OKXTrader) GetClosedPnL(startTime time.Time, limit int) ([]types.Closed
 		// Fee
 		fee, _ := strconv.ParseFloat(pos.Fee, 64)
 		fundingFee, _ := strconv.ParseFloat(pos.FundingFee, 64)
-		record.Fee = -fee + fundingFee // Fee is negative in OKX
+		// Fee is negative in OKX (outflow), so negate to a positive cost.
+		// NOTE: funding is folded in here for this legacy record path. This
+		// is the ONLY place funding may live inside Fee — callers that use
+		// PositionStore.AddFundingFee must not also consume this, or funding
+		// gets counted twice in net PnL.
+		record.Fee = -fee + fundingFee
 
 		// Leverage
 		lev, _ := strconv.ParseFloat(pos.Lever, 64)

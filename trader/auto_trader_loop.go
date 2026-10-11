@@ -645,11 +645,13 @@ func (at *AutoTrader) buildTradingContext() (*kernel.Context, error) {
 			at.logWarnf("⚠️ GetFullStats returned 0 trades")
 		} else {
 			ctx.TradingStats = &kernel.TradingStats{
-				TotalTrades:    stats.TotalTrades,
-				WinRate:        stats.WinRate,
-				ProfitFactor:   stats.ProfitFactor,
-				SharpeRatio:    stats.SharpeRatio,
-				TotalPnL:       stats.TotalPnL,
+				TotalTrades:  stats.TotalTrades,
+				WinRate:      stats.WinRate,
+				ProfitFactor: stats.ProfitFactor,
+				SharpeRatio:  stats.SharpeRatio,
+				// Net of fees/funding so the prompt's numbers share one
+				// caliber with WinRate/ProfitFactor/AvgWin/AvgLoss above.
+				TotalPnL:       stats.NetPnL,
 				AvgWin:         stats.AvgWin,
 				AvgLoss:        stats.AvgLoss,
 				MaxDrawdownPct: stats.MaxDrawdownPct,

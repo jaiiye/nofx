@@ -86,6 +86,12 @@ func (t *KuCoinTrader) GetTrades(startTime time.Time, limit int) ([]KuCoinTrade,
 		fmt.Sscanf(trade.Fee, "%f", &fee)
 		fmt.Sscanf(trade.OpenFeePay, "%f", &openFeePay)
 		fmt.Sscanf(trade.CloseFeePay, "%f", &closeFeePay)
+		// KuCoin reports fees as negative for outflow. Store them as positive
+		// costs so net-PnL accounting (realized - fee - funding) subtracts
+		// them instead of adding them back.
+		if fee < 0 {
+			fee = -fee
+		}
 
 		// Get multiplier from contract info
 		symbol := t.convertSymbolBack(trade.Symbol)
@@ -192,6 +198,12 @@ func (t *KuCoinTrader) GetRecentTrades() ([]KuCoinTrade, error) {
 		fmt.Sscanf(trade.Fee, "%f", &fee)
 		fmt.Sscanf(trade.OpenFeePay, "%f", &openFeePay)
 		fmt.Sscanf(trade.CloseFeePay, "%f", &closeFeePay)
+		// KuCoin reports fees as negative for outflow. Store them as positive
+		// costs so net-PnL accounting (realized - fee - funding) subtracts
+		// them instead of adding them back.
+		if fee < 0 {
+			fee = -fee
+		}
 
 		// Get multiplier from contract info
 		symbol := t.convertSymbolBack(trade.Symbol)

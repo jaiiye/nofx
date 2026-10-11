@@ -169,12 +169,12 @@ func (s *EquityStore) PeakAndCurrentBalance(traderID string, since time.Time) (p
 	return *res.Peak, latest.Balance, true, nil
 }
 
-// CountLosingClosesSince counts closed positions with negative realized
-// PnL that exited within the window.
+// CountLosingClosesSince counts closed positions with negative net PnL
+// (realized minus fees and funding) that exited within the window.
 func (s *PositionStore) CountLosingClosesSince(traderID string, sinceMs int64) (int, error) {
 	var n int64
 	err := s.db.Model(&TraderPosition{}).
-		Where("trader_id = ? AND status = ? AND exit_time >= ? AND realized_pnl < 0",
+		Where("trader_id = ? AND status = ? AND exit_time >= ? AND (realized_pnl - fee - funding_fee) < 0",
 			traderID, "CLOSED", sinceMs).
 		Count(&n).Error
 	return int(n), err
@@ -202,7 +202,7 @@ func (s *PositionStore) SymbolPnLSince(traderID, symbol string, sinceMs int64) (
 		Trades int
 	}
 	err = s.db.Model(&TraderPosition{}).
-		Select("SUM(realized_pnl) AS pn_l, COUNT(*) AS trades").
+		Select("SUM(realized_pnl - fee - funding_fee) AS pn_l, COUNT(*) AS trades").
 		Where("trader_id = ? AND symbol = ? AND status = ? AND exit_time >= ?",
 			traderID, symbol, "CLOSED", sinceMs).
 		Scan(&res).Error
@@ -240,8 +240,8 @@ func (s *PositionStore) SymbolPnLStatsSince(traderID string, sinceMs int64) ([]S
 	err := s.db.Model(&TraderPosition{}).
 		Select(`symbol,
 		        COUNT(*) AS trades,
-		        SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) AS wins,
-		        SUM(realized_pnl) AS total_pn_l,
+		        SUM(CASE WHEN realized_pnl - fee - funding_fee > 0 THEN 1 ELSE 0 END) AS wins,
+		        SUM(realized_pnl - fee - funding_fee) AS total_pn_l,
 		        MAX(exit_time) AS last_ms`).
 		Where("trader_id = ? AND status = ? AND exit_time >= ?", traderID, "CLOSED", sinceMs).
 		Group("symbol").
@@ -288,8 +288,8 @@ func (s *PositionStore) CloseReasonStatsSince(traderID string, sinceMs int64) ([
 	err := s.db.Model(&TraderPosition{}).
 		Select(`CASE WHEN close_reason = '' THEN 'unknown' ELSE close_reason END AS reason,
 		        COUNT(*) AS trades,
-		        SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) AS wins,
-		        SUM(realized_pnl) AS total_pn_l`).
+		        SUM(CASE WHEN realized_pnl - fee - funding_fee > 0 THEN 1 ELSE 0 END) AS wins,
+		        SUM(realized_pnl - fee - funding_fee) AS total_pn_l`).
 		Where("trader_id = ? AND status = ? AND exit_time >= ?", traderID, "CLOSED", sinceMs).
 		Group("reason").
 		Scan(&rows).Error

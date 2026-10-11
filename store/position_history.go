@@ -44,9 +44,9 @@ func (s *PositionStore) GetHistorySummary(traderID string) (*HistorySummary, err
 	}
 	summary.TotalTrades = fullStats.TotalTrades
 	summary.WinRate = fullStats.WinRate
-	summary.TotalPnL = fullStats.TotalPnL
+	summary.TotalPnL = fullStats.NetPnL
 	if fullStats.TotalTrades > 0 {
-		summary.AvgTradeReturn = fullStats.TotalPnL / float64(fullStats.TotalTrades)
+		summary.AvgTradeReturn = fullStats.NetPnL / float64(fullStats.TotalTrades)
 	}
 
 	symbolStats, _ := s.GetSymbolStats(traderID, 20)
@@ -101,8 +101,9 @@ func (s *PositionStore) GetHistorySummary(traderID string) (*HistorySummary, err
 	s.db.Where("trader_id = ? AND status = ?", traderID, "CLOSED").
 		Order("exit_time DESC").Limit(20).Find(&recent)
 	for _, pos := range recent {
-		summary.RecentPnL += pos.RealizedPnL
-		if pos.RealizedPnL > 0 {
+		net := netPnL(pos)
+		summary.RecentPnL += net
+		if net > 0 {
 			summary.RecentWinRate++
 		}
 	}
@@ -131,7 +132,7 @@ func (s *PositionStore) calculateStreaks(traderID string, summary *HistorySummar
 	isFirst := true
 
 	for _, pos := range positions {
-		isWin := pos.RealizedPnL > 0
+		isWin := netPnL(pos) > 0
 
 		if isFirst {
 			if isWin {
@@ -181,6 +182,7 @@ type ClosedPnLRecord struct {
 	Quantity    float64
 	RealizedPnL float64
 	Fee         float64
+	FundingFee  float64
 	Leverage    int
 	EntryTime   int64 // Unix milliseconds UTC
 	ExitTime    int64 // Unix milliseconds UTC
@@ -253,6 +255,7 @@ func (s *PositionStore) CreateFromClosedPnL(traderID, exchangeID, exchangeType s
 		ExitTime:           exitTimeMs,
 		RealizedPnL:        record.RealizedPnL,
 		Fee:                record.Fee,
+		FundingFee:         record.FundingFee,
 		Leverage:           record.Leverage,
 		Status:             "CLOSED",
 		CloseReason:        record.CloseType,

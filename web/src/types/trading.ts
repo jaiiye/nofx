@@ -168,6 +168,7 @@ export interface HistoricalPosition {
   exit_time: string
   realized_pnl: number
   fee: number
+  funding_fee: number
   leverage: number
   status: string
   close_reason: string
@@ -185,6 +186,8 @@ export interface TraderStats {
   sharpe_ratio: number
   total_pnl: number
   total_fee: number
+  total_funding_fee: number
+  net_pnl: number
   avg_win: number
   avg_loss: number
   max_drawdown_pct: number

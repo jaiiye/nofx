@@ -112,12 +112,13 @@ type TraderPosition struct {
 	ExitTime           int64   `gorm:"column:exit_time;index:idx_positions_exit" json:"exit_time"` // Unix milliseconds UTC, 0 means not set
 	RealizedPnL        float64 `gorm:"column:realized_pnl;default:0" json:"realized_pnl"`
 	Fee                float64 `gorm:"column:fee;default:0" json:"fee"`
+	FundingFee         float64 `gorm:"column:funding_fee;default:0" json:"funding_fee"`
 	Leverage           int     `gorm:"column:leverage;default:1" json:"leverage"`
 	Status             string  `gorm:"column:status;default:OPEN;index:idx_positions_status" json:"status"`
 	CloseReason        string  `gorm:"column:close_reason;default:''" json:"close_reason"`
 	Source             string  `gorm:"column:source;default:system" json:"source"`
-	CreatedAt          int64   `gorm:"column:created_at" json:"created_at"`   // Unix milliseconds UTC
-	UpdatedAt          int64   `gorm:"column:updated_at" json:"updated_at"`   // Unix milliseconds UTC
+	CreatedAt          int64   `gorm:"column:created_at" json:"created_at"` // Unix milliseconds UTC
+	UpdatedAt          int64   `gorm:"column:updated_at" json:"updated_at"` // Unix milliseconds UTC
 }
 
 // TableName returns the table name
@@ -159,6 +160,12 @@ func (s *PositionStore) InitTables() error {
 				}
 			}
 
+			// Add newer columns to pre-existing tables (AutoMigrate is skipped for PG).
+			// Fail fast: every net-PnL query references this column.
+			if err := s.db.Exec(`ALTER TABLE trader_positions ADD COLUMN IF NOT EXISTS funding_fee DOUBLE PRECISION DEFAULT 0`).Error; err != nil {
+				return fmt.Errorf("failed to add funding_fee column to trader_positions: %w", err)
+			}
+
 			// Just ensure index exists
 			s.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_positions_exchange_pos_unique ON trader_positions(exchange_id, exchange_position_id) WHERE exchange_position_id != ''`)
 			return nil
@@ -198,14 +205,14 @@ func (s *PositionStore) Create(pos *TraderPosition) error {
 func (s *PositionStore) ClosePosition(id int64, exitPrice float64, exitOrderID string, realizedPnL float64, fee float64, closeReason string) error {
 	nowMs := time.Now().UTC().UnixMilli()
 	return s.db.Model(&TraderPosition{}).Where("id = ?", id).Updates(map[string]interface{}{
-		"exit_price":   exitPrice,
+		"exit_price":    exitPrice,
 		"exit_order_id": exitOrderID,
-		"exit_time":    nowMs,
-		"realized_pnl": realizedPnL,
-		"fee":          fee,
-		"status":       "CLOSED",
-		"close_reason": closeReason,
-		"updated_at":   nowMs,
+		"exit_time":     nowMs,
+		"realized_pnl":  realizedPnL,
+		"fee":           fee,
+		"status":        "CLOSED",
+		"close_reason":  closeReason,
+		"updated_at":    nowMs,
 	}).Error
 }
 
@@ -311,15 +318,15 @@ func (s *PositionStore) ClosePositionFully(id int64, exitPrice float64, exitOrde
 	}
 
 	return s.db.Model(&TraderPosition{}).Where("id = ?", id).Updates(map[string]interface{}{
-		"quantity":       quantity,
-		"exit_price":     exitPrice,
-		"exit_order_id":  exitOrderID,
-		"exit_time":      exitTimeMs,
-		"realized_pnl":   totalRealizedPnL,
-		"fee":            totalFee,
-		"status":         "CLOSED",
-		"close_reason":   closeReason,
-		"updated_at":     time.Now().UTC().UnixMilli(),
+		"quantity":      quantity,
+		"exit_price":    exitPrice,
+		"exit_order_id": exitOrderID,
+		"exit_time":     exitTimeMs,
+		"realized_pnl":  totalRealizedPnL,
+		"fee":           totalFee,
+		"status":        "CLOSED",
+		"close_reason":  closeReason,
+		"updated_at":    time.Now().UTC().UnixMilli(),
 	}).Error
 }
 
@@ -378,6 +385,30 @@ func (s *PositionStore) GetOpenPositionBySymbol(traderID, symbol, side string) (
 		return nil, nil
 	}
 	return nil, err
+}
+
+// AddFundingFee accumulates a funding fee onto the open position for
+// (traderID, symbol, side). Funding accrues while a position is held,
+// independent of fills, so it is applied separately from trade processing.
+//
+// Sign convention: amount is a COST — pass funding you paid as a negative
+// number and funding you received as positive, so that
+// net = realized_pnl - fee - funding_fee comes out right.
+//
+// This is the single authoritative write path for funding; do not fold
+// funding into Fee elsewhere (adapters that report funding inside Fee, e.g.
+// OKX's GetClosedPnL, must not also call this or it gets counted twice).
+// A missing open position is a no-op.
+func (s *PositionStore) AddFundingFee(traderID, symbol, side string, amount float64) error {
+	pos, err := s.GetOpenPositionBySymbol(traderID, symbol, strings.ToUpper(side))
+	if err != nil {
+		return err
+	}
+	if pos == nil {
+		return nil
+	}
+	return s.db.Model(&TraderPosition{}).Where("id = ?", pos.ID).
+		Update("funding_fee", gorm.Expr("funding_fee + ?", amount)).Error
 }
 
 // GetClosedPositions gets closed positions
