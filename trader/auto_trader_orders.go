@@ -27,8 +27,20 @@ const (
 func (at *AutoTrader) executeDecisionWithRecord(decision *kernel.Decision, actionRecord *store.DecisionAction) error {
 	switch decision.Action {
 	case "open_long":
+		if reason := at.checkOpenProtections(decision.Symbol); reason != "" {
+			logger.Infof("🛡️ [%s] open_long blocked by protection — %s", at.name, reason)
+			actionRecord.Success = false
+			actionRecord.Error = "blocked by protection: " + reason
+			return fmt.Errorf("blocked by protection: %s", reason)
+		}
 		return at.executeOpenLongWithRecord(decision, actionRecord)
 	case "open_short":
+		if reason := at.checkOpenProtections(decision.Symbol); reason != "" {
+			logger.Infof("🛡️ [%s] open_short blocked by protection — %s", at.name, reason)
+			actionRecord.Success = false
+			actionRecord.Error = "blocked by protection: " + reason
+			return fmt.Errorf("blocked by protection: %s", reason)
+		}
 		return at.executeOpenShortWithRecord(decision, actionRecord)
 	case "close_long":
 		return at.executeCloseLongWithRecord(decision, actionRecord)

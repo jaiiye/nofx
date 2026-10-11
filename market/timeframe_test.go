@@ -24,7 +24,7 @@ func TestNormalizeTimeframe(t *testing.T) {
 		{name: "empty string", input: "", wantErr: true},
 		{name: "whitespace only", input: "   ", wantErr: true},
 		{name: "unsupported value", input: "7m", wantErr: true},
-		{name: "unsupported week", input: "1w", wantErr: true},
+		{name: "week supported (store whitelist allows it)", input: "1w", want: "1w"},
 		{name: "garbage input", input: "abc", wantErr: true},
 		{name: "internal whitespace not trimmed", input: "1 m", wantErr: true},
 	}

@@ -5,6 +5,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"nofx/kernel"
 	"nofx/logger"
+	"nofx/market"
 	"nofx/mcp"
 	_ "nofx/mcp/payment"
 	_ "nofx/mcp/provider"
@@ -122,6 +123,12 @@ type AutoTraderConfig struct {
 
 	// Scan configuration
 	ScanInterval time.Duration // Scan interval (recommended 3 minutes)
+
+	// DisableCandleAlignment, when true, starts the first trading cycle
+	// immediately instead of waiting for the next primary-timeframe candle
+	// close. Alignment is on by default so the first decision never acts on
+	// a still-forming bar.
+	DisableCandleAlignment bool
 
 	// Account configuration
 	InitialBalance float64 // Initial balance (for P&L calculation, must be set manually)
@@ -490,6 +497,22 @@ func (at *AutoTrader) Run() error {
 		}
 	}
 
+	// Align the first cycle to the primary-timeframe candle close so the
+	// initial decision never runs on a half-formed bar (bounded to <=1h,
+	// skipped for larger timeframes where the wait would be impractical).
+	if delay := at.candleAlignmentDelay(); delay > 0 {
+		at.logInfof("⏳ Candle alignment: first cycle in %s (waiting for %s candle close)",
+			delay.Round(time.Second), at.primaryTimeframe())
+		timer := time.NewTimer(delay)
+		select {
+		case <-timer.C:
+		case <-at.stopMonitorCh:
+			timer.Stop()
+			at.logInfof("⏹ Stop signal received during candle alignment")
+			return nil
+		}
+	}
+
 	ticker := time.NewTicker(at.config.ScanInterval)
 	defer ticker.Stop()
 
@@ -541,6 +564,41 @@ func (at *AutoTrader) Run() error {
 	}
 
 	return nil
+}
+
+// primaryTimeframe returns the strategy's primary indicator timeframe, or
+// "" when no strategy/timeframe is configured.
+func (at *AutoTrader) primaryTimeframe() string {
+	if at.strategyEngine != nil {
+		if cfg := at.strategyEngine.GetConfig(); cfg != nil {
+			return cfg.Indicators.Klines.PrimaryTimeframe
+		}
+	}
+	return ""
+}
+
+// candleAlignmentDelay returns how long to wait before the first cycle so it
+// lands on a primary-timeframe candle close. Returns 0 when alignment is
+// disabled, the timeframe is unusable, or the timeframe exceeds one hour
+// (where waiting for the next close would delay startup impractically).
+func (at *AutoTrader) candleAlignmentDelay() time.Duration {
+	if at.config.DisableCandleAlignment {
+		return 0
+	}
+	tf := at.primaryTimeframe()
+	if tf == "" {
+		return 0
+	}
+	dur, err := market.TFDuration(tf)
+	if err != nil || dur <= 0 || dur > time.Hour {
+		return 0
+	}
+	next := time.Now().Truncate(dur).Add(dur)
+	delay := time.Until(next)
+	if delay <= 0 {
+		return 0
+	}
+	return delay
 }
 
 // Stop stops the automatic trading

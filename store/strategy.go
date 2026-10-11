@@ -47,6 +47,9 @@ func (c *StrategyConfig) ClampLimits() {
 		c.CoinSource.OILowLimit = MaxCandidateCoins
 	}
 
+	// Fill protection defaults (zero fields -> DefaultProtectionConfig)
+	c.Protections = c.Protections.Normalized()
+
 	// Clamp static coins
 	if len(c.CoinSource.StaticCoins) > MaxCandidateCoins {
 		c.CoinSource.StaticCoins = c.CoinSource.StaticCoins[:MaxCandidateCoins]
@@ -588,6 +591,7 @@ type StrategyConfig struct {
 	CustomPrompt   string               `json:"-"`
 	RiskControl    RiskControlConfig    `json:"-"`
 	PromptSections PromptSectionsConfig `json:"-"`
+	Protections    ProtectionConfig     `json:"-"`
 
 	// Grid trading configuration (only used when StrategyType == "grid_trading")
 	GridConfig *GridStrategyConfig `json:"grid_config,omitempty"`
@@ -605,6 +609,10 @@ type AIStrategyConfig struct {
 	CustomPrompt   string               `json:"custom_prompt,omitempty"`
 	RiskControl    RiskControlConfig    `json:"risk_control"`
 	PromptSections PromptSectionsConfig `json:"prompt_sections,omitempty"`
+	// Protections are code-enforced circuit breakers (drawdown halt,
+	// losing-streak halt, per-symbol cooldown, low-profit pair block).
+	// Zero fields are replaced by DefaultProtectionConfig on load.
+	Protections ProtectionConfig `json:"protections,omitempty"`
 }
 
 // PublishStrategyConfig contains settings shared by all strategy types.
@@ -642,6 +650,7 @@ func (c StrategyConfig) MarshalJSON() ([]byte, error) {
 			CustomPrompt:   c.CustomPrompt,
 			RiskControl:    c.RiskControl,
 			PromptSections: c.PromptSections,
+			Protections:    c.Protections.Normalized(),
 		}
 	}
 
@@ -663,6 +672,7 @@ func (c *StrategyConfig) UnmarshalJSON(data []byte) error {
 		CustomPrompt   *string               `json:"custom_prompt"`
 		RiskControl    *RiskControlConfig    `json:"risk_control"`
 		PromptSections *PromptSectionsConfig `json:"prompt_sections"`
+		Protections    *ProtectionConfig     `json:"protections"`
 	}
 
 	var raw rawStrategyConfig
@@ -681,6 +691,7 @@ func (c *StrategyConfig) UnmarshalJSON(data []byte) error {
 		c.CustomPrompt = raw.AIConfig.CustomPrompt
 		c.RiskControl = raw.AIConfig.RiskControl
 		c.PromptSections = raw.AIConfig.PromptSections
+		c.Protections = raw.AIConfig.Protections
 	} else {
 		if raw.CoinSource != nil {
 			c.CoinSource = *raw.CoinSource
@@ -696,6 +707,9 @@ func (c *StrategyConfig) UnmarshalJSON(data []byte) error {
 		}
 		if raw.PromptSections != nil {
 			c.PromptSections = *raw.PromptSections
+		}
+		if raw.Protections != nil {
+			c.Protections = *raw.Protections
 		}
 	}
 

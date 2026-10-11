@@ -40,6 +40,7 @@ import { confirmToast, notify } from '../lib/notify'
 import { CoinSourceEditor } from '../components/strategy/CoinSourceEditor'
 import { IndicatorEditor } from '../components/strategy/IndicatorEditor'
 import { RiskControlEditor } from '../components/strategy/RiskControlEditor'
+import { ProtectionEditor } from '../components/strategy/ProtectionEditor'
 
 import { PublishSettingsEditor } from '../components/strategy/PublishSettingsEditor'
 import {
@@ -88,6 +89,7 @@ const getAIConfig = (config: StrategyConfig): AIStrategyConfig | null => {
       risk_control: config.risk_control,
       prompt_sections: config.prompt_sections,
       custom_prompt: config.custom_prompt,
+      protections: config.protections,
     }
   }
   return null
@@ -158,6 +160,7 @@ export function StrategyStudioPage() {
     coinSource: true,
     indicators: false,
     riskControl: false,
+    protections: false,
     promptSections: false,
     customPrompt: false,
     publishSettings: false,
@@ -806,6 +809,21 @@ export function StrategyStudioPage() {
         <RiskControlEditor
           config={currentAIConfig.risk_control}
           onChange={(riskControl) => updateAIConfig('risk_control', riskControl)}
+          disabled={selectedStrategy?.is_default}
+          language={language}
+        />
+      ),
+    },
+    {
+      key: 'protections' as const,
+      icon: Shield,
+      color: '#F6465D',
+      title: language === 'zh' ? '硬熔断保护' : 'Protections',
+      forStrategyType: 'ai_trading' as const,
+      content: currentAIConfig && (
+        <ProtectionEditor
+          config={currentAIConfig.protections}
+          onChange={(protections) => updateAIConfig('protections', protections)}
           disabled={selectedStrategy?.is_default}
           language={language}
         />

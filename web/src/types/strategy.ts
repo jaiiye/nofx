@@ -52,6 +52,7 @@ export interface StrategyConfig {
   custom_prompt?: string;
   risk_control?: RiskControlConfig;
   prompt_sections?: PromptSectionsConfig;
+  protections?: ProtectionConfig;
   // Grid trading configuration (only used when strategy_type is 'grid_trading')
   grid_config?: GridStrategyConfig | null;
   publish_config?: PublishStrategyConfig;
@@ -63,6 +64,25 @@ export interface AIStrategyConfig {
   custom_prompt?: string;
   risk_control: RiskControlConfig;
   prompt_sections?: PromptSectionsConfig;
+  protections?: ProtectionConfig;
+}
+
+// Code-enforced circuit breakers (modelled on Freqtrade protections).
+// All checks run BEFORE any opening order and cannot be bypassed by the AI.
+export interface ProtectionConfig {
+  // Halt new opens while the selected curve is this % below its window peak.
+  max_drawdown_pct?: number;
+  max_drawdown_lookback_h?: number;
+  // Which curve the drawdown breaker watches: equity (wallet + unrealized) or balance (realized only).
+  drawdown_basis?: 'equity' | 'balance';
+  // Halt new opens after N losing closes within the lookback window.
+  losing_closes_guard_count?: number;
+  losing_closes_guard_lookback_h?: number;
+  // Block re-opening the same symbol for this long after it was closed.
+  cooldown_minutes?: number;
+  // Drop a symbol after N closes within the window with non-positive total PnL.
+  low_profit_lookback_h?: number;
+  low_profit_min_trades?: number;
 }
 
 export interface PublishStrategyConfig {

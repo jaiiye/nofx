@@ -152,11 +152,34 @@ func getKlinesFromHyperliquid(symbol, interval string, limit int) ([]Kline, erro
 	return klines, nil
 }
 
+// dropUnclosedCandle removes the last K-line when it belongs to a candle
+// that has not closed yet (open time plus the timeframe duration is still
+// in the future). This keeps indicators and prompt series aligned to
+// closed bars instead of a still-forming one.
+func dropUnclosedCandle(klines []Kline, timeframe string) []Kline {
+	if len(klines) == 0 {
+		return klines
+	}
+	tf, err := TFDuration(timeframe)
+	if err != nil || tf <= 0 {
+		return klines
+	}
+	last := klines[len(klines)-1]
+	closesAt := time.UnixMilli(last.OpenTime).Add(tf)
+	if time.Now().UTC().Before(closesAt) {
+		return klines[:len(klines)-1]
+	}
+	return klines
+}
+
 // calculateTimeframeSeries calculates series data for a single timeframe
 func calculateTimeframeSeries(klines []Kline, timeframe string, count int) *TimeframeSeriesData {
 	if count <= 0 {
 		count = 10 // default
 	}
+
+	// Align to closed candles: never compute indicators over a forming bar.
+	klines = dropUnclosedCandle(klines, timeframe)
 
 	data := &TimeframeSeriesData{
 		Timeframe:   timeframe,

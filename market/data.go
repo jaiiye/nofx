@@ -85,11 +85,20 @@ func GetWithExchange(symbol, exchange string) (*Data, error) {
 		return nil, fmt.Errorf("4-hour K-line data is empty")
 	}
 
+	// Indicators must be computed on closed candles; currentPrice below keeps
+	// the forming bar so order sizing sees the live market.
+	intradayTF := "3m"
+	if useHyperliquidAPI {
+		intradayTF = "5m" // Hyperliquid has no 3m
+	}
+	closed3m := dropUnclosedCandle(klines3m, intradayTF)
+	closed4h := dropUnclosedCandle(klines4h, "4h")
+
 	// Calculate current indicators (based on 3-minute latest data)
 	currentPrice := klines3m[len(klines3m)-1].Close
-	currentEMA20 := calculateEMA(klines3m, 20)
-	currentMACD := calculateMACD(klines3m)
-	currentRSI7 := calculateRSI(klines3m, 7)
+	currentEMA20 := calculateEMA(closed3m, 20)
+	currentMACD := calculateMACD(closed3m)
+	currentRSI7 := calculateRSI(closed3m, 7)
 
 	// Calculate price change percentage
 	// 1-hour price change = price from 20 3-minute K-lines ago
@@ -124,7 +133,7 @@ func GetWithExchange(symbol, exchange string) (*Data, error) {
 	intradayData := calculateIntradaySeries(klines3m)
 
 	// Calculate longer-term data
-	longerTermData := calculateLongerTermData(klines4h)
+	longerTermData := calculateLongerTermData(closed4h)
 
 	return &Data{
 		Symbol:            symbol,
@@ -172,6 +181,7 @@ func GetWithTimeframes(symbol string, timeframes []string, primaryTimeframe stri
 	// Store data for all timeframes
 	timeframeData := make(map[string]*TimeframeSeriesData)
 	var primaryKlines []Kline
+	var primaryClosed []Kline // primary series with the forming candle removed
 
 	// Check if this is an xyz dex asset (use Hyperliquid API)
 	isXyzAsset := IsXyzDexAsset(symbol)
@@ -205,6 +215,7 @@ func GetWithTimeframes(symbol string, timeframes []string, primaryTimeframe stri
 		// Save primary timeframe K-lines for calculating base indicators
 		if tf == primaryTimeframe {
 			primaryKlines = klines
+			primaryClosed = dropUnclosedCandle(klines, tf)
 		}
 
 		// Calculate series data for this timeframe (use count from config)
@@ -224,10 +235,12 @@ func GetWithTimeframes(symbol string, timeframes []string, primaryTimeframe stri
 	}
 
 	// Calculate current indicators (based on primary timeframe latest data)
+	// Closed-candle series for the indicator values; CurrentPrice keeps the
+	// forming bar so callers sizing orders see the live market.
 	currentPrice := primaryKlines[len(primaryKlines)-1].Close
-	currentEMA20 := calculateEMA(primaryKlines, 20)
-	currentMACD := calculateMACD(primaryKlines)
-	currentRSI7 := calculateRSI(primaryKlines, 7)
+	currentEMA20 := calculateEMA(primaryClosed, 20)
+	currentMACD := calculateMACD(primaryClosed)
+	currentRSI7 := calculateRSI(primaryClosed, 7)
 
 	// Calculate price changes
 	priceChange1h := calculatePriceChangeByBars(primaryKlines, primaryTimeframe, 60)  // 1 hour
