@@ -2,6 +2,7 @@ package trader
 
 import (
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"nofx/logger"
@@ -36,18 +37,39 @@ func (at *AutoTrader) drawdownPeakCurrent(basis string, since time.Time) (peak, 
 // positions/equity tables, so they recover automatically once the
 // condition clears (drawdown recovers, losing closes age out of the
 // window, cooldown elapses).
+// protectionFailureLimit is how many consecutive passes may have a failing
+// protections query before new opens are blocked fail-closed.
+const protectionFailureLimit = 3
+
+// checkOpenProtections runs the circuit breakers and, if their queries have
+// been failing persistently, blocks opens until they recover (the checks are
+// worthless if the backing store is down).
 func (at *AutoTrader) checkOpenProtections(symbol string) string {
+	reason, hadError := at.evaluateProtections(symbol)
+	if hadError {
+		if n := atomic.AddInt32(&at.protectionFailures, 1); n >= protectionFailureLimit {
+			return fmt.Sprintf("protection checks failing (%d consecutive); new opens blocked until they recover", n)
+		}
+	} else {
+		atomic.StoreInt32(&at.protectionFailures, 0)
+	}
+	return reason
+}
+
+// evaluateProtections runs the checks and reports whether any query errored.
+func (at *AutoTrader) evaluateProtections(symbol string) (string, bool) {
 	if at.store == nil || at.strategyEngine == nil {
-		return "" // nothing to consult; don't block on missing wiring
+		return "", false // nothing to consult; don't block on missing wiring
 	}
 	cfg := at.strategyEngine.GetConfig()
 	if cfg == nil {
-		return ""
+		return "", false
 	}
 	p := cfg.Protections.Normalized()
 	now := time.Now()
 	nowMs := now.UnixMilli()
 	normSymbol := market.Normalize(symbol)
+	hadError := false
 
 	// 1. Max drawdown halt — curve below (peak - MaxDrawdownPct%).
 	if p.MaxDrawdownPct > 0 {
@@ -55,11 +77,12 @@ func (at *AutoTrader) checkOpenProtections(symbol string) string {
 		peak, current, ok, err := at.drawdownPeakCurrent(p.DrawdownBasis, since)
 		if err != nil {
 			logger.Warnf("⚠️ [protection] drawdown check failed: %v", err)
+			hadError = true
 		} else if ok && peak > 0 {
 			ddPct := (peak - current) / peak * 100
 			if ddPct > p.MaxDrawdownPct {
 				return fmt.Sprintf("max drawdown halt (%s): %.2f is %.1f%% below peak %.2f (limit %.1f%%)",
-					p.DrawdownBasis, current, ddPct, peak, p.MaxDrawdownPct)
+					p.DrawdownBasis, current, ddPct, peak, p.MaxDrawdownPct), hadError
 			}
 		}
 	}
@@ -70,9 +93,10 @@ func (at *AutoTrader) checkOpenProtections(symbol string) string {
 		n, err := at.store.Position().CountLosingClosesSince(at.id, sinceMs)
 		if err != nil {
 			logger.Warnf("⚠️ [protection] losing-closes check failed: %v", err)
+			hadError = true
 		} else if n >= p.LosingClosesGuardCount {
 			return fmt.Sprintf("losing-streak halt: %d losing closes in the last %dh (limit %d)",
-				n, p.LosingClosesGuardLookbackH, p.LosingClosesGuardCount)
+				n, p.LosingClosesGuardLookbackH, p.LosingClosesGuardCount), hadError
 		}
 	}
 
@@ -81,13 +105,14 @@ func (at *AutoTrader) checkOpenProtections(symbol string) string {
 		lastClose, err := at.store.Position().LastCloseTime(at.id, normSymbol)
 		if err != nil {
 			logger.Warnf("⚠️ [protection] cooldown check failed: %v", err)
+			hadError = true
 		} else if lastClose > 0 {
 			elapsed := nowMs - lastClose
 			cooldownMs := int64(p.CooldownMinutes) * 60 * 1000
 			if elapsed < cooldownMs {
 				remain := (cooldownMs - elapsed) / 60000
 				return fmt.Sprintf("%s cooldown: %d min remaining (cooldown %d min)",
-					normSymbol, remain, p.CooldownMinutes)
+					normSymbol, remain, p.CooldownMinutes), hadError
 			}
 		}
 	}
@@ -98,11 +123,12 @@ func (at *AutoTrader) checkOpenProtections(symbol string) string {
 		pnl, trades, err := at.store.Position().SymbolPnLSince(at.id, normSymbol, sinceMs)
 		if err != nil {
 			logger.Warnf("⚠️ [protection] low-profit check failed: %v", err)
+			hadError = true
 		} else if trades >= p.LowProfitMinTrades && pnl <= 0 {
 			return fmt.Sprintf("%s blocked: %d closes over %dh with cumulative PnL %.2f",
-				normSymbol, trades, p.LowProfitLookbackH, pnl)
+				normSymbol, trades, p.LowProfitLookbackH, pnl), hadError
 		}
 	}
 
-	return ""
+	return "", hadError
 }

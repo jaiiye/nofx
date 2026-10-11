@@ -59,6 +59,10 @@ func (t *FuturesTrader) OpenLong(symbol string, quantity float64, leverage int) 
 	logger.Infof("✓ Opened long position successfully: %s quantity: %s", symbol, quantityStr)
 	logger.Infof("  Order ID: %d", order.OrderID)
 
+	// A fresh fill changes our positions; drop the cached snapshot so the
+	// risk gate sees it immediately instead of up to cacheDuration later.
+	t.InvalidatePositionCache()
+
 	result := &connector.OrderResult{
 		OrderID: fmt.Sprintf("%d", order.OrderID),
 		Symbol:  order.Symbol,
@@ -114,6 +118,10 @@ func (t *FuturesTrader) OpenShort(symbol string, quantity float64, leverage int)
 
 	logger.Infof("✓ Opened short position successfully: %s quantity: %s", symbol, quantityStr)
 	logger.Infof("  Order ID: %d", order.OrderID)
+
+	// A fresh fill changes our positions; drop the cached snapshot so the
+	// risk gate sees it immediately instead of up to cacheDuration later.
+	t.InvalidatePositionCache()
 
 	result := &connector.OrderResult{
 		OrderID: fmt.Sprintf("%d", order.OrderID),
@@ -171,6 +179,10 @@ func (t *FuturesTrader) CloseLong(symbol string, quantity float64) (*connector.O
 		logger.Infof("  ⚠ Failed to cancel pending orders: %v", err)
 	}
 
+	// A fresh fill changes our positions; drop the cached snapshot so the
+	// risk gate sees it immediately instead of up to cacheDuration later.
+	t.InvalidatePositionCache()
+
 	result := &connector.OrderResult{
 		OrderID: fmt.Sprintf("%d", order.OrderID),
 		Symbol:  order.Symbol,
@@ -226,6 +238,10 @@ func (t *FuturesTrader) CloseShort(symbol string, quantity float64) (*connector.
 	if err := t.CancelAllOrders(symbol); err != nil {
 		logger.Infof("  ⚠ Failed to cancel pending orders: %v", err)
 	}
+
+	// A fresh fill changes our positions; drop the cached snapshot so the
+	// risk gate sees it immediately instead of up to cacheDuration later.
+	t.InvalidatePositionCache()
 
 	result := &connector.OrderResult{
 		OrderID: fmt.Sprintf("%d", order.OrderID),

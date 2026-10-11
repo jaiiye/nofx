@@ -50,11 +50,15 @@ func (t *OKXTrader) OpenLong(symbol string, quantity float64, leverage int) (*co
 		"instId":  instId,
 		"tdMode":  marginMode,
 		"side":    "buy",
-		"posSide": "long",
 		"ordType": "market",
 		"sz":      szStr,
 		"clOrdId": genOkxClOrdID(),
 		"tag":     okxTag,
+	}
+	// posSide is only valid in hedge mode; in net mode the order side alone
+	// opens/extends the net position.
+	if t.positionMode == "long_short_mode" {
+		body["posSide"] = "long"
 	}
 
 	data, err := t.doRequest("POST", okxOrderPath, body)
@@ -131,11 +135,15 @@ func (t *OKXTrader) OpenShort(symbol string, quantity float64, leverage int) (*c
 		"instId":  instId,
 		"tdMode":  marginMode,
 		"side":    "sell",
-		"posSide": "short",
 		"ordType": "market",
 		"sz":      szStr,
 		"clOrdId": genOkxClOrdID(),
 		"tag":     okxTag,
+	}
+	// posSide is only valid in hedge mode; in net mode the order side alone
+	// opens/extends the net position.
+	if t.positionMode == "long_short_mode" {
+		body["posSide"] = "short"
 	}
 
 	data, err := t.doRequest("POST", okxOrderPath, body)
@@ -197,10 +205,10 @@ func (t *OKXTrader) CloseLong(symbol string, quantity float64) (*connector.Order
 	for _, pos := range positions {
 		logger.Infof("🔍 OKX position: symbol=%v, side=%v, positionAmt=%v, mgnMode=%v", pos["symbol"], pos["side"], pos["positionAmt"], pos["mgnMode"])
 		if pos["symbol"] == symbol {
+			// GetPositions normalises direction from posSide (hedge) or the
+			// sign of the position size (net), so a simple side match is safe.
 			side := pos["side"].(string)
-			// In net_mode, "long" means positive position
-			// In dual mode, check explicit "long" side
-			if side == "long" || (t.positionMode == "net_mode" && side == "long") {
+			if side == "long" {
 				actualQty = pos["positionAmt"].(float64)
 				posFound = true
 				if mgnMode, ok := pos["mgnMode"].(string); ok && mgnMode != "" {
@@ -242,9 +250,12 @@ func (t *OKXTrader) CloseLong(symbol string, quantity float64) (*connector.Order
 		"tag":     okxTag,
 	}
 
-	// Only add posSide in dual mode (long_short_mode)
+	// In hedge mode address the position by posSide; in net mode reduce-only
+	// ensures a close cannot flip the net position.
 	if t.positionMode == "long_short_mode" {
 		body["posSide"] = "long"
+	} else {
+		body["reduceOnly"] = true
 	}
 
 	data, err := t.doRequest("POST", okxOrderPath, body)
@@ -354,9 +365,12 @@ func (t *OKXTrader) CloseShort(symbol string, quantity float64) (*connector.Orde
 		"tag":     okxTag,
 	}
 
-	// Only add posSide in dual mode (long_short_mode)
+	// In hedge mode address the position by posSide; in net mode reduce-only
+	// ensures a close cannot flip the net position.
 	if t.positionMode == "long_short_mode" {
 		body["posSide"] = "short"
+	} else {
+		body["reduceOnly"] = true
 	}
 
 	logger.Infof("🔻 OKX close short request body: %+v", body)

@@ -63,12 +63,18 @@ func (t *OKXTrader) GetPositions() ([]map[string]interface{}, error) {
 		symbol := t.convertSymbolBack(pos.InstId)
 		logger.Infof("🔍 OKX symbol conversion: %s → %s", pos.InstId, symbol)
 
-		// Determine direction and ensure contractCount is positive
+		// Direction: in hedge mode posSide is authoritative; in net mode
+		// posSide is "net" and the sign of pos carries the direction.
 		side := "long"
-		if pos.PosSide == "short" {
+		switch {
+		case pos.PosSide == "short":
+			side = "short"
+		case pos.PosSide == "long":
+			side = "long"
+		case contractCount < 0: // net mode short
 			side = "short"
 		}
-		// OKX short position's pos is negative, need to take absolute value
+		// OKX exposes a signed size; callers expect a magnitude.
 		if contractCount < 0 {
 			contractCount = -contractCount
 		}
