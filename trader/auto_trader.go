@@ -14,6 +14,7 @@ import (
 	"nofx/trader/binance"
 	"nofx/trader/bitget"
 	"nofx/trader/bybit"
+	"nofx/trader/execution"
 	"nofx/trader/gate"
 	"nofx/trader/hyperliquid"
 	"nofx/trader/indodax"
@@ -157,11 +158,14 @@ type AutoTrader struct {
 	exchangeID            string // Exchange account UUID
 	showInCompetition     bool   // Whether to show in competition page
 	config                AutoTraderConfig
-	trader                Trader // Use Trader interface (supports multiple platforms)
+	trader                Trader         // Use Trader interface (supports multiple platforms)
+	execMode              execution.Mode // order-placement seam (live or simulated)
 	mcpClient             mcp.AIClient
 	store                 *store.Store           // Data storage (decision records, etc.)
 	strategyEngine        *kernel.StrategyEngine // Strategy engine (uses strategy configuration)
-	cycleNumber           int                    // Current cycle number
+	candidateSelector     kernel.CandidateSelector
+	decisionMaker         *kernel.DecisionMaker
+	cycleNumber           int // Current cycle number
 	initialBalance        float64
 	dailyPnL              float64
 	customPrompt          string // Custom trading strategy prompt
@@ -384,9 +388,12 @@ func NewAutoTrader(config AutoTraderConfig, st *store.Store, userID string) (*Au
 		showInCompetition:     config.ShowInCompetition,
 		config:                config,
 		trader:                trader,
+		execMode:              trader,
 		mcpClient:             mcpClient,
 		store:                 st,
 		strategyEngine:        strategyEngine,
+		candidateSelector:     strategyEngine,
+		decisionMaker:         kernel.NewDecisionMaker(strategyEngine, mcpClient),
 		cycleNumber:           cycleNumber,
 		initialBalance:        config.InitialBalance,
 		lastResetTime:         time.Now(),

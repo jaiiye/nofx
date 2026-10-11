@@ -104,7 +104,7 @@ func (at *AutoTrader) runCycle() error {
 
 	// 5. Use strategy engine to call AI for decision
 	at.logInfof("🤖 Requesting AI analysis and decision... [Strategy Engine]")
-	aiDecision, err := kernel.GetFullDecisionWithStrategy(ctx, at.mcpClient, at.strategyEngine, "balanced")
+	aiDecision, err := at.decisionMaker.Decide(ctx, "balanced")
 
 	if aiDecision != nil && aiDecision.AIRequestDurationMs > 0 {
 		record.AIRequestDurationMs = aiDecision.AIRequestDurationMs
@@ -554,7 +554,7 @@ func (at *AutoTrader) buildTradingContext() (*kernel.Context, error) {
 	if at.strategyEngine == nil {
 		at.logWarnf("⚠️ No strategy engine configured, skipping candidate coins")
 	} else {
-		coins, err := at.strategyEngine.GetCandidateCoins()
+		coins, err := at.candidateSelector.GetCandidateCoins()
 		if err != nil {
 			// Log warning but don't fail - equity snapshot should still be saved
 			at.logWarnf("⚠️ Failed to get candidate coins: %v (will use empty list)", err)

@@ -238,9 +238,9 @@ func GetWithTimeframes(symbol string, timeframes []string, primaryTimeframe stri
 	// Closed-candle series for the indicator values; CurrentPrice keeps the
 	// forming bar so callers sizing orders see the live market.
 	currentPrice := primaryKlines[len(primaryKlines)-1].Close
-	currentEMA20 := calculateEMA(primaryClosed, 20)
-	currentMACD := calculateMACD(primaryClosed)
-	currentRSI7 := calculateRSI(primaryClosed, 7)
+	currentEMA20 := EMA{Period: 20}.Evaluate(primaryClosed).Value
+	currentMACD := MACD{}.Evaluate(primaryClosed).Value
+	currentRSI7 := RSI{Period: 7}.Evaluate(primaryClosed).Value
 
 	// Calculate price changes
 	priceChange1h := calculatePriceChangeByBars(primaryKlines, primaryTimeframe, 60)  // 1 hour
@@ -623,9 +623,9 @@ func BuildDataFromKlines(symbol string, primary []Kline, longer []Kline) (*Data,
 	data := &Data{
 		Symbol:            symbol,
 		CurrentPrice:      currentPrice,
-		CurrentEMA20:      calculateEMA(primary, 20),
-		CurrentMACD:       calculateMACD(primary),
-		CurrentRSI7:       calculateRSI(primary, 7),
+		CurrentEMA20:      EMA{Period: 20}.Evaluate(primary).Value,
+		CurrentMACD:       MACD{}.Evaluate(primary).Value,
+		CurrentRSI7:       RSI{Period: 7}.Evaluate(primary).Value,
 		PriceChange1h:     priceChangeFromSeries(primary, time.Hour),
 		PriceChange4h:     priceChangeFromSeries(primary, 4*time.Hour),
 		OpenInterest:      &OIData{Latest: 0, Average: 0},

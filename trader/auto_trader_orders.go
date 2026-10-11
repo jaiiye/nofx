@@ -95,9 +95,12 @@ func (at *AutoTrader) executeOpenLongWithRecord(decision *kernel.Decision, actio
 	}
 
 	// Open position
-	order, err := at.trader.OpenLong(decision.Symbol, quantity, decision.Leverage)
+	order, err := at.execMode.OpenLong(decision.Symbol, quantity, decision.Leverage)
 	if err != nil {
 		return fmt.Errorf("failed to open long position for %s: %w", decision.Symbol, err)
+	}
+	if order == nil {
+		return fmt.Errorf("exchange returned no result for %s open_long", decision.Symbol)
 	}
 
 	// Record order ID
@@ -177,9 +180,12 @@ func (at *AutoTrader) executeOpenShortWithRecord(decision *kernel.Decision, acti
 	}
 
 	// Open position
-	order, err := at.trader.OpenShort(decision.Symbol, quantity, decision.Leverage)
+	order, err := at.execMode.OpenShort(decision.Symbol, quantity, decision.Leverage)
 	if err != nil {
 		return fmt.Errorf("failed to open short position for %s: %w", decision.Symbol, err)
+	}
+	if order == nil {
+		return fmt.Errorf("exchange returned no result for %s open_short", decision.Symbol)
 	}
 
 	// Record order ID
@@ -254,9 +260,12 @@ func (at *AutoTrader) executeCloseLongWithRecord(decision *kernel.Decision, acti
 	}
 
 	// Close position
-	order, err := at.trader.CloseLong(decision.Symbol, 0) // 0 = close all
+	order, err := at.execMode.CloseLong(decision.Symbol, 0) // 0 = close all
 	if err != nil {
 		return fmt.Errorf("failed to close long position for %s: %w", decision.Symbol, err)
+	}
+	if order == nil {
+		return fmt.Errorf("exchange returned no result for %s close_long", decision.Symbol)
 	}
 
 	// Record order ID
@@ -318,9 +327,12 @@ func (at *AutoTrader) executeCloseShortWithRecord(decision *kernel.Decision, act
 	}
 
 	// Close position
-	order, err := at.trader.CloseShort(decision.Symbol, 0) // 0 = close all
+	order, err := at.execMode.CloseShort(decision.Symbol, 0) // 0 = close all
 	if err != nil {
 		return fmt.Errorf("failed to close short position for %s: %w", decision.Symbol, err)
+	}
+	if order == nil {
+		return fmt.Errorf("exchange returned no result for %s close_short", decision.Symbol)
 	}
 
 	// Record order ID

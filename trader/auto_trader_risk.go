@@ -120,13 +120,13 @@ func (at *AutoTrader) checkPositionDrawdown() {
 func (at *AutoTrader) emergencyClosePosition(symbol, side string) error {
 	switch side {
 	case "long":
-		order, err := at.trader.CloseLong(symbol, 0) // 0 = close all
+		order, err := at.execMode.CloseLong(symbol, 0) // 0 = close all
 		if err != nil {
 			return err
 		}
 		logger.Infof("✅ Emergency close long position succeeded, order ID: %v", order.OrderID)
 	case "short":
-		order, err := at.trader.CloseShort(symbol, 0) // 0 = close all
+		order, err := at.execMode.CloseShort(symbol, 0) // 0 = close all
 		if err != nil {
 			return err
 		}
