@@ -2,9 +2,7 @@ package okx
 
 import (
 	"bytes"
-	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -12,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"nofx/logger"
+	"nofx/trader/connector"
 	"strings"
 	"sync"
 	"time"
@@ -47,8 +46,8 @@ type OKXTrader struct {
 	// Position mode: "long_short_mode" (hedge) or "net_mode" (one-way)
 	positionMode string
 
-	// HTTP client (proxy disabled)
-	httpClient *http.Client
+	// HTTP client with shared rate limiting
+	client *connector.Client
 
 	// Balance cache
 	cachedBalance     map[string]interface{}
@@ -112,17 +111,12 @@ func genOkxClOrdID() string {
 func NewOKXTrader(apiKey, secretKey, passphrase string) *OKXTrader {
 	// Use default transport which respects system proxy settings
 	// OKX requires proxy in China due to DNS pollution
-	httpClient := &http.Client{
-		Timeout:   30 * time.Second,
-		Transport: http.DefaultTransport,
-	}
-
 	trader := &OKXTrader{
 		apiKey:           apiKey,
 		secretKey:        secretKey,
 		passphrase:       passphrase,
 		isCrossMargin:    true,
-		httpClient:       httpClient,
+		client:           connector.NewClient(connector.WithLimiter(connector.NewLimiter(10, 10))),
 		cacheDuration:    15 * time.Second,
 		instrumentsCache: make(map[string]*OKXInstrument),
 	}
@@ -195,14 +189,6 @@ func (t *OKXTrader) setPositionMode() error {
 	return nil
 }
 
-// sign generates OKX API signature
-func (t *OKXTrader) sign(timestamp, method, requestPath, body string) string {
-	preHash := timestamp + method + requestPath + body
-	h := hmac.New(sha256.New, []byte(t.secretKey))
-	h.Write([]byte(preHash))
-	return base64.StdEncoding.EncodeToString(h.Sum(nil))
-}
-
 // doRequest executes HTTP request
 func (t *OKXTrader) doRequest(method, path string, body interface{}) ([]byte, error) {
 	var bodyBytes []byte
@@ -216,7 +202,7 @@ func (t *OKXTrader) doRequest(method, path string, body interface{}) ([]byte, er
 	}
 
 	timestamp := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
-	signature := t.sign(timestamp, method, path, string(bodyBytes))
+	signature := connector.HMACSHA256Base64(t.secretKey, timestamp+method+path+string(bodyBytes))
 
 	req, err := http.NewRequest(method, okxBaseURL+path, bytes.NewReader(bodyBytes))
 	if err != nil {
@@ -231,7 +217,7 @@ func (t *OKXTrader) doRequest(method, path string, body interface{}) ([]byte, er
 	// Set request header
 	req.Header.Set("x-simulated-trading", "0")
 
-	resp, err := t.httpClient.Do(req)
+	resp, err := t.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}

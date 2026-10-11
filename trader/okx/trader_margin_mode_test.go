@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"nofx/trader/connector"
 	"nofx/trader/types"
 )
 
@@ -69,9 +70,9 @@ func newTestOKXTrader(rt *recordingTransport, isCrossMargin bool) *OKXTrader {
 		passphrase:    "pass",
 		isCrossMargin: isCrossMargin,
 		positionMode:  "long_short_mode",
-		httpClient: &http.Client{
+		client: connector.NewClient(connector.WithHTTPClient(&http.Client{
 			Transport: rt,
-		},
+		})),
 		cacheDuration:        15 * time.Second,
 		instrumentsCache:     make(map[string]*OKXInstrument),
 		instrumentsCacheTime: time.Now(),

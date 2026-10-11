@@ -2,14 +2,12 @@ package bitget
 
 import (
 	"bytes"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"nofx/logger"
+	"nofx/trader/connector"
 	"strconv"
 	"strings"
 	"sync"
@@ -38,8 +36,8 @@ type BitgetTrader struct {
 	secretKey  string
 	passphrase string
 
-	// HTTP client
-	httpClient *http.Client
+	// HTTP client with shared rate limiting
+	client *connector.Client
 
 	// Balance cache
 	cachedBalance     map[string]interface{}
@@ -82,16 +80,11 @@ type BitgetResponse struct {
 
 // NewBitgetTrader creates a Bitget trader
 func NewBitgetTrader(apiKey, secretKey, passphrase string) *BitgetTrader {
-	httpClient := &http.Client{
-		Timeout:   30 * time.Second,
-		Transport: http.DefaultTransport,
-	}
-
 	trader := &BitgetTrader{
 		apiKey:         apiKey,
 		secretKey:      secretKey,
 		passphrase:     passphrase,
-		httpClient:     httpClient,
+		client:         connector.NewClient(connector.WithLimiter(connector.NewLimiter(10, 10))),
 		cacheDuration:  15 * time.Second,
 		contractsCache: make(map[string]*BitgetContract),
 	}
@@ -123,15 +116,6 @@ func (t *BitgetTrader) setPositionMode() error {
 
 	logger.Infof("  ✓ Bitget account switched to one-way position mode")
 	return nil
-}
-
-// sign generates Bitget API signature
-func (t *BitgetTrader) sign(timestamp, method, requestPath, body string) string {
-	// Signature = BASE64(HMAC_SHA256(timestamp + method + requestPath + body, secretKey))
-	preHash := timestamp + method + requestPath + body
-	h := hmac.New(sha256.New, []byte(t.secretKey))
-	h.Write([]byte(preHash))
-	return base64.StdEncoding.EncodeToString(h.Sum(nil))
 }
 
 // doRequest executes HTTP request
@@ -168,7 +152,7 @@ func (t *BitgetTrader) doRequest(method, path string, body interface{}) ([]byte,
 	if method != "GET" && bodyBytes != nil {
 		signBody = string(bodyBytes)
 	}
-	signature := t.sign(timestamp, method, path, signBody)
+	signature := connector.HMACSHA256Base64(t.secretKey, timestamp+method+path+signBody)
 
 	url := bitgetBaseURL + path
 	req, err := http.NewRequest(method, url, bytes.NewReader(bodyBytes))
@@ -187,7 +171,7 @@ func (t *BitgetTrader) doRequest(method, path string, body interface{}) ([]byte,
 		req.Header.Set("X-CHANNEL-API-CODE", "7fygt")
 	}
 
-	resp, err := t.httpClient.Do(req)
+	resp, err := t.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
