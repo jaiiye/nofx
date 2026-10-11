@@ -3407,11 +3407,12 @@ func (a *Agent) toolGetTradeHistory(argsJSON string) string {
 			tid = tid[:8]
 		}
 		for _, pos := range positions {
-			pnl := pos.RealizedPnL
-			totalPnL += pnl
-			if pnl >= 0 {
+			// Net of fees/funding, matching the store's PnL accounting.
+			net := pos.RealizedPnL - pos.Fee - pos.FundingFee
+			totalPnL += net
+			if net > 0 {
 				wins++
-			} else {
+			} else if net < 0 {
 				losses++
 			}
 
@@ -3433,7 +3434,9 @@ func (a *Agent) toolGetTradeHistory(argsJSON string) string {
 				"exit_price":  pos.ExitPrice,
 				"quantity":    pos.Quantity,
 				"leverage":    pos.Leverage,
-				"pnl":         pnl,
+				"pnl":         net,
+				"fee":         pos.Fee,
+				"funding_fee": pos.FundingFee,
 				"entry_time":  entryTime,
 				"exit_time":   exitTime,
 			})

@@ -595,8 +595,11 @@ func (t *KuCoinTrader) GetOrderStatus(symbol string, orderID string) (*connector
 		Symbol:       t.convertSymbolBack(order.Symbol),
 		Status:       status,
 		AvgFillPrice: order.DealAvgPrice,
-		FilledQty:    float64(order.DealSize),
-		Fee:          order.Fee,
+		// NOTE: KuCoin's dealSize is in CONTRACT lots, not base-asset units;
+		// callers that need base quantity must multiply by the contract
+		// multiplier. Kept raw to match the wire value.
+		FilledQty: float64(order.DealSize),
+		Fee:       order.Fee,
 	}, nil
 }
 

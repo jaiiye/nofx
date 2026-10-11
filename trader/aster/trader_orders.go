@@ -696,8 +696,14 @@ func orderResultFromMap(result map[string]interface{}) *connector.OrderResult {
 		res.FilledQty = executedQty
 	}
 
-	if commission, ok := result["commission"].(float64); ok {
-		res.Fee = commission
+	// Aster/Binance-style APIs may encode numeric fields as strings.
+	switch c := result["commission"].(type) {
+	case float64:
+		res.Fee = c
+	case string:
+		if v, err := strconv.ParseFloat(c, 64); err == nil {
+			res.Fee = v
+		}
 	}
 
 	return res

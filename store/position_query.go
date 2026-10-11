@@ -29,48 +29,6 @@ func netPnL(p TraderPosition) float64 {
 	return p.RealizedPnL - p.Fee - p.FundingFee
 }
 
-// GetPositionStats gets position statistics
-func (s *PositionStore) GetPositionStats(traderID string) (map[string]interface{}, error) {
-	stats := make(map[string]interface{})
-
-	type result struct {
-		Total           int
-		Wins            int
-		TotalPnL        float64
-		TotalFee        float64
-		TotalFundingFee float64
-		NetPnL          float64
-	}
-	var r result
-
-	err := s.db.Model(&TraderPosition{}).
-		Select(`COUNT(*) as total,
-			SUM(CASE WHEN realized_pnl - fee - funding_fee > 0 THEN 1 ELSE 0 END) as wins,
-			COALESCE(SUM(realized_pnl), 0) as total_pn_l,
-			COALESCE(SUM(fee), 0) as total_fee,
-			COALESCE(SUM(funding_fee), 0) as total_funding_fee,
-			COALESCE(SUM(realized_pnl - fee - funding_fee), 0) as net_pn_l`).
-		Where("trader_id = ? AND status = ?", traderID, "CLOSED").
-		Scan(&r).Error
-	if err != nil {
-		return nil, err
-	}
-
-	stats["total_trades"] = r.Total
-	stats["win_trades"] = r.Wins
-	stats["total_pnl"] = r.TotalPnL
-	stats["total_fee"] = r.TotalFee
-	stats["total_funding_fee"] = r.TotalFundingFee
-	stats["net_pnl"] = r.NetPnL
-	if r.Total > 0 {
-		stats["win_rate"] = float64(r.Wins) / float64(r.Total) * 100
-	} else {
-		stats["win_rate"] = 0.0
-	}
-
-	return stats, nil
-}
-
 // GetFullStats gets complete trading statistics
 func (s *PositionStore) GetFullStats(traderID string) (*TraderStats, error) {
 	stats := &TraderStats{}

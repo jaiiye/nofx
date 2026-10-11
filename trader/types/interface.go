@@ -54,10 +54,15 @@ type Trader interface {
 	// OpenShort Open short position
 	OpenShort(symbol string, quantity float64, leverage int) (*connector.OrderResult, error)
 
-	// CloseLong Close long position (quantity=0 means close all)
+	// CloseLong Close long position (quantity=0 means close all).
+	//
+	// "No position to close" may be reported EITHER as an error OR as a
+	// non-nil result with Status == "NO_POSITION"; callers must treat both as
+	// a no-op (no fill happened). See connector.OrderResult.
 	CloseLong(symbol string, quantity float64) (*connector.OrderResult, error)
 
-	// CloseShort Close short position (quantity=0 means close all)
+	// CloseShort Close short position (quantity=0 means close all).
+	// Same "no position" contract as CloseLong.
 	CloseShort(symbol string, quantity float64) (*connector.OrderResult, error)
 
 	// SetLeverage Set leverage

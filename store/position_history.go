@@ -291,21 +291,3 @@ func (s *PositionStore) GetLastClosedPositionTime(traderID string) (int64, error
 
 	return pos.ExitTime, nil
 }
-
-// SyncClosedPositions syncs closed positions from exchange
-func (s *PositionStore) SyncClosedPositions(traderID, exchangeID, exchangeType string, records []ClosedPnLRecord) (int, int, error) {
-	created, skipped := 0, 0
-	for _, record := range records {
-		rec := record
-		wasCreated, err := s.CreateFromClosedPnL(traderID, exchangeID, exchangeType, &rec)
-		if err != nil {
-			return created, skipped, fmt.Errorf("failed to sync position: %w", err)
-		}
-		if wasCreated {
-			created++
-		} else {
-			skipped++
-		}
-	}
-	return created, skipped, nil
-}

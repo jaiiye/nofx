@@ -5,14 +5,16 @@ package connector
 //
 // Field conventions every adapter must follow:
 //   - OrderID: exchange order id as a string ("0" means unknown/untracked).
-//   - Status: NEW / FILLED / PARTIALLY_FILLED / CANCELED / EXPIRED.
+//   - Status: NEW / FILLED / PARTIALLY_FILLED / CANCELED / EXPIRED, or
+//     "NO_POSITION" for a close that found nothing to close (a no-op, not a
+//     fill). Adapters may instead return an error for that case — callers must
+//     accept either.
 //   - Fee: accumulated fee as a positive COST. Some venues report negative
 //     fees for outflow — negate before returning, never pass the rate through.
 //   - Errors are returned as (nil, err); a zero-value result must never be
 //     used to signal "I don't know".
 type OrderResult struct {
 	OrderID      string
-	ClientID     string
 	Symbol       string
 	Status       string
 	AvgFillPrice float64
