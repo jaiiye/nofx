@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"nofx/logger"
+	"nofx/trader/connector"
 	"strconv"
 
 	"github.com/elliottech/lighter-go/types"
@@ -92,7 +93,7 @@ func (t *LighterTraderV2) CancelAllOrders(symbol string) error {
 }
 
 // GetOrderStatus Get order status (implements Trader interface)
-func (t *LighterTraderV2) GetOrderStatus(symbol string, orderID string) (map[string]interface{}, error) {
+func (t *LighterTraderV2) GetOrderStatus(symbol string, orderID string) (*connector.OrderResult, error) {
 	// LIGHTER market orders are usually filled immediately
 	// Try to query order status
 	if err := t.ensureAuthToken(); err != nil {
@@ -146,12 +147,15 @@ func (t *LighterTraderV2) GetOrderStatus(symbol string, orderID string) (map[str
 		unifiedStatus = "CANCELED"
 	}
 
-	return map[string]interface{}{
-		"orderId":     order.OrderID,
-		"status":      unifiedStatus,
-		"avgPrice":    order.Price,
-		"executedQty": order.FilledBaseAmount,
-		"commission":  0.0,
+	avgPrice, _ := strconv.ParseFloat(order.Price, 64)
+	filledQty, _ := strconv.ParseFloat(order.FilledBaseAmount, 64)
+
+	return &connector.OrderResult{
+		OrderID:      order.OrderID,
+		Status:       unifiedStatus,
+		AvgFillPrice: avgPrice,
+		FilledQty:    filledQty,
+		Fee:          0.0,
 	}, nil
 }
 
@@ -245,9 +249,9 @@ func (t *LighterTraderV2) GetActiveOrders(symbol string) ([]OrderResponse, error
 
 	// Parse response - Lighter API uses "orders" field, not "data"
 	var apiResp struct {
-		Code    int              `json:"code"`
-		Message string           `json:"message"`
-		Orders  []OrderResponse  `json:"orders"`
+		Code    int             `json:"code"`
+		Message string          `json:"message"`
+		Orders  []OrderResponse `json:"orders"`
 	}
 
 	if err := json.Unmarshal(body, &apiResp); err != nil {

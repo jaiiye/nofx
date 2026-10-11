@@ -13,11 +13,12 @@ import (
 	"time"
 
 	"github.com/elliottech/lighter-go/types"
+	"nofx/trader/connector"
 	tradertypes "nofx/trader/types"
 )
 
 // OpenLong Open long position (implements Trader interface)
-func (t *LighterTraderV2) OpenLong(symbol string, quantity float64, leverage int) (map[string]interface{}, error) {
+func (t *LighterTraderV2) OpenLong(symbol string, quantity float64, leverage int) (*connector.OrderResult, error) {
 	if t.txClient == nil {
 		return nil, fmt.Errorf("TxClient not initialized, please set API Key first")
 	}
@@ -48,17 +49,17 @@ func (t *LighterTraderV2) OpenLong(symbol string, quantity float64, leverage int
 
 	logger.Infof("✓ LIGHTER opened long successfully: %s @ %.2f", symbol, marketPrice)
 
-	return map[string]interface{}{
-		"orderId": orderResult["orderId"],
-		"symbol":  symbol,
-		"side":    "long",
-		"status":  "FILLED",
-		"price":   marketPrice,
+	orderID, _ := orderResult["orderId"].(string)
+	return &connector.OrderResult{
+		OrderID:      orderID,
+		Symbol:       symbol,
+		Status:       "FILLED",
+		AvgFillPrice: marketPrice, // estimated at fetch time; fills are authoritative via OrderSync
 	}, nil
 }
 
 // OpenShort Open short position (implements Trader interface)
-func (t *LighterTraderV2) OpenShort(symbol string, quantity float64, leverage int) (map[string]interface{}, error) {
+func (t *LighterTraderV2) OpenShort(symbol string, quantity float64, leverage int) (*connector.OrderResult, error) {
 	if t.txClient == nil {
 		return nil, fmt.Errorf("TxClient not initialized, please set API Key first")
 	}
@@ -89,17 +90,17 @@ func (t *LighterTraderV2) OpenShort(symbol string, quantity float64, leverage in
 
 	logger.Infof("✓ LIGHTER opened short successfully: %s @ %.2f", symbol, marketPrice)
 
-	return map[string]interface{}{
-		"orderId": orderResult["orderId"],
-		"symbol":  symbol,
-		"side":    "short",
-		"status":  "FILLED",
-		"price":   marketPrice,
+	orderID, _ := orderResult["orderId"].(string)
+	return &connector.OrderResult{
+		OrderID:      orderID,
+		Symbol:       symbol,
+		Status:       "FILLED",
+		AvgFillPrice: marketPrice, // estimated at fetch time; fills are authoritative via OrderSync
 	}, nil
 }
 
 // CloseLong Close long position (implements Trader interface)
-func (t *LighterTraderV2) CloseLong(symbol string, quantity float64) (map[string]interface{}, error) {
+func (t *LighterTraderV2) CloseLong(symbol string, quantity float64) (*connector.OrderResult, error) {
 	if t.txClient == nil {
 		return nil, fmt.Errorf("TxClient not initialized")
 	}
@@ -111,9 +112,9 @@ func (t *LighterTraderV2) CloseLong(symbol string, quantity float64) (map[string
 			return nil, fmt.Errorf("failed to get position: %w", err)
 		}
 		if pos == nil || pos.Size == 0 {
-			return map[string]interface{}{
-				"symbol": symbol,
-				"status": "NO_POSITION",
+			return &connector.OrderResult{
+				Symbol: symbol,
+				Status: "NO_POSITION",
 			}, nil
 		}
 		quantity = pos.Size
@@ -135,15 +136,15 @@ func (t *LighterTraderV2) CloseLong(symbol string, quantity float64) (map[string
 	txHash, _ := orderResult["orderId"].(string)
 	logger.Infof("✓ LIGHTER closed long successfully: %s (tx: %s)", symbol, txHash)
 
-	return map[string]interface{}{
-		"orderId": txHash,
-		"symbol":  symbol,
-		"status":  "FILLED",
+	return &connector.OrderResult{
+		OrderID: txHash,
+		Symbol:  symbol,
+		Status:  "FILLED",
 	}, nil
 }
 
 // CloseShort Close short position (implements Trader interface)
-func (t *LighterTraderV2) CloseShort(symbol string, quantity float64) (map[string]interface{}, error) {
+func (t *LighterTraderV2) CloseShort(symbol string, quantity float64) (*connector.OrderResult, error) {
 	if t.txClient == nil {
 		return nil, fmt.Errorf("TxClient not initialized")
 	}
@@ -155,9 +156,9 @@ func (t *LighterTraderV2) CloseShort(symbol string, quantity float64) (map[strin
 			return nil, fmt.Errorf("failed to get position: %w", err)
 		}
 		if pos == nil || pos.Size == 0 {
-			return map[string]interface{}{
-				"symbol": symbol,
-				"status": "NO_POSITION",
+			return &connector.OrderResult{
+				Symbol: symbol,
+				Status: "NO_POSITION",
 			}, nil
 		}
 		quantity = pos.Size
@@ -179,10 +180,10 @@ func (t *LighterTraderV2) CloseShort(symbol string, quantity float64) (map[strin
 	txHash, _ := orderResult["orderId"].(string)
 	logger.Infof("✓ LIGHTER closed short successfully: %s (tx: %s)", symbol, txHash)
 
-	return map[string]interface{}{
-		"orderId": txHash,
-		"symbol":  symbol,
-		"status":  "FILLED",
+	return &connector.OrderResult{
+		OrderID: txHash,
+		Symbol:  symbol,
+		Status:  "FILLED",
 	}, nil
 }
 
@@ -322,11 +323,11 @@ func (t *LighterTraderV2) CreateOrder(symbol string, isAsk bool, quantity float6
 
 // SendTxResponse Send transaction response
 type SendTxResponse struct {
-	Code                    int                    `json:"code"`
-	Message                 string                 `json:"message"`
-	TxHash                  string                 `json:"tx_hash"`
-	PredictedExecutionTime  int64                  `json:"predicted_execution_time_ms"`
-	Data                    map[string]interface{} `json:"data"`
+	Code                   int                    `json:"code"`
+	Message                string                 `json:"message"`
+	TxHash                 string                 `json:"tx_hash"`
+	PredictedExecutionTime int64                  `json:"predicted_execution_time_ms"`
+	Data                   map[string]interface{} `json:"data"`
 }
 
 // CreateOrderTxInfoAPI Order transaction info with CamelCase JSON tags (matching SDK) + hex signature

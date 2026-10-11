@@ -6,6 +6,7 @@ import (
 	"nofx/logger"
 	"nofx/market"
 	"nofx/store"
+	"strconv"
 	"time"
 )
 
@@ -100,11 +101,11 @@ func (at *AutoTrader) executeOpenLongWithRecord(decision *kernel.Decision, actio
 	}
 
 	// Record order ID
-	if orderID, ok := order["orderId"].(int64); ok {
+	if orderID, err := strconv.ParseInt(order.OrderID, 10, 64); err == nil {
 		actionRecord.OrderID = orderID
 	}
 
-	logger.Infof("  ✓ Position opened successfully, order ID: %v, quantity: %.4f", order["orderId"], quantity)
+	logger.Infof("  ✓ Position opened successfully, order ID: %v, quantity: %.4f", order.OrderID, quantity)
 
 	// Record order to database and poll for confirmation
 	at.recordAndConfirmOrder(order, decision.Symbol, "open_long", quantity, marketData.CurrentPrice, decision.Leverage, 0)
@@ -182,11 +183,11 @@ func (at *AutoTrader) executeOpenShortWithRecord(decision *kernel.Decision, acti
 	}
 
 	// Record order ID
-	if orderID, ok := order["orderId"].(int64); ok {
+	if orderID, err := strconv.ParseInt(order.OrderID, 10, 64); err == nil {
 		actionRecord.OrderID = orderID
 	}
 
-	logger.Infof("  ✓ Position opened successfully, order ID: %v, quantity: %.4f", order["orderId"], quantity)
+	logger.Infof("  ✓ Position opened successfully, order ID: %v, quantity: %.4f", order.OrderID, quantity)
 
 	// Record order to database and poll for confirmation
 	at.recordAndConfirmOrder(order, decision.Symbol, "open_short", quantity, marketData.CurrentPrice, decision.Leverage, 0)
@@ -259,7 +260,7 @@ func (at *AutoTrader) executeCloseLongWithRecord(decision *kernel.Decision, acti
 	}
 
 	// Record order ID
-	if orderID, ok := order["orderId"].(int64); ok {
+	if orderID, err := strconv.ParseInt(order.OrderID, 10, 64); err == nil {
 		actionRecord.OrderID = orderID
 	}
 
@@ -323,7 +324,7 @@ func (at *AutoTrader) executeCloseShortWithRecord(decision *kernel.Decision, act
 	}
 
 	// Record order ID
-	if orderID, ok := order["orderId"].(int64); ok {
+	if orderID, err := strconv.ParseInt(order.OrderID, 10, 64); err == nil {
 		actionRecord.OrderID = orderID
 	}
 

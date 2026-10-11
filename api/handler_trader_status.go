@@ -13,6 +13,7 @@ import (
 	"nofx/trader/binance"
 	"nofx/trader/bitget"
 	"nofx/trader/bybit"
+	"nofx/trader/connector"
 	"nofx/trader/gate"
 	hyperliquidtrader "nofx/trader/hyperliquid"
 	"nofx/trader/kucoin"
@@ -247,7 +248,7 @@ func (s *Server) handleClosePosition(c *gin.Context) {
 	}
 
 	// Execute close position operation
-	var result map[string]interface{}
+	var result *connector.OrderResult
 	var closeErr error
 
 	if req.Side == "LONG" {
@@ -279,33 +280,27 @@ func (s *Server) handleClosePosition(c *gin.Context) {
 }
 
 // recordClosePositionOrder Record close position order to database (Lighter version - direct FILLED status)
-func (s *Server) recordClosePositionOrder(traderID, exchangeID, exchangeType, symbol, side string, quantity, exitPrice float64, result map[string]interface{}) {
+func (s *Server) recordClosePositionOrder(traderID, exchangeID, exchangeType, symbol, side string, quantity, exitPrice float64, result *connector.OrderResult) {
 	// Skip for exchanges with OrderSync - let the background sync handle it to avoid duplicates
 	switch exchangeType {
-	case "binance", "lighter", "hyperliquid", "bybit", "okx", "bitget", "aster", "gate":
+	case "binance", "lighter", "hyperliquid", "bybit", "okx", "bitget", "aster", "gate", "kucoin":
 		logger.Infof("  📝 Close order will be synced by OrderSync, skipping immediate record")
 		return
 	}
 
 	// Check if order was placed (skip if NO_POSITION)
-	status, _ := result["status"].(string)
+	if result == nil {
+		logger.Infof("  ⚠️ No close result, skipping order record")
+		return
+	}
+	status := result.Status
 	if status == "NO_POSITION" {
 		logger.Infof("  ⚠️ No position to close, skipping order record")
 		return
 	}
 
 	// Get order ID from result
-	var orderID string
-	switch v := result["orderId"].(type) {
-	case int64:
-		orderID = fmt.Sprintf("%d", v)
-	case float64:
-		orderID = fmt.Sprintf("%.0f", v)
-	case string:
-		orderID = v
-	default:
-		orderID = fmt.Sprintf("%v", v)
-	}
+	orderID := result.OrderID
 
 	if orderID == "" || orderID == "0" {
 		logger.Infof("  ⚠️ Order ID is empty, skipping record")
@@ -408,21 +403,19 @@ func (s *Server) pollAndUpdateOrderStatus(orderRecordID int64, traderID, exchang
 			time.Sleep(500 * time.Millisecond)
 			continue
 		}
-		if err == nil {
-			statusStr, _ := status["status"].(string)
+		if err == nil && status != nil {
+			statusStr := status.Status
 			if statusStr == "FILLED" {
 				// Get actual fill price
-				if avgPrice, ok := status["avgPrice"].(float64); ok && avgPrice > 0 {
-					actualPrice = avgPrice
+				if status.AvgFillPrice > 0 {
+					actualPrice = status.AvgFillPrice
 				}
 				// Get actual executed quantity
-				if execQty, ok := status["executedQty"].(float64); ok && execQty > 0 {
-					actualQty = execQty
+				if status.FilledQty > 0 {
+					actualQty = status.FilledQty
 				}
 				// Get commission/fee
-				if commission, ok := status["commission"].(float64); ok {
-					fee = commission
-				}
+				fee = status.Fee
 
 				logger.Infof("  ✅ Order filled: avgPrice=%.6f, qty=%.6f, fee=%.6f", actualPrice, actualQty, fee)
 

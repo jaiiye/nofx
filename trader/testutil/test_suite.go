@@ -5,6 +5,7 @@ import (
 
 	"github.com/agiledragon/gomonkey/v2"
 	"github.com/stretchr/testify/assert"
+	"nofx/trader/connector"
 	"nofx/trader/types"
 )
 
@@ -326,7 +327,7 @@ func (s *TraderTestSuite) TestOpenLong() {
 		quantity  float64
 		leverage  int
 		wantError bool
-		validate  func(*testing.T, map[string]interface{})
+		validate  func(*testing.T, *connector.OrderResult)
 	}{
 		{
 			name:      "Successfully open long",
@@ -334,10 +335,9 @@ func (s *TraderTestSuite) TestOpenLong() {
 			quantity:  0.01,
 			leverage:  10,
 			wantError: false,
-			validate: func(t *testing.T, result map[string]interface{}) {
+			validate: func(t *testing.T, result *connector.OrderResult) {
 				assert.NotNil(t, result)
-				assert.Contains(t, result, "symbol")
-				assert.Equal(t, "BTCUSDT", result["symbol"])
+				assert.Equal(t, "BTCUSDT", result.Symbol)
 			},
 		},
 		{
@@ -346,7 +346,7 @@ func (s *TraderTestSuite) TestOpenLong() {
 			quantity:  0.004, // Increased to 0.004 to meet Binance Futures minimum order value of 10 USDT (0.004 * 3000 = 12 USDT)
 			leverage:  5,
 			wantError: false,
-			validate: func(t *testing.T, result map[string]interface{}) {
+			validate: func(t *testing.T, result *connector.OrderResult) {
 				assert.NotNil(t, result)
 			},
 		},
@@ -375,7 +375,7 @@ func (s *TraderTestSuite) TestOpenShort() {
 		quantity  float64
 		leverage  int
 		wantError bool
-		validate  func(*testing.T, map[string]interface{})
+		validate  func(*testing.T, *connector.OrderResult)
 	}{
 		{
 			name:      "Successfully open short",
@@ -383,10 +383,9 @@ func (s *TraderTestSuite) TestOpenShort() {
 			quantity:  0.01,
 			leverage:  10,
 			wantError: false,
-			validate: func(t *testing.T, result map[string]interface{}) {
+			validate: func(t *testing.T, result *connector.OrderResult) {
 				assert.NotNil(t, result)
-				assert.Contains(t, result, "symbol")
-				assert.Equal(t, "BTCUSDT", result["symbol"])
+				assert.Equal(t, "BTCUSDT", result.Symbol)
 			},
 		},
 		{
@@ -395,7 +394,7 @@ func (s *TraderTestSuite) TestOpenShort() {
 			quantity:  0.004, // Increased to 0.004 to meet Binance Futures minimum order value of 10 USDT (0.004 * 3000 = 12 USDT)
 			leverage:  5,
 			wantError: false,
-			validate: func(t *testing.T, result map[string]interface{}) {
+			validate: func(t *testing.T, result *connector.OrderResult) {
 				assert.NotNil(t, result)
 			},
 		},
@@ -423,16 +422,16 @@ func (s *TraderTestSuite) TestCloseLong() {
 		symbol    string
 		quantity  float64
 		wantError bool
-		validate  func(*testing.T, map[string]interface{})
+		validate  func(*testing.T, *connector.OrderResult)
 	}{
 		{
 			name:      "Close specified quantity",
 			symbol:    "BTCUSDT",
 			quantity:  0.01,
 			wantError: false,
-			validate: func(t *testing.T, result map[string]interface{}) {
+			validate: func(t *testing.T, result *connector.OrderResult) {
 				assert.NotNil(t, result)
-				assert.Contains(t, result, "symbol")
+				assert.NotEmpty(t, result.Symbol)
 			},
 		},
 		{
@@ -466,16 +465,16 @@ func (s *TraderTestSuite) TestCloseShort() {
 		symbol    string
 		quantity  float64
 		wantError bool
-		validate  func(*testing.T, map[string]interface{})
+		validate  func(*testing.T, *connector.OrderResult)
 	}{
 		{
 			name:      "Close specified quantity",
 			symbol:    "BTCUSDT",
 			quantity:  0.01,
 			wantError: false,
-			validate: func(t *testing.T, result map[string]interface{}) {
+			validate: func(t *testing.T, result *connector.OrderResult) {
 				assert.NotNil(t, result)
-				assert.Contains(t, result, "symbol")
+				assert.NotEmpty(t, result.Symbol)
 			},
 		},
 		{

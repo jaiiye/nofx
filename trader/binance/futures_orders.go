@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"nofx/logger"
+	"nofx/trader/connector"
 	"nofx/trader/types"
 	"strconv"
 
@@ -11,7 +12,7 @@ import (
 )
 
 // OpenLong opens a long position
-func (t *FuturesTrader) OpenLong(symbol string, quantity float64, leverage int) (map[string]interface{}, error) {
+func (t *FuturesTrader) OpenLong(symbol string, quantity float64, leverage int) (*connector.OrderResult, error) {
 	// First cancel all pending orders for this symbol (clean up old stop-loss and take-profit orders)
 	if err := t.CancelAllOrders(symbol); err != nil {
 		logger.Infof("  ⚠ Failed to cancel old pending orders (may not have any): %v", err)
@@ -58,15 +59,16 @@ func (t *FuturesTrader) OpenLong(symbol string, quantity float64, leverage int) 
 	logger.Infof("✓ Opened long position successfully: %s quantity: %s", symbol, quantityStr)
 	logger.Infof("  Order ID: %d", order.OrderID)
 
-	result := make(map[string]interface{})
-	result["orderId"] = order.OrderID
-	result["symbol"] = order.Symbol
-	result["status"] = order.Status
+	result := &connector.OrderResult{
+		OrderID: fmt.Sprintf("%d", order.OrderID),
+		Symbol:  order.Symbol,
+		Status:  string(order.Status),
+	}
 	return result, nil
 }
 
 // OpenShort opens a short position
-func (t *FuturesTrader) OpenShort(symbol string, quantity float64, leverage int) (map[string]interface{}, error) {
+func (t *FuturesTrader) OpenShort(symbol string, quantity float64, leverage int) (*connector.OrderResult, error) {
 	// First cancel all pending orders for this symbol (clean up old stop-loss and take-profit orders)
 	if err := t.CancelAllOrders(symbol); err != nil {
 		logger.Infof("  ⚠ Failed to cancel old pending orders (may not have any): %v", err)
@@ -113,15 +115,16 @@ func (t *FuturesTrader) OpenShort(symbol string, quantity float64, leverage int)
 	logger.Infof("✓ Opened short position successfully: %s quantity: %s", symbol, quantityStr)
 	logger.Infof("  Order ID: %d", order.OrderID)
 
-	result := make(map[string]interface{})
-	result["orderId"] = order.OrderID
-	result["symbol"] = order.Symbol
-	result["status"] = order.Status
+	result := &connector.OrderResult{
+		OrderID: fmt.Sprintf("%d", order.OrderID),
+		Symbol:  order.Symbol,
+		Status:  string(order.Status),
+	}
 	return result, nil
 }
 
 // CloseLong closes a long position
-func (t *FuturesTrader) CloseLong(symbol string, quantity float64) (map[string]interface{}, error) {
+func (t *FuturesTrader) CloseLong(symbol string, quantity float64) (*connector.OrderResult, error) {
 	// If quantity is 0, get current position quantity
 	if quantity == 0 {
 		positions, err := t.GetPositions()
@@ -168,15 +171,16 @@ func (t *FuturesTrader) CloseLong(symbol string, quantity float64) (map[string]i
 		logger.Infof("  ⚠ Failed to cancel pending orders: %v", err)
 	}
 
-	result := make(map[string]interface{})
-	result["orderId"] = order.OrderID
-	result["symbol"] = order.Symbol
-	result["status"] = order.Status
+	result := &connector.OrderResult{
+		OrderID: fmt.Sprintf("%d", order.OrderID),
+		Symbol:  order.Symbol,
+		Status:  string(order.Status),
+	}
 	return result, nil
 }
 
 // CloseShort closes a short position
-func (t *FuturesTrader) CloseShort(symbol string, quantity float64) (map[string]interface{}, error) {
+func (t *FuturesTrader) CloseShort(symbol string, quantity float64) (*connector.OrderResult, error) {
 	// If quantity is 0, get current position quantity
 	if quantity == 0 {
 		positions, err := t.GetPositions()
@@ -223,10 +227,11 @@ func (t *FuturesTrader) CloseShort(symbol string, quantity float64) (map[string]
 		logger.Infof("  ⚠ Failed to cancel pending orders: %v", err)
 	}
 
-	result := make(map[string]interface{})
-	result["orderId"] = order.OrderID
-	result["symbol"] = order.Symbol
-	result["status"] = order.Status
+	result := &connector.OrderResult{
+		OrderID: fmt.Sprintf("%d", order.OrderID),
+		Symbol:  order.Symbol,
+		Status:  string(order.Status),
+	}
 	return result, nil
 }
 
@@ -719,7 +724,7 @@ func (t *FuturesTrader) SetTakeProfit(symbol string, positionSide string, quanti
 }
 
 // GetOrderStatus gets order status
-func (t *FuturesTrader) GetOrderStatus(symbol string, orderID string) (map[string]interface{}, error) {
+func (t *FuturesTrader) GetOrderStatus(symbol string, orderID string) (*connector.OrderResult, error) {
 	// Convert orderID to int64
 	orderIDInt, err := strconv.ParseInt(orderID, 10, 64)
 	if err != nil {
@@ -738,21 +743,17 @@ func (t *FuturesTrader) GetOrderStatus(symbol string, orderID string) (map[strin
 	avgPrice, _ := strconv.ParseFloat(order.AvgPrice, 64)
 	executedQty, _ := strconv.ParseFloat(order.ExecutedQuantity, 64)
 
-	result := map[string]interface{}{
-		"orderId":     order.OrderID,
-		"symbol":      order.Symbol,
-		"status":      string(order.Status),
-		"avgPrice":    avgPrice,
-		"executedQty": executedQty,
-		"side":        string(order.Side),
-		"type":        string(order.Type),
-		"time":        order.Time,
-		"updateTime":  order.UpdateTime,
+	result := &connector.OrderResult{
+		OrderID:      fmt.Sprintf("%d", order.OrderID),
+		Symbol:       order.Symbol,
+		Status:       string(order.Status),
+		AvgFillPrice: avgPrice,
+		FilledQty:    executedQty,
+		Fee:          0.0,
 	}
 
 	// Binance futures commission fee needs to be obtained through GetUserTrades, not retrieved here for now
 	// Can be obtained later through WebSocket or separate query
-	result["commission"] = 0.0
 
 	return result, nil
 }

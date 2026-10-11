@@ -4,13 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"nofx/logger"
+	"nofx/trader/connector"
 	"nofx/trader/types"
 	"strconv"
 	"strings"
 )
 
 // OpenLong opens long position
-func (t *BitgetTrader) OpenLong(symbol string, quantity float64, leverage int) (map[string]interface{}, error) {
+func (t *BitgetTrader) OpenLong(symbol string, quantity float64, leverage int) (*connector.OrderResult, error) {
 	symbol = t.convertSymbol(symbol)
 
 	// Cancel old orders first
@@ -58,15 +59,15 @@ func (t *BitgetTrader) OpenLong(symbol string, quantity float64, leverage int) (
 
 	logger.Infof("✓ Bitget opened long position successfully: %s", symbol)
 
-	return map[string]interface{}{
-		"orderId": order.OrderId,
-		"symbol":  symbol,
-		"status":  "FILLED",
+	return &connector.OrderResult{
+		OrderID: order.OrderId,
+		Symbol:  symbol,
+		Status:  "FILLED",
 	}, nil
 }
 
 // OpenShort opens short position
-func (t *BitgetTrader) OpenShort(symbol string, quantity float64, leverage int) (map[string]interface{}, error) {
+func (t *BitgetTrader) OpenShort(symbol string, quantity float64, leverage int) (*connector.OrderResult, error) {
 	symbol = t.convertSymbol(symbol)
 
 	// Cancel old orders first
@@ -114,15 +115,15 @@ func (t *BitgetTrader) OpenShort(symbol string, quantity float64, leverage int) 
 
 	logger.Infof("✓ Bitget opened short position successfully: %s", symbol)
 
-	return map[string]interface{}{
-		"orderId": order.OrderId,
-		"symbol":  symbol,
-		"status":  "FILLED",
+	return &connector.OrderResult{
+		OrderID: order.OrderId,
+		Symbol:  symbol,
+		Status:  "FILLED",
 	}, nil
 }
 
 // CloseLong closes long position
-func (t *BitgetTrader) CloseLong(symbol string, quantity float64) (map[string]interface{}, error) {
+func (t *BitgetTrader) CloseLong(symbol string, quantity float64) (*connector.OrderResult, error) {
 	symbol = t.convertSymbol(symbol)
 
 	// If quantity is 0, get current position
@@ -177,15 +178,15 @@ func (t *BitgetTrader) CloseLong(symbol string, quantity float64) (map[string]in
 
 	logger.Infof("✓ Bitget closed long position successfully: %s", symbol)
 
-	return map[string]interface{}{
-		"orderId": order.OrderId,
-		"symbol":  symbol,
-		"status":  "FILLED",
+	return &connector.OrderResult{
+		OrderID: order.OrderId,
+		Symbol:  symbol,
+		Status:  "FILLED",
 	}, nil
 }
 
 // CloseShort closes short position
-func (t *BitgetTrader) CloseShort(symbol string, quantity float64) (map[string]interface{}, error) {
+func (t *BitgetTrader) CloseShort(symbol string, quantity float64) (*connector.OrderResult, error) {
 	symbol = t.convertSymbol(symbol)
 
 	// If quantity is 0, get current position
@@ -245,10 +246,10 @@ func (t *BitgetTrader) CloseShort(symbol string, quantity float64) (map[string]i
 
 	logger.Infof("✓ Bitget closed short position successfully: %s", symbol)
 
-	return map[string]interface{}{
-		"orderId": order.OrderId,
-		"symbol":  symbol,
-		"status":  "FILLED",
+	return &connector.OrderResult{
+		OrderID: order.OrderId,
+		Symbol:  symbol,
+		Status:  "FILLED",
 	}, nil
 }
 
@@ -431,7 +432,7 @@ func (t *BitgetTrader) CancelStopOrders(symbol string) error {
 }
 
 // GetOrderStatus gets order status
-func (t *BitgetTrader) GetOrderStatus(symbol string, orderID string) (map[string]interface{}, error) {
+func (t *BitgetTrader) GetOrderStatus(symbol string, orderID string) (*connector.OrderResult, error) {
 	symbol = t.convertSymbol(symbol)
 
 	params := map[string]interface{}{
@@ -446,15 +447,15 @@ func (t *BitgetTrader) GetOrderStatus(symbol string, orderID string) (map[string
 	}
 
 	var order struct {
-		OrderId      string `json:"orderId"`
-		State        string `json:"state"`        // filled, canceled, partially_filled, new
-		PriceAvg     string `json:"priceAvg"`     // Average fill price
-		BaseVolume   string `json:"baseVolume"`   // Filled quantity
-		Fee          string `json:"fee"`          // Fee
-		Side         string `json:"side"`
-		OrderType    string `json:"orderType"`
-		CTime        string `json:"cTime"`
-		UTime        string `json:"uTime"`
+		OrderId    string `json:"orderId"`
+		State      string `json:"state"`      // filled, canceled, partially_filled, new
+		PriceAvg   string `json:"priceAvg"`   // Average fill price
+		BaseVolume string `json:"baseVolume"` // Filled quantity
+		Fee        string `json:"fee"`        // Fee
+		Side       string `json:"side"`
+		OrderType  string `json:"orderType"`
+		CTime      string `json:"cTime"`
+		UTime      string `json:"uTime"`
 	}
 
 	if err := json.Unmarshal(data, &order); err != nil {
@@ -464,8 +465,6 @@ func (t *BitgetTrader) GetOrderStatus(symbol string, orderID string) (map[string
 	avgPrice, _ := strconv.ParseFloat(order.PriceAvg, 64)
 	fillQty, _ := strconv.ParseFloat(order.BaseVolume, 64)
 	fee, _ := strconv.ParseFloat(order.Fee, 64)
-	cTime, _ := strconv.ParseInt(order.CTime, 10, 64)
-	uTime, _ := strconv.ParseInt(order.UTime, 10, 64)
 
 	// Status mapping
 	statusMap := map[string]string{
@@ -480,17 +479,13 @@ func (t *BitgetTrader) GetOrderStatus(symbol string, orderID string) (map[string
 		status = order.State
 	}
 
-	return map[string]interface{}{
-		"orderId":     order.OrderId,
-		"symbol":      symbol,
-		"status":      status,
-		"avgPrice":    avgPrice,
-		"executedQty": fillQty,
-		"side":        order.Side,
-		"type":        order.OrderType,
-		"time":        cTime,
-		"updateTime":  uTime,
-		"commission":  -fee,
+	return &connector.OrderResult{
+		OrderID:      order.OrderId,
+		Symbol:       symbol,
+		Status:       status,
+		AvgFillPrice: avgPrice,
+		FilledQty:    fillQty,
+		Fee:          -fee,
 	}, nil
 }
 
@@ -512,15 +507,15 @@ func (t *BitgetTrader) GetOpenOrders(symbol string) ([]types.OpenOrder, error) {
 	if err == nil && data != nil {
 		var orders struct {
 			EntrustedList []struct {
-				OrderId      string `json:"orderId"`
-				Symbol       string `json:"symbol"`
-				Side         string `json:"side"`         // buy/sell
-				TradeSide    string `json:"tradeSide"`    // open/close
-				PosSide      string `json:"posSide"`      // long/short
-				OrderType    string `json:"orderType"`    // limit/market
-				Price        string `json:"price"`
-				Size         string `json:"size"`
-				State        string `json:"state"`
+				OrderId   string `json:"orderId"`
+				Symbol    string `json:"symbol"`
+				Side      string `json:"side"`      // buy/sell
+				TradeSide string `json:"tradeSide"` // open/close
+				PosSide   string `json:"posSide"`   // long/short
+				OrderType string `json:"orderType"` // limit/market
+				Price     string `json:"price"`
+				Size      string `json:"size"`
+				State     string `json:"state"`
 			} `json:"entrustedList"`
 		}
 		if err := json.Unmarshal(data, &orders); err == nil {

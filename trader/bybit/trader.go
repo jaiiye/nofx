@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"nofx/logger"
+	"nofx/trader/connector"
 	"strconv"
 	"strings"
 	"sync"
@@ -182,7 +183,7 @@ func (t *BybitTrader) clearCache() {
 	t.positionsCacheMutex.Unlock()
 }
 
-func (t *BybitTrader) parseOrderResult(result *bybit.ServerResponse) (map[string]interface{}, error) {
+func (t *BybitTrader) parseOrderResult(result *bybit.ServerResponse) (*connector.OrderResult, error) {
 	if result.RetCode != 0 {
 		return nil, fmt.Errorf("order placement failed: %s", result.RetMsg)
 	}
@@ -193,9 +194,11 @@ func (t *BybitTrader) parseOrderResult(result *bybit.ServerResponse) (map[string
 	}
 
 	orderId, _ := resultData["orderId"].(string)
+	symbol, _ := resultData["orderSymbol"].(string)
 
-	return map[string]interface{}{
-		"orderId": orderId,
-		"status":  "NEW",
+	return &connector.OrderResult{
+		OrderID: orderId,
+		Symbol:  symbol,
+		Status:  "NEW",
 	}, nil
 }

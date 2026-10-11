@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"nofx/logger"
+	"nofx/trader/connector"
 	"nofx/trader/types"
 	"strconv"
 	"strings"
@@ -12,7 +13,7 @@ import (
 )
 
 // OpenLong opens long position
-func (t *KuCoinTrader) OpenLong(symbol string, quantity float64, leverage int) (map[string]interface{}, error) {
+func (t *KuCoinTrader) OpenLong(symbol string, quantity float64, leverage int) (*connector.OrderResult, error) {
 	// Cancel old orders
 	if err := t.CancelAllOrders(symbol); err != nil {
 		logger.Infof("  ⚠ Failed to cancel old pending orders (may not have any): %v", err)
@@ -60,16 +61,16 @@ func (t *KuCoinTrader) OpenLong(symbol string, quantity float64, leverage int) (
 	// Query order to get fill price
 	fillPrice := t.queryOrderFillPrice(result.OrderId)
 
-	return map[string]interface{}{
-		"orderId":   result.OrderId,
-		"symbol":    symbol,
-		"status":    "FILLED",
-		"fillPrice": fillPrice,
+	return &connector.OrderResult{
+		OrderID:      result.OrderId,
+		Symbol:       symbol,
+		Status:       "FILLED",
+		AvgFillPrice: fillPrice,
 	}, nil
 }
 
 // OpenShort opens short position
-func (t *KuCoinTrader) OpenShort(symbol string, quantity float64, leverage int) (map[string]interface{}, error) {
+func (t *KuCoinTrader) OpenShort(symbol string, quantity float64, leverage int) (*connector.OrderResult, error) {
 	// Cancel old orders
 	if err := t.CancelAllOrders(symbol); err != nil {
 		logger.Infof("  ⚠ Failed to cancel old pending orders (may not have any): %v", err)
@@ -117,11 +118,11 @@ func (t *KuCoinTrader) OpenShort(symbol string, quantity float64, leverage int) 
 	// Query order to get fill price
 	fillPrice := t.queryOrderFillPrice(result.OrderId)
 
-	return map[string]interface{}{
-		"orderId":   result.OrderId,
-		"symbol":    symbol,
-		"status":    "FILLED",
-		"fillPrice": fillPrice,
+	return &connector.OrderResult{
+		OrderID:      result.OrderId,
+		Symbol:       symbol,
+		Status:       "FILLED",
+		AvgFillPrice: fillPrice,
 	}, nil
 }
 
@@ -151,7 +152,7 @@ func (t *KuCoinTrader) queryOrderFillPrice(orderId string) float64 {
 }
 
 // CloseLong closes long position
-func (t *KuCoinTrader) CloseLong(symbol string, quantity float64) (map[string]interface{}, error) {
+func (t *KuCoinTrader) CloseLong(symbol string, quantity float64) (*connector.OrderResult, error) {
 	// Invalidate position cache and get fresh positions
 	t.InvalidatePositionCache()
 	positions, err := t.GetPositions()
@@ -176,9 +177,8 @@ func (t *KuCoinTrader) CloseLong(symbol string, quantity float64) (map[string]in
 	}
 
 	if !posFound || actualQty == 0 {
-		return map[string]interface{}{
-			"status":  "NO_POSITION",
-			"message": fmt.Sprintf("No long position found for %s on KuCoin", symbol),
+		return &connector.OrderResult{
+			Status: "NO_POSITION",
 		}, nil
 	}
 
@@ -226,15 +226,15 @@ func (t *KuCoinTrader) CloseLong(symbol string, quantity float64) (map[string]in
 		logger.Infof("  ⚠ Failed to cancel pending orders: %v", err)
 	}
 
-	return map[string]interface{}{
-		"orderId": result.OrderId,
-		"symbol":  symbol,
-		"status":  "FILLED",
+	return &connector.OrderResult{
+		OrderID: result.OrderId,
+		Symbol:  symbol,
+		Status:  "FILLED",
 	}, nil
 }
 
 // CloseShort closes short position
-func (t *KuCoinTrader) CloseShort(symbol string, quantity float64) (map[string]interface{}, error) {
+func (t *KuCoinTrader) CloseShort(symbol string, quantity float64) (*connector.OrderResult, error) {
 	// Invalidate position cache and get fresh positions
 	t.InvalidatePositionCache()
 	positions, err := t.GetPositions()
@@ -259,9 +259,8 @@ func (t *KuCoinTrader) CloseShort(symbol string, quantity float64) (map[string]i
 	}
 
 	if !posFound || actualQty == 0 {
-		return map[string]interface{}{
-			"status":  "NO_POSITION",
-			"message": fmt.Sprintf("No short position found for %s on KuCoin", symbol),
+		return &connector.OrderResult{
+			Status: "NO_POSITION",
 		}, nil
 	}
 
@@ -309,10 +308,10 @@ func (t *KuCoinTrader) CloseShort(symbol string, quantity float64) (map[string]i
 		logger.Infof("  ⚠ Failed to cancel pending orders: %v", err)
 	}
 
-	return map[string]interface{}{
-		"orderId": result.OrderId,
-		"symbol":  symbol,
-		"status":  "FILLED",
+	return &connector.OrderResult{
+		OrderID: result.OrderId,
+		Symbol:  symbol,
+		Status:  "FILLED",
 	}, nil
 }
 
@@ -562,7 +561,7 @@ func (t *KuCoinTrader) FormatQuantity(symbol string, quantity float64) (string, 
 }
 
 // GetOrderStatus gets order status
-func (t *KuCoinTrader) GetOrderStatus(symbol string, orderID string) (map[string]interface{}, error) {
+func (t *KuCoinTrader) GetOrderStatus(symbol string, orderID string) (*connector.OrderResult, error) {
 	path := fmt.Sprintf("%s/%s", kucoinOrderPath, orderID)
 	data, err := t.doRequest("GET", path, nil)
 	if err != nil {
@@ -591,13 +590,13 @@ func (t *KuCoinTrader) GetOrderStatus(symbol string, orderID string) (map[string
 		status = "CANCELED"
 	}
 
-	return map[string]interface{}{
-		"orderId":     order.Id,
-		"symbol":      t.convertSymbolBack(order.Symbol),
-		"status":      status,
-		"avgPrice":    order.DealAvgPrice,
-		"executedQty": order.DealSize,
-		"commission":  order.Fee,
+	return &connector.OrderResult{
+		OrderID:      order.Id,
+		Symbol:       t.convertSymbolBack(order.Symbol),
+		Status:       status,
+		AvgFillPrice: order.DealAvgPrice,
+		FilledQty:    float64(order.DealSize),
+		Fee:          order.Fee,
 	}, nil
 }
 

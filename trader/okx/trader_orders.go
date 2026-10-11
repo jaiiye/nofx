@@ -4,13 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"nofx/logger"
+	"nofx/trader/connector"
 	"nofx/trader/types"
 	"strconv"
 	"strings"
 )
 
 // OpenLong opens long position
-func (t *OKXTrader) OpenLong(symbol string, quantity float64, leverage int) (map[string]interface{}, error) {
+func (t *OKXTrader) OpenLong(symbol string, quantity float64, leverage int) (*connector.OrderResult, error) {
 	// Cancel old orders
 	if err := t.CancelAllOrders(symbol); err != nil {
 		logger.Infof("  ⚠ Failed to cancel old pending orders (may not have any): %v", err)
@@ -83,15 +84,15 @@ func (t *OKXTrader) OpenLong(symbol string, quantity float64, leverage int) (map
 	logger.Infof("✓ OKX opened long position successfully: %s size: %s", symbol, szStr)
 	logger.Infof("  Order ID: %s", orders[0].OrdId)
 
-	return map[string]interface{}{
-		"orderId": orders[0].OrdId,
-		"symbol":  symbol,
-		"status":  "FILLED",
+	return &connector.OrderResult{
+		OrderID: orders[0].OrdId,
+		Symbol:  symbol,
+		Status:  "FILLED",
 	}, nil
 }
 
 // OpenShort opens short position
-func (t *OKXTrader) OpenShort(symbol string, quantity float64, leverage int) (map[string]interface{}, error) {
+func (t *OKXTrader) OpenShort(symbol string, quantity float64, leverage int) (*connector.OrderResult, error) {
 	// Cancel old orders
 	if err := t.CancelAllOrders(symbol); err != nil {
 		logger.Infof("  ⚠ Failed to cancel old pending orders (may not have any): %v", err)
@@ -164,15 +165,15 @@ func (t *OKXTrader) OpenShort(symbol string, quantity float64, leverage int) (ma
 	logger.Infof("✓ OKX opened short position successfully: %s size: %s", symbol, szStr)
 	logger.Infof("  Order ID: %s", orders[0].OrdId)
 
-	return map[string]interface{}{
-		"orderId": orders[0].OrdId,
-		"symbol":  symbol,
-		"status":  "FILLED",
+	return &connector.OrderResult{
+		OrderID: orders[0].OrdId,
+		Symbol:  symbol,
+		Status:  "FILLED",
 	}, nil
 }
 
 // CloseLong closes long position
-func (t *OKXTrader) CloseLong(symbol string, quantity float64) (map[string]interface{}, error) {
+func (t *OKXTrader) CloseLong(symbol string, quantity float64) (*connector.OrderResult, error) {
 	instId := t.convertSymbol(symbol)
 
 	// Get instrument info for contract conversion
@@ -213,9 +214,8 @@ func (t *OKXTrader) CloseLong(symbol string, quantity float64) (map[string]inter
 
 	if !posFound || actualQty == 0 {
 		logger.Infof("🔍 OKX CloseLong: NO position found for %s LONG", symbol)
-		return map[string]interface{}{
-			"status":  "NO_POSITION",
-			"message": fmt.Sprintf("No long position found for %s on OKX", symbol),
+		return &connector.OrderResult{
+			Status: "NO_POSITION",
 		}, nil
 	}
 
@@ -277,15 +277,15 @@ func (t *OKXTrader) CloseLong(symbol string, quantity float64) (map[string]inter
 		logger.Infof("  ⚠ Failed to cancel pending orders: %v", err)
 	}
 
-	return map[string]interface{}{
-		"orderId": orders[0].OrdId,
-		"symbol":  symbol,
-		"status":  "FILLED",
+	return &connector.OrderResult{
+		OrderID: orders[0].OrdId,
+		Symbol:  symbol,
+		Status:  "FILLED",
 	}, nil
 }
 
 // CloseShort closes short position
-func (t *OKXTrader) CloseShort(symbol string, quantity float64) (map[string]interface{}, error) {
+func (t *OKXTrader) CloseShort(symbol string, quantity float64) (*connector.OrderResult, error) {
 	instId := t.convertSymbol(symbol)
 
 	// Get instrument info for contract conversion
@@ -321,9 +321,8 @@ func (t *OKXTrader) CloseShort(symbol string, quantity float64) (map[string]inte
 	}
 
 	if !posFound || actualQty == 0 {
-		return map[string]interface{}{
-			"status":  "NO_POSITION",
-			"message": fmt.Sprintf("No short position found for %s on OKX", symbol),
+		return &connector.OrderResult{
+			Status: "NO_POSITION",
 		}, nil
 	}
 
@@ -393,10 +392,10 @@ func (t *OKXTrader) CloseShort(symbol string, quantity float64) (map[string]inte
 		logger.Infof("  ⚠ Failed to cancel pending orders: %v", err)
 	}
 
-	return map[string]interface{}{
-		"orderId": orders[0].OrdId,
-		"symbol":  symbol,
-		"status":  "FILLED",
+	return &connector.OrderResult{
+		OrderID: orders[0].OrdId,
+		Symbol:  symbol,
+		Status:  "FILLED",
 	}, nil
 }
 
@@ -593,7 +592,7 @@ func (t *OKXTrader) CancelStopOrders(symbol string) error {
 }
 
 // GetOrderStatus gets order status
-func (t *OKXTrader) GetOrderStatus(symbol string, orderID string) (map[string]interface{}, error) {
+func (t *OKXTrader) GetOrderStatus(symbol string, orderID string) (*connector.OrderResult, error) {
 	instId := t.convertSymbol(symbol)
 	path := fmt.Sprintf("/api/v5/trade/order?instId=%s&ordId=%s", instId, orderID)
 
@@ -626,8 +625,6 @@ func (t *OKXTrader) GetOrderStatus(symbol string, orderID string) (map[string]in
 	avgPrice, _ := strconv.ParseFloat(order.AvgPx, 64)
 	fillSz, _ := strconv.ParseFloat(order.AccFillSz, 64) // This is in contracts
 	fee, _ := strconv.ParseFloat(order.Fee, 64)
-	cTime, _ := strconv.ParseInt(order.CTime, 10, 64)
-	uTime, _ := strconv.ParseInt(order.UTime, 10, 64)
 
 	// Convert contract count to base asset quantity
 	// executedQty = contracts * ctVal
@@ -651,17 +648,13 @@ func (t *OKXTrader) GetOrderStatus(symbol string, orderID string) (map[string]in
 		status = order.State
 	}
 
-	return map[string]interface{}{
-		"orderId":     order.OrdId,
-		"symbol":      symbol,
-		"status":      status,
-		"avgPrice":    avgPrice,
-		"executedQty": executedQty,
-		"side":        order.Side,
-		"type":        order.OrdType,
-		"time":        cTime,
-		"updateTime":  uTime,
-		"commission":  -fee, // OKX returns negative value
+	return &connector.OrderResult{
+		OrderID:      order.OrdId,
+		Symbol:       symbol,
+		Status:       status,
+		AvgFillPrice: avgPrice,
+		FilledQty:    executedQty,
+		Fee:          -fee,
 	}, nil
 }
 

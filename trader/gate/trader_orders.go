@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"nofx/logger"
+	"nofx/trader/connector"
 	"nofx/trader/types"
 	"strconv"
 	"strings"
@@ -40,7 +41,7 @@ func (t *GateTrader) SetMarginMode(symbol string, isCrossMargin bool) error {
 }
 
 // OpenLong opens a long position
-func (t *GateTrader) OpenLong(symbol string, quantity float64, leverage int) (map[string]interface{}, error) {
+func (t *GateTrader) OpenLong(symbol string, quantity float64, leverage int) (*connector.OrderResult, error) {
 	symbol = t.convertSymbol(symbol)
 
 	// Cancel old orders first
@@ -90,17 +91,16 @@ func (t *GateTrader) OpenLong(symbol string, quantity float64, leverage int) (ma
 
 	logger.Infof("  [Gate] Opened long position: orderId=%d, fillPrice=%.4f", result.Id, fillPrice)
 
-	return map[string]interface{}{
-		"orderId":   fmt.Sprintf("%d", result.Id),
-		"symbol":    t.revertSymbol(symbol),
-		"status":    "FILLED",
-		"fillPrice": fillPrice,
-		"avgPrice":  fillPrice,
+	return &connector.OrderResult{
+		OrderID:      fmt.Sprintf("%d", result.Id),
+		Symbol:       t.revertSymbol(symbol),
+		Status:       "FILLED",
+		AvgFillPrice: fillPrice,
 	}, nil
 }
 
 // OpenShort opens a short position
-func (t *GateTrader) OpenShort(symbol string, quantity float64, leverage int) (map[string]interface{}, error) {
+func (t *GateTrader) OpenShort(symbol string, quantity float64, leverage int) (*connector.OrderResult, error) {
 	symbol = t.convertSymbol(symbol)
 
 	// Cancel old orders first
@@ -149,17 +149,16 @@ func (t *GateTrader) OpenShort(symbol string, quantity float64, leverage int) (m
 
 	logger.Infof("  [Gate] Opened short position: orderId=%d, fillPrice=%.4f", result.Id, fillPrice)
 
-	return map[string]interface{}{
-		"orderId":   fmt.Sprintf("%d", result.Id),
-		"symbol":    t.revertSymbol(symbol),
-		"status":    "FILLED",
-		"fillPrice": fillPrice,
-		"avgPrice":  fillPrice,
+	return &connector.OrderResult{
+		OrderID:      fmt.Sprintf("%d", result.Id),
+		Symbol:       t.revertSymbol(symbol),
+		Status:       "FILLED",
+		AvgFillPrice: fillPrice,
 	}, nil
 }
 
 // CloseLong closes a long position
-func (t *GateTrader) CloseLong(symbol string, quantity float64) (map[string]interface{}, error) {
+func (t *GateTrader) CloseLong(symbol string, quantity float64) (*connector.OrderResult, error) {
 	symbol = t.convertSymbol(symbol)
 
 	// If quantity is 0, get current position
@@ -217,17 +216,16 @@ func (t *GateTrader) CloseLong(symbol string, quantity float64) (map[string]inte
 
 	logger.Infof("  [Gate] Closed long position: orderId=%d, fillPrice=%.4f", result.Id, fillPrice)
 
-	return map[string]interface{}{
-		"orderId":   fmt.Sprintf("%d", result.Id),
-		"symbol":    t.revertSymbol(symbol),
-		"status":    "FILLED",
-		"fillPrice": fillPrice,
-		"avgPrice":  fillPrice,
+	return &connector.OrderResult{
+		OrderID:      fmt.Sprintf("%d", result.Id),
+		Symbol:       t.revertSymbol(symbol),
+		Status:       "FILLED",
+		AvgFillPrice: fillPrice,
 	}, nil
 }
 
 // CloseShort closes a short position
-func (t *GateTrader) CloseShort(symbol string, quantity float64) (map[string]interface{}, error) {
+func (t *GateTrader) CloseShort(symbol string, quantity float64) (*connector.OrderResult, error) {
 	symbol = t.convertSymbol(symbol)
 
 	// If quantity is 0, get current position
@@ -290,12 +288,11 @@ func (t *GateTrader) CloseShort(symbol string, quantity float64) (map[string]int
 
 	logger.Infof("  [Gate] Closed short position: orderId=%d, fillPrice=%.4f", result.Id, fillPrice)
 
-	return map[string]interface{}{
-		"orderId":   fmt.Sprintf("%d", result.Id),
-		"symbol":    t.revertSymbol(symbol),
-		"status":    "FILLED",
-		"fillPrice": fillPrice,
-		"avgPrice":  fillPrice,
+	return &connector.OrderResult{
+		OrderID:      fmt.Sprintf("%d", result.Id),
+		Symbol:       t.revertSymbol(symbol),
+		Status:       "FILLED",
+		AvgFillPrice: fillPrice,
 	}, nil
 }
 
@@ -503,7 +500,7 @@ func (t *GateTrader) FormatQuantity(symbol string, quantity float64) (string, er
 }
 
 // GetOrderStatus gets the status of an order
-func (t *GateTrader) GetOrderStatus(symbol string, orderID string) (map[string]interface{}, error) {
+func (t *GateTrader) GetOrderStatus(symbol string, orderID string) (*connector.OrderResult, error) {
 	symbol = t.convertSymbol(symbol)
 
 	order, _, err := t.client.FuturesApi.GetFuturesOrder(t.ctx, "usdt", orderID)
@@ -512,9 +509,10 @@ func (t *GateTrader) GetOrderStatus(symbol string, orderID string) (map[string]i
 	}
 
 	fillPrice, _ := strconv.ParseFloat(order.FillPrice, 64)
-	tkFee, _ := strconv.ParseFloat(order.Tkfr, 64)
-	mkFee, _ := strconv.ParseFloat(order.Mkfr, 64)
-	totalFee := tkFee + mkFee
+	// NOTE: Gate v4 order objects carry taker/maker fee *rates* (tkfr/mkfr),
+	// not accumulated fee amounts. Returning them as Fee would understate
+	// costs by ~3 orders of magnitude, so leave Fee at 0 — actual fees come
+	// from the fills synced by OrderSync.
 
 	// Get quanto_multiplier to convert contracts to actual quantity
 	quantoMultiplier := 1.0
@@ -541,25 +539,16 @@ func (t *GateTrader) GetOrderStatus(symbol string, orderID string) (map[string]i
 		status = "NEW"
 	}
 
-	side := "BUY"
-	if order.Size < 0 {
-		side = "SELL"
-	}
-
 	// Convert contract count to actual token quantity
 	executedQty := math.Abs(float64(order.Size-order.Left)) * quantoMultiplier
 
-	return map[string]interface{}{
-		"orderId":     orderID,
-		"symbol":      t.revertSymbol(symbol),
-		"status":      status,
-		"avgPrice":    fillPrice,
-		"executedQty": executedQty,
-		"side":        side,
-		"type":        order.Tif,
-		"time":        int64(order.CreateTime * 1000),
-		"updateTime":  int64(order.FinishTime * 1000),
-		"commission":  totalFee,
+	return &connector.OrderResult{
+		OrderID:      orderID,
+		Symbol:       t.revertSymbol(symbol),
+		Status:       status,
+		AvgFillPrice: fillPrice,
+		FilledQty:    executedQty,
+		Fee:          0.0,
 	}, nil
 }
 

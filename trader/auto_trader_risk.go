@@ -124,13 +124,13 @@ func (at *AutoTrader) emergencyClosePosition(symbol, side string) error {
 		if err != nil {
 			return err
 		}
-		logger.Infof("✅ Emergency close long position succeeded, order ID: %v", order["orderId"])
+		logger.Infof("✅ Emergency close long position succeeded, order ID: %v", order.OrderID)
 	case "short":
 		order, err := at.trader.CloseShort(symbol, 0) // 0 = close all
 		if err != nil {
 			return err
 		}
-		logger.Infof("✅ Emergency close short position succeeded, order ID: %v", order["orderId"])
+		logger.Infof("✅ Emergency close short position succeeded, order ID: %v", order.OrderID)
 	default:
 		return fmt.Errorf("unknown position direction: %s", side)
 	}

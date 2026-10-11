@@ -3,11 +3,12 @@ package trader
 import (
 	"fmt"
 	"math"
-	"nofx/telemetry"
 	"nofx/kernel"
 	"nofx/logger"
 	"nofx/market"
 	"nofx/store"
+	"nofx/telemetry"
+	"nofx/trader/connector"
 	"time"
 )
 
@@ -241,22 +242,15 @@ func (at *AutoTrader) GetPositions() ([]map[string]interface{}, error) {
 // recordAndConfirmOrder polls order status for actual fill data and records position
 // action: open_long, open_short, close_long, close_short
 // entryPrice: entry price when closing (0 when opening)
-func (at *AutoTrader) recordAndConfirmOrder(orderResult map[string]interface{}, symbol, action string, quantity float64, price float64, leverage int, entryPrice float64) {
+func (at *AutoTrader) recordAndConfirmOrder(orderResult *connector.OrderResult, symbol, action string, quantity float64, price float64, leverage int, entryPrice float64) {
 	if at.store == nil {
 		return
 	}
 
-	// Get order ID (supports multiple types)
+	// Get order ID
 	var orderID string
-	switch v := orderResult["orderId"].(type) {
-	case int64:
-		orderID = fmt.Sprintf("%d", v)
-	case float64:
-		orderID = fmt.Sprintf("%.0f", v)
-	case string:
-		orderID = v
-	default:
-		orderID = fmt.Sprintf("%v", v)
+	if orderResult != nil {
+		orderID = orderResult.OrderID
 	}
 
 	if orderID == "" || orderID == "0" {
@@ -297,21 +291,19 @@ func (at *AutoTrader) recordAndConfirmOrder(orderResult map[string]interface{}, 
 	time.Sleep(500 * time.Millisecond)
 	for i := 0; i < 5; i++ {
 		status, err := at.trader.GetOrderStatus(symbol, orderID)
-		if err == nil {
-			statusStr, _ := status["status"].(string)
+		if err == nil && status != nil {
+			statusStr := status.Status
 			if statusStr == "FILLED" {
 				// Get actual fill price
-				if avgPrice, ok := status["avgPrice"].(float64); ok && avgPrice > 0 {
-					actualPrice = avgPrice
+				if status.AvgFillPrice > 0 {
+					actualPrice = status.AvgFillPrice
 				}
 				// Get actual executed quantity
-				if execQty, ok := status["executedQty"].(float64); ok && execQty > 0 {
-					actualQty = execQty
+				if status.FilledQty > 0 {
+					actualQty = status.FilledQty
 				}
 				// Get commission/fee
-				if commission, ok := status["commission"].(float64); ok {
-					fee = commission
-				}
+				fee = status.Fee
 				logger.Infof("  ✅ Order filled: avgPrice=%.6f, qty=%.6f, fee=%.6f", actualPrice, actualQty, fee)
 
 				// Update order status to FILLED

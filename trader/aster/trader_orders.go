@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"nofx/logger"
+	"nofx/trader/connector"
 	"nofx/trader/types"
 	"strconv"
 	"strings"
@@ -18,7 +19,7 @@ const (
 )
 
 // OpenLong Open long position
-func (t *AsterTrader) OpenLong(symbol string, quantity float64, leverage int) (map[string]interface{}, error) {
+func (t *AsterTrader) OpenLong(symbol string, quantity float64, leverage int) (*connector.OrderResult, error) {
 	// Cancel all pending orders before opening position to prevent position stacking from residual orders
 	if err := t.CancelAllOrders(symbol); err != nil {
 		logger.Infof("  ⚠ Failed to cancel pending orders (continuing to open position): %v", err)
@@ -87,11 +88,11 @@ func (t *AsterTrader) OpenLong(symbol string, quantity float64, leverage int) (m
 		return nil, err
 	}
 
-	return result, nil
+	return orderResultFromMap(result), nil
 }
 
 // OpenShort Open short position
-func (t *AsterTrader) OpenShort(symbol string, quantity float64, leverage int) (map[string]interface{}, error) {
+func (t *AsterTrader) OpenShort(symbol string, quantity float64, leverage int) (*connector.OrderResult, error) {
 	// Cancel all pending orders before opening position to prevent position stacking from residual orders
 	if err := t.CancelAllOrders(symbol); err != nil {
 		logger.Infof("  ⚠ Failed to cancel pending orders (continuing to open position): %v", err)
@@ -160,11 +161,11 @@ func (t *AsterTrader) OpenShort(symbol string, quantity float64, leverage int) (
 		return nil, err
 	}
 
-	return result, nil
+	return orderResultFromMap(result), nil
 }
 
 // CloseLong Close long position
-func (t *AsterTrader) CloseLong(symbol string, quantity float64) (map[string]interface{}, error) {
+func (t *AsterTrader) CloseLong(symbol string, quantity float64) (*connector.OrderResult, error) {
 	// If quantity is 0, get current position quantity
 	if quantity == 0 {
 		positions, err := t.GetPositions()
@@ -242,11 +243,11 @@ func (t *AsterTrader) CloseLong(symbol string, quantity float64) (map[string]int
 		logger.Infof("  ⚠ Failed to cancel pending orders: %v", err)
 	}
 
-	return result, nil
+	return orderResultFromMap(result), nil
 }
 
 // CloseShort Close short position
-func (t *AsterTrader) CloseShort(symbol string, quantity float64) (map[string]interface{}, error) {
+func (t *AsterTrader) CloseShort(symbol string, quantity float64) (*connector.OrderResult, error) {
 	// If quantity is 0, get current position quantity
 	if quantity == 0 {
 		positions, err := t.GetPositions()
@@ -325,7 +326,7 @@ func (t *AsterTrader) CloseShort(symbol string, quantity float64) (map[string]in
 		logger.Infof("  ⚠ Failed to cancel pending orders: %v", err)
 	}
 
-	return result, nil
+	return orderResultFromMap(result), nil
 }
 
 // SetStopLoss Set stop loss
@@ -603,7 +604,7 @@ func (t *AsterTrader) FormatQuantity(symbol string, quantity float64) (string, e
 }
 
 // GetOrderStatus Get order status
-func (t *AsterTrader) GetOrderStatus(symbol string, orderID string) (map[string]interface{}, error) {
+func (t *AsterTrader) GetOrderStatus(symbol string, orderID string) (*connector.OrderResult, error) {
 	params := map[string]interface{}{
 		"symbol":  symbol,
 		"orderId": orderID,
@@ -620,35 +621,86 @@ func (t *AsterTrader) GetOrderStatus(symbol string, orderID string) (map[string]
 	}
 
 	// Standardize return fields
-	response := map[string]interface{}{
-		"orderId":    result["orderId"],
-		"symbol":     result["symbol"],
-		"status":     result["status"],
-		"side":       result["side"],
-		"type":       result["type"],
-		"time":       result["time"],
-		"updateTime": result["updateTime"],
-		"commission": 0.0, // Aster may require separate query
+	response := &connector.OrderResult{
+		OrderID: orderIDToString(result["orderId"]),
+		Symbol:  stringField(result["symbol"]),
+		Status:  stringField(result["status"]),
+		Fee:     0.0, // Aster may require separate query
 	}
 
 	// Parse numeric fields
 	if avgPrice, ok := result["avgPrice"].(string); ok {
 		if v, err := strconv.ParseFloat(avgPrice, 64); err == nil {
-			response["avgPrice"] = v
+			response.AvgFillPrice = v
 		}
 	} else if avgPrice, ok := result["avgPrice"].(float64); ok {
-		response["avgPrice"] = avgPrice
+		response.AvgFillPrice = avgPrice
 	}
 
 	if executedQty, ok := result["executedQty"].(string); ok {
 		if v, err := strconv.ParseFloat(executedQty, 64); err == nil {
-			response["executedQty"] = v
+			response.FilledQty = v
 		}
 	} else if executedQty, ok := result["executedQty"].(float64); ok {
-		response["executedQty"] = executedQty
+		response.FilledQty = executedQty
 	}
 
 	return response, nil
+}
+
+// orderIDToString converts an order ID value decoded from JSON (string or number)
+// into a string, matching how the ID was previously stringified for callers.
+func orderIDToString(v interface{}) string {
+	switch id := v.(type) {
+	case int64:
+		return fmt.Sprintf("%d", id)
+	case float64:
+		return fmt.Sprintf("%.0f", id)
+	case string:
+		return id
+	default:
+		return fmt.Sprintf("%v", id)
+	}
+}
+
+// stringField returns the string value of v, or "" when v is not a string.
+func stringField(v interface{}) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
+}
+
+// orderResultFromMap maps a raw Aster order response onto the unified OrderResult
+// following the standard orderId/symbol/status/avgPrice/executedQty/commission keys.
+func orderResultFromMap(result map[string]interface{}) *connector.OrderResult {
+	res := &connector.OrderResult{
+		OrderID: orderIDToString(result["orderId"]),
+		Symbol:  stringField(result["symbol"]),
+		Status:  stringField(result["status"]),
+	}
+
+	if avgPrice, ok := result["avgPrice"].(string); ok {
+		if v, err := strconv.ParseFloat(avgPrice, 64); err == nil {
+			res.AvgFillPrice = v
+		}
+	} else if avgPrice, ok := result["avgPrice"].(float64); ok {
+		res.AvgFillPrice = avgPrice
+	}
+
+	if executedQty, ok := result["executedQty"].(string); ok {
+		if v, err := strconv.ParseFloat(executedQty, 64); err == nil {
+			res.FilledQty = v
+		}
+	} else if executedQty, ok := result["executedQty"].(float64); ok {
+		res.FilledQty = executedQty
+	}
+
+	if commission, ok := result["commission"].(float64); ok {
+		res.Fee = commission
+	}
+
+	return res
 }
 
 // GetOpenOrders gets all open/pending orders for a symbol

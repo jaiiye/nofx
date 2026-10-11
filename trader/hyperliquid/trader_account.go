@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"nofx/logger"
+	"nofx/trader/connector"
 	"nofx/trader/types"
 	"strconv"
 	"strings"
@@ -364,7 +365,7 @@ func (t *HyperliquidTrader) getXyzMarketPrice(coin string) (float64, error) {
 // GetOrderStatus gets order status
 // Hyperliquid uses IOC orders, usually filled or cancelled immediately
 // For completed orders, need to query historical records
-func (t *HyperliquidTrader) GetOrderStatus(symbol string, orderID string) (map[string]interface{}, error) {
+func (t *HyperliquidTrader) GetOrderStatus(symbol string, orderID string) (*connector.OrderResult, error) {
 	// Hyperliquid's IOC orders are completed almost immediately
 	// If order was placed through this system, returned status will be FILLED
 	// Try to query open orders to determine if still pending
@@ -373,38 +374,27 @@ func (t *HyperliquidTrader) GetOrderStatus(symbol string, orderID string) (map[s
 	// First check if in open orders
 	openOrders, err := t.exchange.Info().OpenOrders(t.ctx, t.walletAddr)
 	if err != nil {
-		// If query fails, assume order is completed
-		return map[string]interface{}{
-			"orderId":     orderID,
-			"status":      "FILLED",
-			"avgPrice":    0.0,
-			"executedQty": 0.0,
-			"commission":  0.0,
-		}, nil
+		// Never report an unknown state as FILLED — callers record fills
+		// based on this value. Surface the error instead.
+		return nil, fmt.Errorf("failed to query open orders: %w", err)
 	}
 
 	// Check if order is in open orders list
 	for _, order := range openOrders {
 		if order.Coin == coin && fmt.Sprintf("%d", order.Oid) == orderID {
 			// Order is still pending
-			return map[string]interface{}{
-				"orderId":     orderID,
-				"status":      "NEW",
-				"avgPrice":    0.0,
-				"executedQty": 0.0,
-				"commission":  0.0,
+			return &connector.OrderResult{
+				OrderID: orderID,
+				Status:  "NEW",
 			}, nil
 		}
 	}
 
 	// Order not in open list, meaning completed or cancelled
 	// Hyperliquid IOC orders not in open list are usually filled
-	return map[string]interface{}{
-		"orderId":     orderID,
-		"status":      "FILLED",
-		"avgPrice":    0.0, // Hyperliquid does not directly return execution price, need to get from position info
-		"executedQty": 0.0,
-		"commission":  0.0,
+	return &connector.OrderResult{
+		OrderID: orderID,
+		Status:  "FILLED",
 	}, nil
 }
 

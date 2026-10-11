@@ -6,13 +6,14 @@ import (
 	"math"
 	"net/url"
 	"nofx/logger"
+	"nofx/trader/connector"
 	"nofx/trader/types"
 	"strconv"
 	"strings"
 )
 
 // OpenLong opens a spot buy order
-func (t *IndodaxTrader) OpenLong(symbol string, quantity float64, leverage int) (map[string]interface{}, error) {
+func (t *IndodaxTrader) OpenLong(symbol string, quantity float64, leverage int) (*connector.OrderResult, error) {
 	t.clearCache()
 
 	pair := t.convertSymbol(symbol)
@@ -44,23 +45,20 @@ func (t *IndodaxTrader) OpenLong(symbol string, quantity float64, leverage int) 
 
 	logger.Infof("[Indodax] Buy order placed: %s qty=%.8f price=%.0f", symbol, quantity, price)
 
-	return map[string]interface{}{
-		"orderId": result["order_id"],
-		"symbol":  symbol,
-		"side":    "BUY",
-		"price":   price,
-		"qty":     quantity,
-		"status":  "NEW",
+	return &connector.OrderResult{
+		OrderID: orderIDToString(result["order_id"]),
+		Symbol:  symbol,
+		Status:  "NEW",
 	}, nil
 }
 
 // OpenShort is not supported on Indodax (spot-only exchange)
-func (t *IndodaxTrader) OpenShort(symbol string, quantity float64, leverage int) (map[string]interface{}, error) {
+func (t *IndodaxTrader) OpenShort(symbol string, quantity float64, leverage int) (*connector.OrderResult, error) {
 	return nil, fmt.Errorf("short selling is not supported on Indodax (spot-only exchange)")
 }
 
 // CloseLong closes a spot position by selling
-func (t *IndodaxTrader) CloseLong(symbol string, quantity float64) (map[string]interface{}, error) {
+func (t *IndodaxTrader) CloseLong(symbol string, quantity float64) (*connector.OrderResult, error) {
 	t.clearCache()
 
 	pair := t.convertSymbol(symbol)
@@ -105,18 +103,15 @@ func (t *IndodaxTrader) CloseLong(symbol string, quantity float64) (map[string]i
 
 	logger.Infof("[Indodax] Sell order placed: %s qty=%.8f price=%.0f", symbol, quantity, price)
 
-	return map[string]interface{}{
-		"orderId": result["order_id"],
-		"symbol":  symbol,
-		"side":    "SELL",
-		"price":   price,
-		"qty":     quantity,
-		"status":  "NEW",
+	return &connector.OrderResult{
+		OrderID: orderIDToString(result["order_id"]),
+		Symbol:  symbol,
+		Status:  "NEW",
 	}, nil
 }
 
 // CloseShort is not supported on Indodax (spot-only exchange)
-func (t *IndodaxTrader) CloseShort(symbol string, quantity float64) (map[string]interface{}, error) {
+func (t *IndodaxTrader) CloseShort(symbol string, quantity float64) (*connector.OrderResult, error) {
 	return nil, fmt.Errorf("short selling is not supported on Indodax (spot-only exchange)")
 }
 
@@ -246,7 +241,7 @@ func (t *IndodaxTrader) FormatQuantity(symbol string, quantity float64) (string,
 }
 
 // GetOrderStatus gets the status of a specific order
-func (t *IndodaxTrader) GetOrderStatus(symbol string, orderID string) (map[string]interface{}, error) {
+func (t *IndodaxTrader) GetOrderStatus(symbol string, orderID string) (*connector.OrderResult, error) {
 	pair := t.convertSymbol(symbol)
 
 	params := url.Values{}
@@ -288,13 +283,28 @@ func (t *IndodaxTrader) GetOrderStatus(symbol string, orderID string) (map[strin
 
 	price, _ := strconv.ParseFloat(result.Order.Price, 64)
 
-	return map[string]interface{}{
-		"status":      status,
-		"avgPrice":    price,
-		"executedQty": 0.0, // Indodax doesn't return executed qty in getOrder
-		"commission":  0.0,
-		"orderId":     result.Order.OrderID,
+	return &connector.OrderResult{
+		OrderID:      result.Order.OrderID,
+		Status:       status,
+		AvgFillPrice: price,
+		FilledQty:    0.0, // Indodax doesn't return executed qty in getOrder
+		Fee:          0.0,
 	}, nil
+}
+
+// orderIDToString converts an order ID value decoded from JSON (string or number)
+// into a string, matching how the ID was previously stringified for callers.
+func orderIDToString(v interface{}) string {
+	switch id := v.(type) {
+	case int64:
+		return fmt.Sprintf("%d", id)
+	case float64:
+		return fmt.Sprintf("%.0f", id)
+	case string:
+		return id
+	default:
+		return fmt.Sprintf("%v", id)
+	}
 }
 
 // GetOpenOrders gets open/pending orders

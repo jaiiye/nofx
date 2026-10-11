@@ -8,6 +8,7 @@ import (
 	"math"
 	"nofx/market"
 	"nofx/store"
+	"nofx/trader/connector"
 	"strings"
 	"sync"
 	"time"
@@ -30,10 +31,10 @@ type tradeSelectedTrader interface {
 }
 
 type tradeUnderlyingTrader interface {
-	OpenLong(symbol string, quantity float64, leverage int) (map[string]interface{}, error)
-	OpenShort(symbol string, quantity float64, leverage int) (map[string]interface{}, error)
-	CloseLong(symbol string, quantity float64) (map[string]interface{}, error)
-	CloseShort(symbol string, quantity float64) (map[string]interface{}, error)
+	OpenLong(symbol string, quantity float64, leverage int) (*connector.OrderResult, error)
+	OpenShort(symbol string, quantity float64, leverage int) (*connector.OrderResult, error)
+	CloseLong(symbol string, quantity float64) (*connector.OrderResult, error)
+	CloseShort(symbol string, quantity float64) (*connector.OrderResult, error)
 	GetMarketPrice(symbol string) (float64, error)
 }
 

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"nofx/logger"
+	"nofx/trader/connector"
 	"nofx/trader/types"
 	"strconv"
 	"strings"
@@ -46,7 +47,7 @@ func wrapBuilderFeeNotApproved(err error) error {
 }
 
 // OpenLong opens a long position (supports both crypto and xyz dex)
-func (t *HyperliquidTrader) OpenLong(symbol string, quantity float64, leverage int) (map[string]interface{}, error) {
+func (t *HyperliquidTrader) OpenLong(symbol string, quantity float64, leverage int) (*connector.OrderResult, error) {
 	// First cancel all pending orders for this coin
 	if err := t.CancelAllOrders(symbol); err != nil {
 		logger.Infof("  ⚠ Failed to cancel old pending orders: %v", err)
@@ -109,16 +110,17 @@ func (t *HyperliquidTrader) OpenLong(symbol string, quantity float64, leverage i
 
 	logger.Infof("✓ Long position opened successfully: %s quantity: %.4f", symbol, quantity)
 
-	result := make(map[string]interface{})
-	result["orderId"] = 0
-	result["symbol"] = symbol
-	result["status"] = "FILLED"
+	result := &connector.OrderResult{
+		OrderID: "0",
+		Symbol:  symbol,
+		Status:  "FILLED",
+	}
 
 	return result, nil
 }
 
 // OpenShort opens a short position (supports both crypto and xyz dex)
-func (t *HyperliquidTrader) OpenShort(symbol string, quantity float64, leverage int) (map[string]interface{}, error) {
+func (t *HyperliquidTrader) OpenShort(symbol string, quantity float64, leverage int) (*connector.OrderResult, error) {
 	// First cancel all pending orders for this coin
 	if err := t.CancelAllOrders(symbol); err != nil {
 		logger.Infof("  ⚠ Failed to cancel old pending orders: %v", err)
@@ -181,16 +183,17 @@ func (t *HyperliquidTrader) OpenShort(symbol string, quantity float64, leverage 
 
 	logger.Infof("✓ Short position opened successfully: %s quantity: %.4f", symbol, quantity)
 
-	result := make(map[string]interface{})
-	result["orderId"] = 0
-	result["symbol"] = symbol
-	result["status"] = "FILLED"
+	result := &connector.OrderResult{
+		OrderID: "0",
+		Symbol:  symbol,
+		Status:  "FILLED",
+	}
 
 	return result, nil
 }
 
 // CloseLong closes a long position (supports both crypto and xyz dex)
-func (t *HyperliquidTrader) CloseLong(symbol string, quantity float64) (map[string]interface{}, error) {
+func (t *HyperliquidTrader) CloseLong(symbol string, quantity float64) (*connector.OrderResult, error) {
 	// Hyperliquid symbol format
 	coin := convertSymbolToHyperliquid(symbol)
 	isXyz := strings.HasPrefix(coin, "xyz:")
@@ -268,16 +271,17 @@ func (t *HyperliquidTrader) CloseLong(symbol string, quantity float64) (map[stri
 		logger.Infof("  ⚠ Failed to cancel pending orders: %v", err)
 	}
 
-	result := make(map[string]interface{})
-	result["orderId"] = 0
-	result["symbol"] = symbol
-	result["status"] = "FILLED"
+	result := &connector.OrderResult{
+		OrderID: "0",
+		Symbol:  symbol,
+		Status:  "FILLED",
+	}
 
 	return result, nil
 }
 
 // CloseShort closes a short position (supports both crypto and xyz dex)
-func (t *HyperliquidTrader) CloseShort(symbol string, quantity float64) (map[string]interface{}, error) {
+func (t *HyperliquidTrader) CloseShort(symbol string, quantity float64) (*connector.OrderResult, error) {
 	// Hyperliquid symbol format
 	coin := convertSymbolToHyperliquid(symbol)
 	isXyz := strings.HasPrefix(coin, "xyz:")
@@ -355,10 +359,11 @@ func (t *HyperliquidTrader) CloseShort(symbol string, quantity float64) (map[str
 		logger.Infof("  ⚠ Failed to cancel pending orders: %v", err)
 	}
 
-	result := make(map[string]interface{})
-	result["orderId"] = 0
-	result["symbol"] = symbol
-	result["status"] = "FILLED"
+	result := &connector.OrderResult{
+		OrderID: "0",
+		Symbol:  symbol,
+		Status:  "FILLED",
+	}
 
 	return result, nil
 }

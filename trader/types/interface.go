@@ -3,24 +3,25 @@ package types
 import (
 	"fmt"
 	"nofx/logger"
+	"nofx/trader/connector"
 	"time"
 )
 
 // ClosedPnLRecord represents a single closed position record from exchange
 type ClosedPnLRecord struct {
-	Symbol       string    // Trading pair (e.g., "BTCUSDT")
-	Side         string    // "long" or "short"
-	EntryPrice   float64   // Entry price
-	ExitPrice    float64   // Exit/close price
-	Quantity     float64   // Position size
-	RealizedPnL  float64   // Realized profit/loss
-	Fee          float64   // Trading fee/commission
-	Leverage     int       // Leverage used
-	EntryTime    time.Time // Position open time
-	ExitTime     time.Time // Position close time
-	OrderID      string    // Close order ID
-	CloseType    string    // "manual", "stop_loss", "take_profit", "liquidation", "unknown"
-	ExchangeID   string    // Exchange-specific position ID
+	Symbol      string    // Trading pair (e.g., "BTCUSDT")
+	Side        string    // "long" or "short"
+	EntryPrice  float64   // Entry price
+	ExitPrice   float64   // Exit/close price
+	Quantity    float64   // Position size
+	RealizedPnL float64   // Realized profit/loss
+	Fee         float64   // Trading fee/commission
+	Leverage    int       // Leverage used
+	EntryTime   time.Time // Position open time
+	ExitTime    time.Time // Position close time
+	OrderID     string    // Close order ID
+	CloseType   string    // "manual", "stop_loss", "take_profit", "liquidation", "unknown"
+	ExchangeID  string    // Exchange-specific position ID
 }
 
 // TradeRecord represents a single trade/fill from exchange
@@ -48,16 +49,16 @@ type Trader interface {
 	GetPositions() ([]map[string]interface{}, error)
 
 	// OpenLong Open long position
-	OpenLong(symbol string, quantity float64, leverage int) (map[string]interface{}, error)
+	OpenLong(symbol string, quantity float64, leverage int) (*connector.OrderResult, error)
 
 	// OpenShort Open short position
-	OpenShort(symbol string, quantity float64, leverage int) (map[string]interface{}, error)
+	OpenShort(symbol string, quantity float64, leverage int) (*connector.OrderResult, error)
 
 	// CloseLong Close long position (quantity=0 means close all)
-	CloseLong(symbol string, quantity float64) (map[string]interface{}, error)
+	CloseLong(symbol string, quantity float64) (*connector.OrderResult, error)
 
 	// CloseShort Close short position (quantity=0 means close all)
-	CloseShort(symbol string, quantity float64) (map[string]interface{}, error)
+	CloseShort(symbol string, quantity float64) (*connector.OrderResult, error)
 
 	// SetLeverage Set leverage
 	SetLeverage(symbol string, leverage int) error
@@ -91,7 +92,7 @@ type Trader interface {
 
 	// GetOrderStatus Get order status
 	// Returns: status(FILLED/NEW/CANCELED), avgPrice, executedQty, commission
-	GetOrderStatus(symbol string, orderID string) (map[string]interface{}, error)
+	GetOrderStatus(symbol string, orderID string) (*connector.OrderResult, error)
 
 	// GetClosedPnL Get closed position PnL records from exchange
 	// startTime: start time for query (usually last sync time)
@@ -125,9 +126,9 @@ type LimitOrderRequest struct {
 	Price        float64 `json:"price"`         // Limit price
 	Quantity     float64 `json:"quantity"`
 	Leverage     int     `json:"leverage"`
-	PostOnly     bool    `json:"post_only"`     // Maker only order
-	ReduceOnly   bool    `json:"reduce_only"`   // Reduce position only
-	ClientID     string  `json:"client_id"`     // Client order ID for tracking
+	PostOnly     bool    `json:"post_only"`   // Maker only order
+	ReduceOnly   bool    `json:"reduce_only"` // Reduce position only
+	ClientID     string  `json:"client_id"`   // Client order ID for tracking
 }
 
 // LimitOrderResult represents the result of placing a limit order

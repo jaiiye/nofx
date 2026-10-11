@@ -7,13 +7,14 @@ import (
 	"io"
 	"net/http"
 	"nofx/logger"
+	"nofx/trader/connector"
 	"nofx/trader/types"
 	"strconv"
 	"strings"
 )
 
 // OpenLong opens a long position
-func (t *BybitTrader) OpenLong(symbol string, quantity float64, leverage int) (map[string]interface{}, error) {
+func (t *BybitTrader) OpenLong(symbol string, quantity float64, leverage int) (*connector.OrderResult, error) {
 	logger.Infof("[Bybit] ===== OpenLong called: symbol=%s, qty=%.6f, leverage=%d =====", symbol, quantity, leverage)
 
 	// First cancel all pending orders for this symbol (clean up old orders)
@@ -56,7 +57,7 @@ func (t *BybitTrader) OpenLong(symbol string, quantity float64, leverage int) (m
 }
 
 // OpenShort opens a short position
-func (t *BybitTrader) OpenShort(symbol string, quantity float64, leverage int) (map[string]interface{}, error) {
+func (t *BybitTrader) OpenShort(symbol string, quantity float64, leverage int) (*connector.OrderResult, error) {
 	logger.Infof("[Bybit] ===== OpenShort called: symbol=%s, qty=%.6f, leverage=%d =====", symbol, quantity, leverage)
 
 	// First cancel all pending orders for this symbol (clean up old orders)
@@ -99,7 +100,7 @@ func (t *BybitTrader) OpenShort(symbol string, quantity float64, leverage int) (
 }
 
 // CloseLong closes a long position
-func (t *BybitTrader) CloseLong(symbol string, quantity float64) (map[string]interface{}, error) {
+func (t *BybitTrader) CloseLong(symbol string, quantity float64) (*connector.OrderResult, error) {
 	// If quantity = 0, get current position quantity
 	if quantity == 0 {
 		positions, err := t.GetPositions()
@@ -144,7 +145,7 @@ func (t *BybitTrader) CloseLong(symbol string, quantity float64) (map[string]int
 }
 
 // CloseShort closes a short position
-func (t *BybitTrader) CloseShort(symbol string, quantity float64) (map[string]interface{}, error) {
+func (t *BybitTrader) CloseShort(symbol string, quantity float64) (*connector.OrderResult, error) {
 	// If quantity = 0, get current position quantity
 	if quantity == 0 {
 		positions, err := t.GetPositions()
@@ -463,7 +464,7 @@ func (t *BybitTrader) cancelConditionalOrders(symbol string, orderType string) e
 }
 
 // GetOrderStatus retrieves order status
-func (t *BybitTrader) GetOrderStatus(symbol string, orderID string) (map[string]interface{}, error) {
+func (t *BybitTrader) GetOrderStatus(symbol string, orderID string) (*connector.OrderResult, error) {
 	params := map[string]interface{}{
 		"category": "linear",
 		"symbol":   symbol,
@@ -514,12 +515,12 @@ func (t *BybitTrader) GetOrderStatus(symbol string, orderID string) (map[string]
 		unifiedStatus = "PARTIALLY_FILLED"
 	}
 
-	return map[string]interface{}{
-		"orderId":     orderID,
-		"status":      unifiedStatus,
-		"avgPrice":    avgPrice,
-		"executedQty": executedQty,
-		"commission":  commission,
+	return &connector.OrderResult{
+		OrderID:      orderID,
+		Status:       unifiedStatus,
+		AvgFillPrice: avgPrice,
+		FilledQty:    executedQty,
+		Fee:          commission,
 	}, nil
 }
 
