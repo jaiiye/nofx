@@ -33,6 +33,11 @@ type Config struct {
 	MaxHoldCandles int // force-exit after this many candles (default 96)
 	Samples        int // bootstrap samples for the significance test (default 1000)
 	Seed           int64
+
+	// When > 0, override the recorded stop-loss / take-profit with a fixed
+	// percentage distance from the entry price. Used by the parameter sweep.
+	OverrideStopPct float64
+	OverrideTakePct float64
 }
 
 func (c Config) withDefaults() Config {
@@ -237,6 +242,24 @@ func simulate(decidedAt time.Time, d store.DecisionAction, candles []market.Klin
 		Confidence: d.Confidence,
 	}
 
+	// Effective protective levels: recorded, or overridden to a fixed
+	// percentage from entry (for the parameter sweep).
+	sl, tp := d.StopLoss, d.TakeProfit
+	if cfg.OverrideStopPct > 0 {
+		if side == "long" {
+			sl = entry * (1 - cfg.OverrideStopPct/100)
+		} else {
+			sl = entry * (1 + cfg.OverrideStopPct/100)
+		}
+	}
+	if cfg.OverrideTakePct > 0 {
+		if side == "long" {
+			tp = entry * (1 + cfg.OverrideTakePct/100)
+		} else {
+			tp = entry * (1 - cfg.OverrideTakePct/100)
+		}
+	}
+
 	exit, reason := 0.0, "timeout"
 	last := start + cfg.MaxHoldCandles
 	if last >= len(candles) {
@@ -244,14 +267,14 @@ func simulate(decidedAt time.Time, d store.DecisionAction, candles []market.Klin
 	}
 	for i := start; i <= last; i++ {
 		c := candles[i]
-		if hitStop(c, side, d.StopLoss) {
-			exit, reason = d.StopLoss, "stop_loss"
+		if hitStop(c, side, sl) {
+			exit, reason = sl, "stop_loss"
 			t.HoldCandles = i - start + 1
 			t.ExitTime = time.UnixMilli(c.OpenTime).UTC()
 			break
 		}
-		if hitTarget(c, side, d.TakeProfit) {
-			exit, reason = d.TakeProfit, "take_profit"
+		if hitTarget(c, side, tp) {
+			exit, reason = tp, "take_profit"
 			t.HoldCandles = i - start + 1
 			t.ExitTime = time.UnixMilli(c.OpenTime).UTC()
 			break

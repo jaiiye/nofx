@@ -50,6 +50,9 @@ func runCLISubcommand(args []string) bool {
 	case "evaluate":
 		runEvaluate(args[1:])
 		return true
+	case "sweep":
+		runSweep(args[1:])
+		return true
 	default:
 		return false
 	}
