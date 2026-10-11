@@ -47,6 +47,9 @@ func runCLISubcommand(args []string) bool {
 	case "reset-account":
 		runResetAccount(args[1:])
 		return true
+	case "evaluate":
+		runEvaluate(args[1:])
+		return true
 	default:
 		return false
 	}
@@ -55,6 +58,17 @@ func runCLISubcommand(args []string) bool {
 // openStoreForCLI loads config + encryption and opens the same database the
 // server uses, so subcommands operate on the live data.
 func openStoreForCLI(dbPathOverride string) (*store.Store, error) {
+	return openStore(dbPathOverride, true)
+}
+
+// openStoreBare opens the database without initializing the crypto service.
+// Used by read-only subcommands (evaluate) that never decrypt credentials, so
+// they don't need the RSA key material configured.
+func openStoreBare(dbPathOverride string) (*store.Store, error) {
+	return openStore(dbPathOverride, false)
+}
+
+func openStore(dbPathOverride string, withCrypto bool) (*store.Store, error) {
 	_ = godotenv.Load()
 	logger.Init(nil)
 	config.MustInit()
@@ -63,11 +77,13 @@ func openStoreForCLI(dbPathOverride string) (*store.Store, error) {
 		cfg.DBPath = dbPathOverride
 	}
 
-	cryptoService, err := crypto.NewCryptoService()
-	if err != nil {
-		return nil, fmt.Errorf("initialize encryption service: %w", err)
+	if withCrypto {
+		cryptoService, err := crypto.NewCryptoService()
+		if err != nil {
+			return nil, fmt.Errorf("initialize encryption service: %w", err)
+		}
+		crypto.SetGlobalCryptoService(cryptoService)
 	}
-	crypto.SetGlobalCryptoService(cryptoService)
 
 	if cfg.DBType == "sqlite" {
 		if dir := filepath.Dir(cfg.DBPath); dir != "." {

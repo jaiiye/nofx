@@ -246,6 +246,43 @@ func (s *DecisionStore) GetRecordsByDate(traderID string, date time.Time) ([]*De
 	return records, nil
 }
 
+// GetRecordsByRange returns a trader's decision records within [start, end]
+// (inclusive), ascending by time. Used by the decision-replay backtester.
+func (s *DecisionStore) GetRecordsByRange(traderID string, start, end time.Time) ([]*DecisionRecord, error) {
+	var dbRecords []*DecisionRecordDB
+	err := s.db.Where("trader_id = ? AND timestamp >= ? AND timestamp <= ?", traderID, start.UTC(), end.UTC()).
+		Order("timestamp ASC").
+		Find(&dbRecords).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to query decision records: %w", err)
+	}
+	records := make([]*DecisionRecord, len(dbRecords))
+	for i, db := range dbRecords {
+		records[i] = db.toRecord()
+	}
+	return records, nil
+}
+
+// GetRecordsBySymbol returns a trader's decision records whose `decisions`
+// JSON mentions the symbol, ascending by time. The match is a substring scan
+// over the stored JSON (the table has no symbol column), so callers that need
+// an exact filter should re-check the parsed decisions.
+func (s *DecisionStore) GetRecordsBySymbol(traderID, symbol string) ([]*DecisionRecord, error) {
+	var dbRecords []*DecisionRecordDB
+	like := fmt.Sprintf("%%\"symbol\":\"%s\"%%", symbol)
+	err := s.db.Where("trader_id = ? AND decisions LIKE ?", traderID, like).
+		Order("timestamp ASC").
+		Find(&dbRecords).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to query decision records: %w", err)
+	}
+	records := make([]*DecisionRecord, len(dbRecords))
+	for i, db := range dbRecords {
+		records[i] = db.toRecord()
+	}
+	return records, nil
+}
+
 // CleanOldRecords cleans old records from N days ago
 func (s *DecisionStore) CleanOldRecords(traderID string, days int) (int64, error) {
 	cutoffTime := time.Now().AddDate(0, 0, -days)
