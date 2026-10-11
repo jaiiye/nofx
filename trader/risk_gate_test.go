@@ -113,6 +113,24 @@ func TestEvaluateRiskGateBalanceSufficiency(t *testing.T) {
 	}
 }
 
+func TestEvaluateRiskGateUsesProvidedFeeRate(t *testing.T) {
+	cfg := baseRiskConfig()
+	cfg.RiskControl.AltcoinMaxLeverage = 20
+	cfg.RiskControl.MaxMarginUsage = 1.0
+	const feeRate = 0.01
+	in := RiskGateInput{Action: "open_long", Symbol: "SOLUSDT", PositionSizeUSD: 1e9, Leverage: 20,
+		Equity: 1e6, AvailableBalance: 100, TakerFeeRate: feeRate, Config: cfg}
+	res := EvaluateRiskGate(in)
+	if !res.Allowed {
+		t.Fatalf("expected allow (auto-reduced), got: %s", res.Reason)
+	}
+	marginFactor := marginOverheadFactor/20 + feeRate
+	want := 100 / marginFactor * positionSizeSafetyFactor
+	if !almost(res.AdjustedSizeUSD, want) {
+		t.Fatalf("size = %v, want %v (fee-rate-aware affordability)", res.AdjustedSizeUSD, want)
+	}
+}
+
 func TestHasPosition(t *testing.T) {
 	positions := []map[string]interface{}{
 		{"symbol": "SOLUSDT", "side": "long"},

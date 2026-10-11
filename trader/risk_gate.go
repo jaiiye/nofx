@@ -7,6 +7,7 @@ import (
 	"nofx/kernel"
 	"nofx/market"
 	"nofx/store"
+	"nofx/trader/connector"
 )
 
 // RiskGateInput is the value-only input to the pre-trade risk gate. Keeping it
@@ -24,6 +25,7 @@ type RiskGateInput struct {
 	Equity           float64
 	AvailableBalance float64
 	MarginUsedPct    float64 // current margin usage in percent (0-100)
+	TakerFeeRate     float64 // taker fee as a fraction of notional; 0 = use default
 
 	Config *store.StrategyConfig
 }
@@ -85,7 +87,11 @@ func EvaluateRiskGate(in RiskGateInput) RiskGateResult {
 
 	// 5. Balance sufficiency: reduce to what the available margin can cover.
 	if res.AdjustedLeverage > 0 {
-		marginFactor := marginOverheadFactor/float64(res.AdjustedLeverage) + takerFeeRate
+		feeRate := in.TakerFeeRate
+		if feeRate <= 0 {
+			feeRate = takerFeeRate // legacy default when no venue model is supplied
+		}
+		marginFactor := marginOverheadFactor/float64(res.AdjustedLeverage) + feeRate
 		if maxAffordable := in.AvailableBalance / marginFactor; res.AdjustedSizeUSD > maxAffordable {
 			res.AdjustedSizeUSD = maxAffordable * positionSizeSafetyFactor
 		}
@@ -162,6 +168,7 @@ func (at *AutoTrader) checkOpenRiskGate(decision *kernel.Decision, positions []m
 		Equity:           equity,
 		AvailableBalance: availableBalance,
 		MarginUsedPct:    marginUsagePct(positions, equity),
+		TakerFeeRate:     connector.FeeModelFor(at.exchange).TakerRate(),
 		Config:           at.config.StrategyConfig,
 	})
 }
