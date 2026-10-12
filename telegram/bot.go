@@ -1,18 +1,15 @@
 package telegram
 
 import (
-	"nofx/api"
-	"nofx/config"
-	"nofx/logger"
-	"nofx/mcp"
-	_ "nofx/mcp/payment"
-	_ "nofx/mcp/provider"
-	"nofx/store"
-	"nofx/telegram/agent"
-	"os"
+	"context"
 	"strings"
 	"sync"
 	"time"
+
+	nofxagent "nofx/agent"
+	"nofx/config"
+	"nofx/logger"
+	"nofx/store"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -20,16 +17,21 @@ import (
 // Start initializes and runs the Telegram bot in a blocking supervisor loop.
 // Supports hot-reload: when a signal is sent on reloadCh, the bot restarts
 // with the latest token (re-read from DB or env). Must be called as a goroutine from main.go.
-func Start(cfg *config.Config, st *store.Store, reloadCh <-chan struct{}) {
+//
+// The conversational brain is the shared NOFXi agent (nofx/agent) — the same
+// instance the web UI talks to. This package only owns the transport layer:
+// Telegram updates, chat binding/access control, language commands, and the
+// placeholder-edit streaming UX.
+func Start(cfg *config.Config, st *store.Store, reloadCh <-chan struct{}, nofxAgent *nofxagent.Agent) {
 	for {
-		token := resolveToken(cfg, st)
+		token := resolveToken(st)
 		if token == "" {
 			logger.Info("Telegram bot disabled (no token configured), waiting for reload signal...")
 			<-reloadCh
 			continue
 		}
 
-		stopped := runBot(token, cfg, st)
+		stopped := runBot(token, cfg, st, nofxAgent)
 		if !stopped {
 			return
 		}
@@ -42,7 +44,7 @@ func Start(cfg *config.Config, st *store.Store, reloadCh <-chan struct{}) {
 }
 
 // resolveToken returns the bot token from DB (configured via Web UI).
-func resolveToken(cfg *config.Config, st *store.Store) string {
+func resolveToken(st *store.Store) string {
 	dbCfg, err := st.TelegramConfig().Get()
 	if err == nil && dbCfg.BotToken != "" {
 		return dbCfg.BotToken
@@ -50,8 +52,36 @@ func resolveToken(cfg *config.Config, st *store.Store) string {
 	return ""
 }
 
+// chatLanes serializes AI calls per chat (OpenClaw Lane Queue pattern): a
+// second message for the same chat waits up to laneWaitTimeout, then gives up.
+type chatLanes struct {
+	mu    sync.Mutex
+	lanes map[int64]chan struct{}
+}
+
+const laneWaitTimeout = 60 * time.Second
+
+func (l *chatLanes) run(chatID int64, fn func()) bool {
+	l.mu.Lock()
+	lane, ok := l.lanes[chatID]
+	if !ok {
+		lane = make(chan struct{}, 1) // binary semaphore: one message at a time per chat
+		l.lanes[chatID] = lane
+	}
+	l.mu.Unlock()
+
+	select {
+	case lane <- struct{}{}:
+	case <-time.After(laneWaitTimeout):
+		return false
+	}
+	defer func() { <-lane }()
+	fn()
+	return true
+}
+
 // runBot runs the bot until the updates channel closes (clean stop → true) or a fatal error (false).
-func runBot(token string, cfg *config.Config, st *store.Store) bool {
+func runBot(token string, cfg *config.Config, st *store.Store, nofxAgent *nofxagent.Agent) bool {
 	bot, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
 		logger.Errorf("Telegram bot failed to start: %v", err)
@@ -65,13 +95,9 @@ func runBot(token string, cfg *config.Config, st *store.Store) bool {
 		allowedChatID = id
 	}
 
-	// botUserID / botToken / agents are resolved lazily and refresh when user registers.
-	var (
-		botUserID    string
-		botUserEmail string
-		botToken     string
-		agents       *agent.Manager
-	)
+	// botUserID is resolved lazily and refreshes when the user registers.
+	var botUserID, botUserEmail string
+	lanes := &chatLanes{lanes: map[int64]chan struct{}{}}
 
 	resolveBotUser := func() bool {
 		users, err := st.User().GetAll()
@@ -82,19 +108,9 @@ func runBot(token string, cfg *config.Config, st *store.Store) bool {
 		if u.ID == botUserID {
 			return true
 		}
-		newToken, err := agent.GenerateBotToken(u.ID)
-		if err != nil {
-			logger.Errorf("Failed to generate bot JWT for user %s: %v", u.ID, err)
-			return false
-		}
 		prev := botUserID
 		botUserID = u.ID
 		botUserEmail = u.Email
-		botToken = newToken
-		agents = agent.NewManager(cfg.APIServerPort, botToken, botUserEmail, botUserID,
-			func() mcp.AIClient { return newLLMClient(st, botUserID) },
-			api.GetAPIDocs(),
-		)
 		if prev == "" {
 			logger.Infof("Bot: resolved user %s (%s)", botUserID, botUserEmail)
 		} else {
@@ -150,8 +166,9 @@ func runBot(token string, cfg *config.Config, st *store.Store) bool {
 			} else if chatID != allowedChatID {
 				sendMsg(bot, chatID, "This bot is already bound to another account.")
 				continue
-			} else {
-				agents.Reset(chatID)
+			} else if nofxAgent != nil {
+				// Fresh conversation on /start (the shared agent supports /clear).
+				_, _ = nofxAgent.HandleMessageForStoreUser(context.Background(), botUserID, chatID, "/clear")
 			}
 			lang := st.TelegramConfig().GetLanguage()
 			sendMarkdownMsg(bot, chatID, statusMsg(st, botUserID, cfg.APIServerPort, lang))
@@ -194,14 +211,14 @@ func runBot(token string, cfg *config.Config, st *store.Store) bool {
 
 		lang := st.TelegramConfig().GetLanguage()
 
-		// ── Guard: show status if not ready for trading ───────────────────────
-		if newLLMClient(st, botUserID) == nil {
+		// ── Guard: show status if no usable AI model is configured ───────────
+		if !hasEnabledModel(st, botUserID) {
 			sendMarkdownMsg(bot, chatID, statusMsg(st, botUserID, cfg.APIServerPort, lang))
 			continue
 		}
 
-		// ── AI agent ─────────────────────────────────────────────────────────
-		go func(chatID int64, text string) {
+		// ── AI agent (shared NOFXi agent, Telegram transport) ────────────────
+		go func(chatID int64, text, lang string) {
 			sent, err := bot.Send(tgbotapi.NewMessage(chatID, "⏳"))
 			placeholderID := 0
 			if err == nil {
@@ -209,16 +226,21 @@ func runBot(token string, cfg *config.Config, st *store.Store) bool {
 			}
 
 			var (
-				mu       sync.Mutex
-				lastEdit time.Time
+				mu          sync.Mutex
+				accumulated string
+				lastEdit    time.Time
 			)
-			onChunk := func(accumulated string) {
-				if placeholderID == 0 {
+			// The agent emits incremental delta chunks (plus status events we
+			// do not render in Telegram). Accumulate deltas and throttled-edit
+			// the placeholder with the full text so far.
+			onEvent := func(event, data string) {
+				if event != nofxagent.StreamEventDelta || placeholderID == 0 {
 					return
 				}
 				mu.Lock()
 				defer mu.Unlock()
-				if accumulated != "⏳" && time.Since(lastEdit) < time.Second {
+				accumulated += data
+				if time.Since(lastEdit) < time.Second {
 					return
 				}
 				lastEdit = time.Now()
@@ -226,7 +248,27 @@ func runBot(token string, cfg *config.Config, st *store.Store) bool {
 				bot.Send(edit) //nolint:errcheck
 			}
 
-			reply := agents.Run(chatID, text, onChunk)
+			var reply string
+			ok := lanes.run(chatID, func() {
+				// The agent understands a "[lang:xx] " prefix to switch the
+				// reply language per conversation.
+				msg := text
+				if lang == "zh" || lang == "en" {
+					msg = "[lang:" + lang + "] " + text
+				}
+				r, err := nofxAgent.HandleMessageStreamForStoreUser(
+					context.Background(), botUserID, chatID, msg, onEvent)
+				if err != nil {
+					logger.Errorf("Telegram agent error: %v", err)
+				}
+				if r == "" {
+					r = "AI assistant temporarily unavailable. Please try again."
+				}
+				reply = r
+			})
+			if !ok {
+				reply = "Previous message is still being processed. Please wait a moment and try again. / 上一条消息仍在处理中，请稍等片刻后再试。"
+			}
 
 			if placeholderID != 0 {
 				edit := tgbotapi.NewEditMessageText(chatID, placeholderID, reply)
@@ -243,7 +285,7 @@ func runBot(token string, cfg *config.Config, st *store.Store) bool {
 					bot.Send(msg) //nolint:errcheck
 				}
 			}
-		}(chatID, text)
+		}(chatID, text, lang)
 	}
 
 	return true
@@ -265,67 +307,11 @@ func sendMarkdownMsg(bot *tgbotapi.BotAPI, chatID int64, text string) {
 	}
 }
 
-// ── LLM client ───────────────────────────────────────────────────────────────
-
-func newLLMClient(st *store.Store, userID string) mcp.AIClient {
-	// 1. Prefer the model explicitly configured for Telegram (Settings → Telegram → AI Model)
-	if tgCfg, err := st.TelegramConfig().Get(); err == nil && tgCfg.ModelID != "" {
-		if model, err := st.AIModel().Get(userID, tgCfg.ModelID); err == nil && model.Enabled {
-			apiKey := string(model.APIKey)
-			if apiKey != "" {
-				client := clientForProvider(model.Provider)
-				client.SetAPIKey(apiKey, model.CustomAPIURL, model.CustomModelName)
-				if isUSDCProvider(model.Provider) {
-					logger.Infof("Telegram agent: provider=%s (USDC payment) user=%s", model.Provider, userID)
-				} else {
-					logger.Infof("Telegram agent: provider=%s user=%s", model.Provider, userID)
-				}
-				return client
-			}
-		}
-	}
-
-	// 2. Fall back to first enabled model
-	if model, err := st.AIModel().GetDefault(userID); err == nil {
-		apiKey := string(model.APIKey)
-		if apiKey != "" {
-			client := clientForProvider(model.Provider)
-			client.SetAPIKey(apiKey, model.CustomAPIURL, model.CustomModelName)
-			if isUSDCProvider(model.Provider) {
-				logger.Infof("Telegram agent: provider=%s (USDC payment) user=%s", model.Provider, userID)
-			} else {
-				logger.Infof("Telegram agent: provider=%s user=%s", model.Provider, userID)
-			}
-			return client
-		}
-	}
-
-	// 3. Environment variable fallback
-	for _, pair := range []struct{ provider, key, url string }{
-		{"deepseek", os.Getenv("DEEPSEEK_API_KEY"), mcp.DefaultDeepSeekBaseURL},
-		{"openai", os.Getenv("OPENAI_API_KEY"), ""},
-		{"claude", os.Getenv("ANTHROPIC_API_KEY"), ""},
-	} {
-		if pair.key != "" {
-			client := clientForProvider(pair.provider)
-			client.SetAPIKey(pair.key, pair.url, "")
-			return client
-		}
-	}
-	return nil
-}
-
-// isUSDCProvider returns true for providers that pay per call with USDC (x402 protocol).
-func isUSDCProvider(provider string) bool {
-	return provider == "claw402"
-}
-
-func clientForProvider(provider string) mcp.AIClient {
-	client := mcp.NewAIClientByProvider(provider)
-	if client == nil {
-		client = mcp.NewAIClientByProvider("deepseek")
-	}
-	return client
+// hasEnabledModel reports whether the user has an enabled AI model with
+// credentials configured. Replaces the old newLLMClient() readiness probe.
+func hasEnabledModel(st *store.Store, userID string) bool {
+	model, err := st.AIModel().GetDefault(userID)
+	return err == nil && model.Enabled && string(model.APIKey) != ""
 }
 
 // ── Status message ────────────────────────────────────────────────────────────

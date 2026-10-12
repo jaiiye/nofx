@@ -159,8 +159,9 @@ func main() {
 		}
 	}()
 
-	// Start Telegram bot (if TELEGRAM_BOT_TOKEN is configured)
-	go telegram.Start(cfg, st, telegramReloadCh)
+	// Start Telegram bot (if a token is configured). It shares the NOFXi agent
+	// with the web UI — only the transport layer lives in the telegram package.
+	go telegram.Start(cfg, st, telegramReloadCh, nofxiAgent)
 
 	// Wait for interrupt signal
 	quit := make(chan os.Signal, 1)

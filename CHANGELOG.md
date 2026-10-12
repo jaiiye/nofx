@@ -27,6 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `CallWithMessages(ctx, systemPrompt, userPrompt)`. Pass `context.Background()` (or a
   request/trader context) when migrating. Out-of-tree implementations of `mcp.AIClient`
   must update their method signature.
+- The Telegram bot now shares the NOFXi agent (`nofx/agent`) with the web UI instead of
+  running its own single-tool REST agent — `telegram/agent` and `telegram/session` are
+  removed. Consequences: the bot exposes the full NOFXi tool surface, and the
+  "Telegram → AI Model" setting (`POST /api/telegram/model`) is currently ignored — the
+  bot uses the same model selection as the web agent.
 
 ### Fixed
 - Trading mode now actually reaches the system prompt. The live loop previously passed a

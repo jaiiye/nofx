@@ -26,6 +26,10 @@ NOFX 项目的所有重要更改都将记录在此文件中。
 - `mcp.AIClient.CallWithMessages` 新增首个 `context.Context` 参数：
   `CallWithMessages(ctx, systemPrompt, userPrompt)`。迁移时传入 `context.Background()`
   或请求/交易员上下文；自行实现 `mcp.AIClient` 的下游代码需同步修改方法签名。
+- Telegram bot 现在与 Web 端共享 NOFXi agent（`nofx/agent`），不再运行自己那套单工具
+  REST agent —— `telegram/agent` 与 `telegram/session` 已删除。影响：bot 获得完整的
+  NOFXi 工具面；"设置 → Telegram → AI 模型"（`POST /api/telegram/model`）暂时不再生效，
+  bot 与 Web agent 使用相同的模型选择逻辑。
 
 ### 修复
 - 交易模式现在真正生效。实盘循环此前硬编码传入 `"balanced"`，而 `writeModeVariant`
