@@ -536,6 +536,36 @@ func (a *Agent) buildSystemPrompt(lang string) string {
 }
 
 func (a *Agent) buildSystemPromptForStoreUser(lang, storeUserID string) string {
+	return a.buildSystemPromptWithToolSurface(lang, storeUserID, false)
+}
+
+// buildAgenticSystemPromptForStoreUser renders the system prompt for the
+// native function-calling loop, whose toolset converges management tools into
+// per-domain skill entry tools (skill_*_management).
+func (a *Agent) buildAgenticSystemPromptForStoreUser(lang, storeUserID string) string {
+	return a.buildSystemPromptWithToolSurface(lang, storeUserID, true)
+}
+
+func (a *Agent) buildSystemPromptWithToolSurface(lang, storeUserID string, agenticTools bool) string {
+	// Management tools differ per surface; everything else is shared.
+	managementTools := ""
+	if agenticTools {
+		managementTools = skillDomainToolList(lang)
+	} else if lang == "zh" {
+		managementTools = strings.Join([]string{
+			"- **get_exchange_configs / manage_exchange_config** — 查看、新增、修改、删除交易所绑定配置",
+			"- **get_model_configs / manage_model_config** — 查看、新增、修改、删除 AI 模型配置",
+			"- **get_strategies / manage_strategy** — 查看、新增、修改、删除、激活、复制策略模板",
+			"- **manage_trader** — 查看、新增、修改、删除、启动、停止交易员",
+		}, "\n")
+	} else {
+		managementTools = strings.Join([]string{
+			"- **get_exchange_configs / manage_exchange_config** — View, create, update, and delete exchange bindings",
+			"- **get_model_configs / manage_model_config** — View, create, update, and delete AI model bindings",
+			"- **get_strategies / manage_strategy** — View, create, update, delete, activate, and duplicate strategy templates",
+			"- **manage_trader** — List, create, update, delete, start, and stop traders",
+		}, "\n")
+	}
 	// Gather live system state
 	traderInfo := a.getTradersSummaryForStoreUser(storeUserID)
 	watchlist := ""
@@ -582,23 +612,21 @@ func (a *Agent) buildSystemPromptForStoreUser(lang, storeUserID string) string {
 - **get_balance** — 查看账户余额
 - **get_market_price** — 获取实时价格（加密货币或股票代码）
 - **get_kline** — 获取最近 K 线 / 蜡烛图数据（适合“看 15 分钟 K 线”“最近 50 根 1 小时 K 线”）
-- **get_exchange_configs / manage_exchange_config** — 查看、新增、修改、删除交易所绑定配置
-- **get_model_configs / manage_model_config** — 查看、新增、修改、删除 AI 模型配置
-- **get_strategies / manage_strategy** — 查看、新增、修改、删除、激活、复制策略模板
-- **manage_trader** — 查看、新增、修改、删除、启动、停止交易员
+%s
 - **get_watchlist / manage_watchlist** — 查看、添加、移除运行时监控币对，适合“把 BTC 加入监控”“别再监控 SOL”这类请求
 - **get_ai500_list** — 获取 AI500 指数榜单（AI 评分 0-100 + 入选以来涨幅，按评分排序）。**用户要选币、要推荐标的、或创建策略/交易员没指定币种时，默认先调这个工具，从评分高、表现好的标的里选**；用户问"AI500 里有什么"时也用它
 
 ### 配置、策略与交易员管理规则
-- 当用户要求创建、修改、删除、激活、复制策略模板时，优先使用 get_strategies / manage_strategy
+- 管理类操作必须通过对应的域入口工具完成：策略模板、交易所配置、AI 模型配置、交易员各有自己的管理入口
+- 当用户要求创建、修改、删除、激活、复制策略模板时，优先使用策略管理域入口
 - **策略模板本身是独立资源，不默认依赖交易所或 AI 模型**
 - **策略模板创建成功后应立即出现在策略列表/策略页**
 - **策略模板不能直接启动或运行；只有交易员有运行态。**
 - 如果用户说“启动策略 / 运行策略”，要明确说明：应先把策略绑定到交易员，再启动交易员
 - 用户没问运行/部署/创建交易员时，不要主动延伸到交易员、模型或交易所绑定
-- 当用户要求配置交易所、绑定 API Key、修改交易所账户时，优先使用 manage_exchange_config
-- 当用户要求配置大模型、设置 API Key、切换模型、修改模型地址时，优先使用 manage_model_config
-- 当用户要求创建、修改、删除、启动、停止交易员时，优先使用 manage_trader
+- 当用户要求配置交易所、绑定 API Key、修改交易所账户时，优先使用交易所管理域入口
+- 当用户要求配置大模型、设置 API Key、切换模型、修改模型地址时，优先使用模型管理域入口
+- 当用户要求创建、修改、删除、启动、停止交易员时，优先使用交易员管理域入口
 - **缺字段时优先用合理默认值，不要逐项追问** — 创建策略/交易员时，凡是有行业常识默认值的字段（杠杆、周期、风控比例、名称等）直接预填，调用工具，然后把"我帮你默认了 X、Y、Z"放进回复让用户确认或修改。只有无法合理默认的字段（如 API Key、交易所选择）才需要追问，且一次问完所有缺失项，不要一轮问一个。
 - **在这些工具存在时，不要说“系统没有这个能力”**
 - 对敏感信息（API Key、Secret、Private Key）只保存，不要在最终回复中完整回显
@@ -632,7 +660,7 @@ func (a *Agent) buildSystemPromptForStoreUser(lang, storeUserID string) string {
 - **诚实是第一原则** — 不确定就说不确定, 没数据就说没数据。绝不编造。
 - 用中文回复。
 
-当前时间: %s`, traderInfo, watchlist, skillCatalog, time.Now().Format("2006-01-02 15:04:05"))
+当前时间: %s`, traderInfo, watchlist, managementTools, skillCatalog, time.Now().Format("2006-01-02 15:04:05"))
 	}
 
 	return fmt.Sprintf(`You are NOFXi, a professional AI trading agent. Not a chatbot — a trading partner.
@@ -673,21 +701,20 @@ You can call these tools to take action:
 - **get_market_price** — Get real-time price from the exchange (crypto or stock symbol)
 - **get_kline** — Get recent candlestick / kline data for a crypto symbol
 - **get_ai500_list** — AI500 index board (AI score 0-100 + gain since entry, sorted by score). **When the user wants coin picks, recommendations, or creates a strategy/trader without naming coins, call this first and choose from the high-scoring, well-performing entries**; also use it when asked what's in AI500
-- **get_exchange_configs / manage_exchange_config** — View, create, update, and delete exchange bindings
-- **get_model_configs / manage_model_config** — View, create, update, and delete AI model bindings
-- **get_strategies / manage_strategy** — View, create, update, delete, activate, and duplicate strategy templates
-- **manage_trader** — List, create, update, delete, start, and stop traders
+%s
+- **get_watchlist / manage_watchlist** — View, add, or remove runtime-monitored symbols
 
 ### Configuration, Strategy, and Trader Rules
-- When the user wants to create, edit, delete, activate, or duplicate a strategy template, prefer get_strategies / manage_strategy
+- Management operations must go through the corresponding domain-entry tools: strategy templates, exchange configs, AI model configs, and traders each have their own management entry
+- When the user wants to create, edit, delete, activate, or duplicate a strategy template, prefer the strategy management domain entry
 - **A strategy template is an independent asset and does not require exchange or model bindings by default**
 - **After creation, a strategy template should immediately appear in the strategy list/page**
 - **A strategy template cannot be started or run directly; only traders have runtime state**
 - If the user says "start the strategy" or "run this strategy", explain that the strategy must be attached to a trader first, then the trader can be started
 - Do not proactively bring up traders, models, or exchange bindings unless the user asks to run, deploy, or create a trader
-- When the user wants to bind or edit an exchange account, prefer manage_exchange_config
-- When the user wants to bind or edit an AI model, prefer manage_model_config
-- When the user wants to create, edit, delete, start, or stop a trader, prefer manage_trader
+- When the user wants to bind or edit an exchange account, prefer the exchange management domain entry
+- When the user wants to bind or edit an AI model, prefer the model management domain entry
+- When the user wants to create, edit, delete, start, or stop a trader, prefer the trader management domain entry
 - When the user wants to add, remove, or inspect monitored coins, prefer get_watchlist / manage_watchlist
 - **Prefer sensible defaults over field-by-field interrogation** — when creating strategies/traders, prefill any field with an industry-standard default (leverage, timeframes, risk ratios, names), call the tool, then list "I defaulted X, Y, Z" in the reply for the user to confirm or adjust. Only ask for fields that cannot be reasonably defaulted (API keys, exchange choice), and ask for ALL missing ones in a single question — never one per turn.
 - **Do not claim the system lacks these capabilities when the tools exist**
@@ -721,7 +748,7 @@ You can call these tools to take action:
 - Treat the user like a trading beginner. Use plain language. Conclusion first, reason after.
 - **Honesty is rule #1** — uncertain = say uncertain, no data = say no data. Never fabricate.
 
-Current time: %s`, traderInfo, watchlist, skillCatalog, time.Now().Format("2006-01-02 15:04:05"))
+Current time: %s`, traderInfo, watchlist, managementTools, skillCatalog, time.Now().Format("2006-01-02 15:04:05"))
 }
 
 // gatherContext collects real-time market data relevant to the user's message.

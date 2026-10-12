@@ -68,7 +68,7 @@ func (a *Agent) runAgenticTurn(ctx context.Context, storeUserID string, userID i
 		return "", false, nil
 	}
 
-	messages := []mcp.Message{mcp.NewSystemMessage(a.buildSystemPromptForStoreUser(lang, storeUserID))}
+	messages := []mcp.Message{mcp.NewSystemMessage(a.buildAgenticSystemPromptForStoreUser(lang, storeUserID))}
 	if prefs := a.buildPersistentPreferencesContext(userID); prefs != "" {
 		messages = append(messages, mcp.NewSystemMessage(prefs))
 	}

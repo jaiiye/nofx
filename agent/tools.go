@@ -34,14 +34,45 @@ import (
 // cachedTools holds the static tool definitions (built once, reused per message).
 var cachedTools = buildAgentTools()
 
+// agenticFlatToolExclusions lists the flat management tools that the native
+// function-calling loop replaces with converged per-domain skill entries
+// (skill_*_management, generated from agent/skills/*.json). The legacy
+// routing stack keeps using the flat tools via cachedTools.
+var agenticFlatToolExclusions = map[string]bool{
+	"get_exchange_configs":   true,
+	"manage_exchange_config": true,
+	"get_model_configs":      true,
+	"manage_model_config":    true,
+	"get_strategies":         true,
+	"manage_strategy":        true,
+	"manage_trader":          true,
+}
+
+// cachedAgenticTools is the converged toolset for the agentic loop.
+var cachedAgenticTools = buildAgenticTools()
+
+func buildAgenticTools() []mcp.Tool {
+	out := make([]mcp.Tool, 0, len(cachedTools)+4)
+	for _, tool := range cachedTools {
+		if agenticFlatToolExclusions[tool.Function.Name] {
+			continue
+		}
+		out = append(out, tool)
+	}
+	out = append(out, skillDomainTools()...)
+	return out
+}
+
 var (
 	binanceFuturesAPIBaseURL    = "https://fapi.binance.com"
 	marketDataHTTPClient        = http.DefaultClient
 	traderInitialBalanceFetcher = defaultTraderInitialBalanceFetcher
 )
 
-// agentTools returns the tools available to the LLM for autonomous action.
-func agentTools() []mcp.Tool { return cachedTools }
+// agentTools returns the tools available to the LLM for autonomous action in
+// the native function-calling loop: non-management tools plus the converged
+// per-domain skill entry tools.
+func agentTools() []mcp.Tool { return cachedAgenticTools }
 
 // plannerToolsForText returns the tools the LLM can call on this turn.
 //
@@ -932,6 +963,8 @@ func (a *Agent) handleToolCall(ctx context.Context, storeUserID string, userID i
 		return a.toolManageStrategy(storeUserID, tc.Function.Arguments)
 	case "manage_trader":
 		return a.toolManageTrader(storeUserID, tc.Function.Arguments)
+	case "skill_exchange_management", "skill_model_management", "skill_strategy_management", "skill_trader_management":
+		return a.handleSkillDomainToolCall(ctx, storeUserID, userID, lang, tc)
 	case "search_stock":
 		return a.toolSearchStock(tc.Function.Arguments)
 	case "execute_trade":

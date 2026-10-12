@@ -30,6 +30,10 @@ NOFX 项目的所有重要更改都将记录在此文件中。
   REST agent —— `telegram/agent` 与 `telegram/session` 已删除。影响：bot 获得完整的
   NOFXi 工具面；"设置 → Telegram → AI 模型"（`POST /api/telegram/model`）暂时不再生效，
   bot 与 Web agent 使用相同的模型选择逻辑。
+- Agentic（V2）循环的管理类工具收敛为"每域一个入口"：`skill_exchange_management`、
+  `skill_model_management`、`skill_strategy_management`、`skill_trader_management`，
+  由内置 skill JSON 定义自动生成，取代平铺的 `get_*`/`manage_*` 工具对。legacy 路由栈
+  继续使用平铺工具；非管理域工具保持不变。
 
 ### 修复
 - 交易模式现在真正生效。实盘循环此前硬编码传入 `"balanced"`，而 `writeModeVariant`

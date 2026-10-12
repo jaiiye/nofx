@@ -27,6 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `CallWithMessages(ctx, systemPrompt, userPrompt)`. Pass `context.Background()` (or a
   request/trader context) when migrating. Out-of-tree implementations of `mcp.AIClient`
   must update their method signature.
+- The agentic (V2) loop now exposes one converged tool per management domain —
+  `skill_exchange_management`, `skill_model_management`, `skill_strategy_management`,
+  `skill_trader_management` — generated from the embedded skill JSON definitions, instead of
+  the flat `get_*`/`manage_*` pairs. The legacy routing stack keeps the flat tools. Tools
+  defined outside a management domain are unchanged.
 - The Telegram bot now shares the NOFXi agent (`nofx/agent`) with the web UI instead of
   running its own single-tool REST agent — `telegram/agent` and `telegram/session` are
   removed. Consequences: the bot exposes the full NOFXi tool surface, and the
