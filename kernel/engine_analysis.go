@@ -34,14 +34,6 @@ var (
 // Entry Functions - Main API
 // ============================================================================
 
-// GetFullDecision gets AI's complete trading decision (batch analysis of all coins and positions)
-// Uses default strategy configuration - for production use GetFullDecisionWithStrategy with explicit config
-func GetFullDecision(ctx *Context, mcpClient mcp.AIClient) (*FullDecision, error) {
-	defaultConfig := store.GetDefaultStrategyConfig("en")
-	engine := NewStrategyEngine(&defaultConfig)
-	return GetFullDecisionWithStrategy(ctx, mcpClient, engine, "")
-}
-
 // GetFullDecisionWithStrategy uses StrategyEngine to get AI decision (unified prompt generation)
 func GetFullDecisionWithStrategy(ctx *Context, mcpClient mcp.AIClient, engine *StrategyEngine, variant string) (*FullDecision, error) {
 	if ctx == nil {
