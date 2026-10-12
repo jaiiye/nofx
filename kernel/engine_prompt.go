@@ -226,8 +226,21 @@ func (e *StrategyEngine) singleSymbolInfo() (bool, string) {
 	return false, ""
 }
 
+// NormalizeModeVariant returns the canonical form of v when it names a
+// recognised trading-mode variant, and "" otherwise (balanced baseline).
+func NormalizeModeVariant(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "aggressive", "conservative", "scalping":
+		return strings.ToLower(strings.TrimSpace(v))
+	default:
+		return ""
+	}
+}
+
 func writeModeVariant(sb *strings.Builder, variant string, zh bool) {
-	switch strings.ToLower(strings.TrimSpace(variant)) {
+	// Balanced ("") intentionally has no case: the baseline prompt omits the
+	// mode section entirely.
+	switch NormalizeModeVariant(variant) {
 	case "aggressive":
 		if zh {
 			sb.WriteString("## 模式: 激进\n- 优先捕捉趋势突破, 置信度 ≥ 70 时可分批建仓\n- 允许更高仓位, 但必须严格止损并说明风险回报比\n\n")

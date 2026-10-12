@@ -584,6 +584,11 @@ type StrategyConfig struct {
 	// language setting: "zh" for Chinese, "en" for English
 	// This determines the language used for data formatting and prompt generation
 	Language string `json:"language,omitempty"`
+
+	// TradingMode selects the prompt mode variant injected into the system
+	// prompt: "aggressive", "conservative" or "scalping". Empty keeps the
+	// balanced baseline (no mode section).
+	TradingMode string `json:"trading_mode,omitempty"`
 	// AI trading configuration fields are kept on the Go struct for engine
 	// compatibility, but JSON persistence nests them under ai_config.
 	CoinSource     CoinSourceConfig     `json:"-"`
@@ -604,6 +609,7 @@ type StrategyConfig struct {
 
 // AIStrategyConfig contains fields only used by AI trading strategies.
 type AIStrategyConfig struct {
+	TradingMode    string               `json:"trading_mode,omitempty"`
 	CoinSource     CoinSourceConfig     `json:"coin_source"`
 	Indicators     IndicatorConfig      `json:"indicators"`
 	CustomPrompt   string               `json:"custom_prompt,omitempty"`
@@ -632,12 +638,14 @@ func (c StrategyConfig) MarshalJSON() ([]byte, error) {
 	out := struct {
 		StrategyType  string                 `json:"strategy_type"`
 		Language      string                 `json:"language,omitempty"`
+		TradingMode   string                 `json:"trading_mode,omitempty"`
 		AIConfig      *AIStrategyConfig      `json:"ai_config,omitempty"`
 		GridConfig    *GridStrategyConfig    `json:"grid_config,omitempty"`
 		PublishConfig *PublishStrategyConfig `json:"publish_config,omitempty"`
 	}{
 		StrategyType:  strategyType,
 		Language:      c.Language,
+		TradingMode:   c.TradingMode,
 		PublishConfig: c.PublishConfig,
 	}
 
@@ -645,6 +653,7 @@ func (c StrategyConfig) MarshalJSON() ([]byte, error) {
 		out.GridConfig = c.GridConfig
 	} else {
 		out.AIConfig = &AIStrategyConfig{
+			TradingMode:    c.TradingMode,
 			CoinSource:     c.CoinSource,
 			Indicators:     c.Indicators,
 			CustomPrompt:   c.CustomPrompt,
@@ -663,6 +672,7 @@ func (c *StrategyConfig) UnmarshalJSON(data []byte) error {
 	type rawStrategyConfig struct {
 		StrategyType  string                 `json:"strategy_type"`
 		Language      string                 `json:"language"`
+		TradingMode   string                 `json:"trading_mode"`
 		AIConfig      *AIStrategyConfig      `json:"ai_config"`
 		GridConfig    *GridStrategyConfig    `json:"grid_config"`
 		PublishConfig *PublishStrategyConfig `json:"publish_config"`
@@ -682,6 +692,7 @@ func (c *StrategyConfig) UnmarshalJSON(data []byte) error {
 
 	c.StrategyType = raw.StrategyType
 	c.Language = raw.Language
+	c.TradingMode = raw.TradingMode
 	c.GridConfig = raw.GridConfig
 	c.PublishConfig = raw.PublishConfig
 
@@ -692,6 +703,9 @@ func (c *StrategyConfig) UnmarshalJSON(data []byte) error {
 		c.RiskControl = raw.AIConfig.RiskControl
 		c.PromptSections = raw.AIConfig.PromptSections
 		c.Protections = raw.AIConfig.Protections
+		if raw.AIConfig.TradingMode != "" {
+			c.TradingMode = raw.AIConfig.TradingMode
+		}
 	} else {
 		if raw.CoinSource != nil {
 			c.CoinSource = *raw.CoinSource

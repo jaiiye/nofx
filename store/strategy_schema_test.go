@@ -77,6 +77,73 @@ func TestStrategyConfigUnmarshalLegacyFlatAIConfig(t *testing.T) {
 	}
 }
 
+func TestStrategyConfigTradingModeRoundTrip(t *testing.T) {
+	cfg := GetDefaultStrategyConfig("en")
+	cfg.TradingMode = "aggressive"
+
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+
+	var asMap map[string]any
+	if err := json.Unmarshal(raw, &asMap); err != nil {
+		t.Fatalf("unmarshal config map: %v", err)
+	}
+	aiCfg, ok := asMap["ai_config"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected ai_config object: %s", string(raw))
+	}
+	if aiCfg["trading_mode"] != "aggressive" {
+		t.Fatalf("ai_config.trading_mode = %v, want aggressive: %s", aiCfg["trading_mode"], string(raw))
+	}
+
+	var back StrategyConfig
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatalf("unmarshal round-trip: %v", err)
+	}
+	if back.TradingMode != "aggressive" {
+		t.Fatalf("TradingMode after round-trip = %q, want aggressive", back.TradingMode)
+	}
+}
+
+func TestStrategyConfigUnmarshalTradingModePrecedence(t *testing.T) {
+	// Legacy flat form: trading_mode sits at the top level.
+	flat := []byte(`{
+		"strategy_type":"ai_trading",
+		"trading_mode":"scalping",
+		"coin_source":{"source_type":"static","static_coins":["ETHUSDT"]},
+		"indicators":{"klines":{"primary_timeframe":"15m"}},
+		"risk_control":{"max_positions":2}
+	}`)
+	var flatCfg StrategyConfig
+	if err := json.Unmarshal(flat, &flatCfg); err != nil {
+		t.Fatalf("unmarshal flat trading_mode: %v", err)
+	}
+	if flatCfg.TradingMode != "scalping" {
+		t.Fatalf("flat TradingMode = %q, want scalping", flatCfg.TradingMode)
+	}
+
+	// Nested ai_config wins over the top-level echo.
+	nested := []byte(`{
+		"strategy_type":"ai_trading",
+		"trading_mode":"aggressive",
+		"ai_config":{
+			"trading_mode":"conservative",
+			"coin_source":{"source_type":"static","static_coins":["ETHUSDT"]},
+			"indicators":{"klines":{"primary_timeframe":"15m"}},
+			"risk_control":{"max_positions":2}
+		}
+	}`)
+	var nestedCfg StrategyConfig
+	if err := json.Unmarshal(nested, &nestedCfg); err != nil {
+		t.Fatalf("unmarshal nested trading_mode: %v", err)
+	}
+	if nestedCfg.TradingMode != "conservative" {
+		t.Fatalf("nested TradingMode = %q, want conservative", nestedCfg.TradingMode)
+	}
+}
+
 func TestStrategyConfigNormalizeProductSchemaForLLMLabels(t *testing.T) {
 	cfg := GetDefaultStrategyConfig("zh")
 	patch := map[string]any{

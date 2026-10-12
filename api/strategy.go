@@ -17,6 +17,25 @@ import (
 	"github.com/google/uuid"
 )
 
+// resolvePromptVariant picks the effective prompt mode for preview/test-run.
+// An explicitly provided request value always wins (so callers can experiment
+// with a mode regardless of what the strategy stores); otherwise the strategy's
+// configured trading_mode is used; otherwise the balanced baseline. Values are
+// normalized so the echoed prompt_variant matches what the prompt builder
+// actually applies.
+func resolvePromptVariant(explicit, configured string) string {
+	if explicit != "" {
+		if v := kernel.NormalizeModeVariant(explicit); v != "" {
+			return v
+		}
+		return "balanced"
+	}
+	if v := kernel.NormalizeModeVariant(configured); v != "" {
+		return v
+	}
+	return "balanced"
+}
+
 // validateStrategyConfig validates strategy configuration and returns warnings
 func validateStrategyConfig(config *store.StrategyConfig) []string {
 	var warnings []string
@@ -519,9 +538,7 @@ func (s *Server) handlePreviewPrompt(c *gin.Context) {
 	if req.AccountEquity <= 0 {
 		req.AccountEquity = 1000.0 // Default simulated account equity
 	}
-	if req.PromptVariant == "" {
-		req.PromptVariant = "balanced"
-	}
+	req.PromptVariant = resolvePromptVariant(req.PromptVariant, req.Config.TradingMode)
 
 	// Create strategy engine to build prompt
 	engine := kernel.NewStrategyEngine(&req.Config)
@@ -565,9 +582,7 @@ func (s *Server) handleStrategyTestRun(c *gin.Context) {
 		return
 	}
 
-	if req.PromptVariant == "" {
-		req.PromptVariant = "balanced"
-	}
+	req.PromptVariant = resolvePromptVariant(req.PromptVariant, req.Config.TradingMode)
 
 	claw402WalletKey, err := s.resolveStrategyDataWalletKey(userID, req.AIModelID)
 	if err != nil {
@@ -663,7 +678,6 @@ func (s *Server) handleStrategyTestRun(c *gin.Context) {
 		},
 		Positions:          []kernel.PositionInfo{},
 		CandidateCoins:     candidates,
-		PromptVariant:      req.PromptVariant,
 		MarketDataMap:      marketDataMap,
 		QuantDataMap:       quantDataMap,
 		OIRankingData:      oiRankingData,

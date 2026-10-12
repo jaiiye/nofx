@@ -44,6 +44,9 @@ export interface StrategyConfig {
   // Language setting: "zh" for Chinese, "en" for English
   // Determines the language used for data formatting and prompt generation
   language?: 'zh' | 'en';
+  // Trading mode variant injected into the system prompt. Empty keeps the
+  // balanced baseline. Also accepted nested under ai_config.
+  trading_mode?: 'aggressive' | 'conservative' | 'scalping';
   // AI trading configuration. Legacy flat fields below are accepted only for
   // old data returned before the schema was split by strategy type.
   ai_config?: AIStrategyConfig;
@@ -59,6 +62,7 @@ export interface StrategyConfig {
 }
 
 export interface AIStrategyConfig {
+  trading_mode?: 'aggressive' | 'conservative' | 'scalping';
   coin_source: CoinSourceConfig;
   indicators: IndicatorConfig;
   custom_prompt?: string;

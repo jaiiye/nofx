@@ -103,8 +103,19 @@ func (at *AutoTrader) runCycle() error {
 		ctx.Account.TotalEquity, ctx.Account.AvailableBalance, ctx.Account.PositionCount)
 
 	// 5. Use strategy engine to call AI for decision
-	at.logInfof("🤖 Requesting AI analysis and decision... [Strategy Engine]")
-	aiDecision, err := at.decisionMaker.Decide(ctx, "balanced")
+	variant := ""
+	if sc := at.GetStrategyConfig(); sc != nil {
+		variant = kernel.NormalizeModeVariant(sc.TradingMode)
+		if variant == "" && strings.TrimSpace(sc.TradingMode) != "" {
+			at.logWarnf("⚠️ Unknown trading mode %q in strategy config — using balanced baseline", sc.TradingMode)
+		}
+	}
+	modeLabel := variant
+	if modeLabel == "" {
+		modeLabel = "balanced"
+	}
+	at.logInfof("🤖 Requesting AI analysis and decision... [Strategy Engine] (mode: %s)", modeLabel)
+	aiDecision, err := at.decisionMaker.Decide(ctx, variant)
 
 	if aiDecision != nil && aiDecision.AIRequestDurationMs > 0 {
 		record.AIRequestDurationMs = aiDecision.AIRequestDurationMs

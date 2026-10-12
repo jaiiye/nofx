@@ -84,6 +84,7 @@ const getAIConfig = (config: StrategyConfig): AIStrategyConfig | null => {
   if (config.ai_config) return config.ai_config
   if (config.coin_source && config.indicators && config.risk_control) {
     return {
+      trading_mode: config.trading_mode,
       coin_source: config.coin_source,
       indicators: config.indicators,
       risk_control: config.risk_control,
@@ -177,7 +178,10 @@ export function StrategyStudioPage() {
     config_summary: Record<string, unknown>
   } | null>(null)
   const [isLoadingPrompt, setIsLoadingPrompt] = useState(false)
-  const selectedVariant = 'balanced'
+  // Test runs use the same mode the strategy is configured with, so the
+  // previewed prompt matches what a live trader would send.
+  const selectedVariant =
+    editingConfig?.ai_config?.trading_mode || editingConfig?.trading_mode || 'balanced'
 
   // AI Test Run states
   const [aiTestResult, setAiTestResult] = useState<{
@@ -837,11 +841,41 @@ export function StrategyStudioPage() {
       forStrategyType: 'ai_trading' as const,
       content: currentAIConfig && (
         <div className="space-y-3">
-          <p className="text-xs leading-5" style={{ color: '#848E9C' }}>
-            {language === 'zh'
-              ? '写策略很简单：点一句话模板，或直接写一句你的交易想法。'
-              : 'Strategy writing is simple: click a one-line template or type one trading idea.'}
-          </p>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs leading-5" style={{ color: '#848E9C' }}>
+              {language === 'zh'
+                ? '写策略很简单：点一句话模板，或直接写一句你的交易想法。'
+                : 'Strategy writing is simple: click a one-line template or type one trading idea.'}
+            </p>
+            <div className="flex shrink-0 items-center gap-2">
+              <label className="text-xs whitespace-nowrap" style={{ color: '#848E9C' }}>
+                {tr('promptVariant')}
+              </label>
+              <select
+                value={currentAIConfig.trading_mode || 'balanced'}
+                onChange={(e) =>
+                  updateAIConfig(
+                    'trading_mode',
+                    e.target.value === 'balanced'
+                      ? undefined
+                      : (e.target.value as 'aggressive' | 'conservative' | 'scalping')
+                  )
+                }
+                disabled={selectedStrategy?.is_default}
+                className="rounded-md px-2 py-1 text-xs outline-none disabled:opacity-50"
+                style={{
+                  background: 'rgba(240,185,11,0.08)',
+                  border: '1px solid rgba(240,185,11,0.25)',
+                  color: '#F0B90B',
+                }}
+              >
+                <option value="balanced">{tr('balanced')}</option>
+                <option value="aggressive">{tr('aggressive')}</option>
+                <option value="conservative">{tr('conservative')}</option>
+                <option value="scalping">{tr('scalping')}</option>
+              </select>
+            </div>
+          </div>
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
             {(language === 'zh' ? strategyPromptTemplates : strategyPromptTemplatesEn).map((template) => (
               <button
