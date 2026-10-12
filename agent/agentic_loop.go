@@ -36,8 +36,8 @@ func agentV2Enabled() bool {
 // function-calling loop. In-flight legacy flows (skill sessions, workflows,
 // execution states, pending proposals) stay on the legacy stack so they finish
 // with the state machine that started them.
-func (a *Agent) shouldUseAgenticTurn(userID int64) bool {
-	if a.aiClient == nil || !agentV2Enabled() {
+func (a *Agent) shouldUseAgenticTurn(ctx context.Context, userID int64) bool {
+	if a.turnAIClient(ctx) == nil || !agentV2Enabled() {
 		return false
 	}
 	if a.hasAnyActiveContext(userID) {
@@ -64,7 +64,11 @@ func (a *Agent) shouldUseAgenticTurn(userID int64) bool {
 // failed). Once any tool has executed, the turn is always handled so side
 // effects are never silently repeated by a fallback path.
 func (a *Agent) runAgenticTurn(ctx context.Context, storeUserID string, userID int64, lang, text string, onEvent func(event, data string)) (string, bool, error) {
-	if a.aiClient == nil {
+	// Per-request AI client: injected into ctx by the message entry points
+	// (withTurnAIClient); falls back to the shared default only for callers
+	// without injection (tests, background paths).
+	client := a.turnAIClient(ctx)
+	if client == nil {
 		return "", false, nil
 	}
 
@@ -82,7 +86,7 @@ func (a *Agent) runAgenticTurn(ctx context.Context, storeUserID string, userID i
 	var executedTools []string
 
 	for round := 0; round < agenticMaxToolRounds; round++ {
-		resp, err := a.aiClient.CallWithRequestFull(&mcp.Request{
+		resp, err := client.CallWithRequestFull(&mcp.Request{
 			Messages:   messages,
 			Tools:      tools,
 			ToolChoice: "auto",
@@ -135,7 +139,7 @@ func (a *Agent) runAgenticTurn(ctx context.Context, storeUserID string, userID i
 	// Round budget exhausted: ask the LLM to wrap up with what it has, without
 	// offering further tools.
 	messages = append(messages, mcp.NewSystemMessage(agenticWrapUpInstruction(lang)))
-	final, err := a.aiClient.CallWithRequest(&mcp.Request{Messages: messages, Ctx: ctx})
+	final, err := client.CallWithRequest(&mcp.Request{Messages: messages, Ctx: ctx})
 	if err != nil || strings.TrimSpace(final) == "" {
 		if err != nil {
 			a.logger.Warn("agentic wrap-up call failed", "error", err, "user_id", userID)

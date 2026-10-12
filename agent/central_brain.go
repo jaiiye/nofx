@@ -29,7 +29,7 @@ type activeSessionStepDecision struct {
 // tryMinimalBrain is the single entry point replacing tryUnifiedSemanticGateway.
 // Intelligence layer: one routing LLM call → active-session loop → legacy skill execution.
 func (a *Agent) tryMinimalBrain(ctx context.Context, storeUserID string, userID int64, lang, text string, onEvent func(event, data string)) (string, bool, error) {
-	if a.aiClient == nil {
+	if a.turnAIClient(ctx) == nil {
 		return "", false, nil
 	}
 
@@ -44,7 +44,7 @@ func (a *Agent) tryMinimalBrain(ctx context.Context, storeUserID string, userID 
 	stageCtx, cancel := withPlannerStageTimeout(ctx, directReplyTimeout)
 	defer cancel()
 
-	raw, err := a.aiClient.CallWithRequest(&mcp.Request{
+	raw, err := a.turnAIClient(ctx).CallWithRequest(&mcp.Request{
 		Messages: []mcp.Message{
 			mcp.NewSystemMessage(systemPrompt),
 			mcp.NewUserMessage(userPrompt),
@@ -456,7 +456,7 @@ func (a *Agent) ensureStrategyCreateExecutableState(ctx context.Context, lang, t
 	if strategyCreateSessionReady(lang, session) {
 		return session, "", true
 	}
-	if a.aiClient == nil {
+	if a.turnAIClient(ctx) == nil {
 		return session, "", true
 	}
 
@@ -491,7 +491,7 @@ Return shape:
 
 	stageCtx, cancel := withPlannerStageTimeout(ctx, directReplyTimeout)
 	defer cancel()
-	raw, err := a.aiClient.CallWithRequest(&mcp.Request{
+	raw, err := a.turnAIClient(ctx).CallWithRequest(&mcp.Request{
 		Messages: []mcp.Message{
 			mcp.NewSystemMessage(systemPrompt),
 			mcp.NewUserMessage(userPrompt),
@@ -792,7 +792,7 @@ func looksLikeCompletionClaim(reply string) bool {
 }
 
 func (a *Agent) planActiveSessionStep(ctx context.Context, storeUserID string, userID int64, lang, text string, session ActiveSkillSession) (activeSessionStepDecision, bool) {
-	if a.aiClient == nil {
+	if a.turnAIClient(ctx) == nil {
 		return activeSessionStepDecision{}, false
 	}
 
@@ -877,7 +877,7 @@ Return JSON with this exact shape:
 	stageCtx, cancel := withPlannerStageTimeout(ctx, directReplyTimeout)
 	defer cancel()
 
-	raw, err := a.aiClient.CallWithRequest(&mcp.Request{
+	raw, err := a.turnAIClient(ctx).CallWithRequest(&mcp.Request{
 		Messages: []mcp.Message{
 			mcp.NewSystemMessage(systemPrompt),
 			mcp.NewUserMessage(userPrompt),

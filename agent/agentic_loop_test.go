@@ -256,20 +256,20 @@ func TestShouldUseAgenticTurn(t *testing.T) {
 	t.Setenv("NOFX_AGENT_V2", "")
 
 	a := newAgenticTestAgent(&scriptedAIClient{})
-	if !a.shouldUseAgenticTurn(10) {
+	if !a.shouldUseAgenticTurn(t.Context(), 10) {
 		t.Fatal("fresh conversation with AI client should use the agentic turn")
 	}
 
 	t.Run("disabled by env", func(t *testing.T) {
 		t.Setenv("NOFX_AGENT_V2", "off")
-		if a.shouldUseAgenticTurn(10) {
+		if a.shouldUseAgenticTurn(t.Context(), 10) {
 			t.Fatal("env kill switch must disable the agentic turn")
 		}
 	})
 
 	t.Run("no AI client", func(t *testing.T) {
 		noAI := New(nil, nil, DefaultConfig(), slog.Default())
-		if noAI.shouldUseAgenticTurn(10) {
+		if noAI.shouldUseAgenticTurn(t.Context(), 10) {
 			t.Fatal("agentic turn requires an AI client")
 		}
 	})
@@ -281,7 +281,7 @@ func TestShouldUseAgenticTurn(t *testing.T) {
 		}
 		b := New(nil, st, DefaultConfig(), slog.Default())
 		b.SetAIClient(&scriptedAIClient{})
-		if !b.shouldUseAgenticTurn(12) {
+		if !b.shouldUseAgenticTurn(t.Context(), 12) {
 			t.Fatal("fresh conversation should use the agentic turn")
 		}
 		b.SnapshotManager(12).Save(SuspendedTask{
@@ -289,7 +289,7 @@ func TestShouldUseAgenticTurn(t *testing.T) {
 			Kind:       "skill",
 			ResumeHint: "continue strategy create",
 		})
-		if b.shouldUseAgenticTurn(12) {
+		if b.shouldUseAgenticTurn(t.Context(), 12) {
 			t.Fatal("suspended task snapshot must stay on the legacy stack so it can be resumed")
 		}
 	})
@@ -301,11 +301,11 @@ func TestShouldUseAgenticTurn(t *testing.T) {
 		}
 		b := New(nil, st, DefaultConfig(), slog.Default())
 		b.SetAIClient(&scriptedAIClient{})
-		if !b.shouldUseAgenticTurn(11) {
+		if !b.shouldUseAgenticTurn(t.Context(), 11) {
 			t.Fatal("fresh conversation should use the agentic turn")
 		}
 		b.saveActiveSkillSession(newActiveSkillSession(11, "strategy_management", "create"))
-		if b.shouldUseAgenticTurn(11) {
+		if b.shouldUseAgenticTurn(t.Context(), 11) {
 			t.Fatal("active skill session must stay on the legacy stack")
 		}
 	})

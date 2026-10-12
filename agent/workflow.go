@@ -253,7 +253,7 @@ func (a *Agent) classifyWorkflowSessionInput(ctx context.Context, userID int64, 
 	if isInstantDirectReplyText(text) {
 		return unifiedFlowDecision{Intent: "instant_reply"}
 	}
-	if a == nil || a.aiClient == nil {
+	if a == nil || a.turnAIClient(ctx) == nil {
 		if looksLikeNewTopLevelIntent(text) && !strings.EqualFold(text, strings.TrimSpace(session.OriginalRequest)) {
 			return unifiedFlowDecision{Intent: "start_new"}
 		}
@@ -281,7 +281,7 @@ func (a *Agent) classifyWorkflowSessionInput(ctx context.Context, userID int64, 
 	)
 	stageCtx, cancel := withPlannerStageTimeout(ctx, directReplyTimeout)
 	defer cancel()
-	raw, err := a.aiClient.CallWithRequest(&mcp.Request{
+	raw, err := a.turnAIClient(ctx).CallWithRequest(&mcp.Request{
 		Messages: []mcp.Message{
 			mcp.NewSystemMessage(systemPrompt),
 			mcp.NewUserMessage(userPrompt),
@@ -393,7 +393,7 @@ func (a *Agent) generateWorkflowSummary(ctx context.Context, userID int64, lang 
 	if len(completed) == 0 {
 		return ""
 	}
-	if a.aiClient == nil {
+	if a.turnAIClient(ctx) == nil {
 		if lang == "zh" {
 			return "已完成这些任务：" + strings.Join(completed, "；")
 		}
@@ -406,7 +406,7 @@ Return one short user-facing summary in the user's language.
 Do not mention internal DAG, scheduler, or JSON.
 ` + cleanUserFacingReplyInstruction
 	userPrompt := fmt.Sprintf("Language: %s\nOriginal request: %s\nCompleted tasks:\n- %s", lang, session.OriginalRequest, strings.Join(completed, "\n- "))
-	raw, err := a.aiClient.CallWithRequest(&mcp.Request{
+	raw, err := a.turnAIClient(ctx).CallWithRequest(&mcp.Request{
 		Messages: []mcp.Message{
 			mcp.NewSystemMessage(systemPrompt),
 			mcp.NewUserMessage(userPrompt),
@@ -426,7 +426,7 @@ func (a *Agent) decomposeWorkflowIntent(ctx context.Context, userID int64, lang,
 	if !looksLikeMultiTaskIntent(text) {
 		return workflowDecomposition{}, nil
 	}
-	if a.aiClient != nil {
+	if a.turnAIClient(ctx) != nil {
 		if dec, err := a.decomposeWorkflowIntentWithLLM(ctx, userID, lang, text); err == nil && len(dec.Tasks) > 1 {
 			return dec, nil
 		}
@@ -528,7 +528,7 @@ Rules:
 	if skillContext := buildManagementSkillRoutingContext(lang); skillContext != "" {
 		userPrompt += "\n\n" + skillContext
 	}
-	raw, err := a.aiClient.CallWithRequest(&mcp.Request{
+	raw, err := a.turnAIClient(ctx).CallWithRequest(&mcp.Request{
 		Messages: []mcp.Message{
 			mcp.NewSystemMessage(systemPrompt),
 			mcp.NewUserMessage(userPrompt),

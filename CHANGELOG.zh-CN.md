@@ -42,6 +42,9 @@ NOFX 项目的所有重要更改都将记录在此文件中。
   （平衡 / 激进 / 保守 / 短线），预览与测试运行使用与实盘一致的模式。
 - LLM 重试退避现在可被取消：`CallWithMessages` 不再在 `context.Background()` 上等待，
   `AutoTrader.Stop()` 会立即取消进行中的 LLM 调用，而不再等待重试循环结束。
+- Agent 不再在每条消息到达时覆写共享的 `Agent.aiClient` 字段。现在每个请求解析自己的
+  AI 客户端并注入到 turn context（`withTurnAIClient`/`turnAIClient`），并发的多个 store
+  用户不会再互相刷新对方的模型选择；后台任务继续使用受锁保护的默认客户端。
 - `AutoTrader.runCtx`/`runCancel` 改为在 `isRunningMutex` 保护下读写，消除 `Run()` 与
   `Stop()` 之间的数据竞争。
 

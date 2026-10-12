@@ -274,7 +274,7 @@ func formatChatMessagesForSummary(msgs []chatMessage) string {
 }
 
 func (a *Agent) maybeCompressHistory(ctx context.Context, userID int64) {
-	if a.aiClient == nil || a.history == nil {
+	if a.turnAIClient(ctx) == nil || a.history == nil {
 		return
 	}
 
@@ -307,7 +307,7 @@ func (a *Agent) maybeCompressHistory(ctx context.Context, userID int64) {
 }
 
 func (a *Agent) maybeUpdateTaskStateIncrementally(ctx context.Context, userID int64) {
-	if a.aiClient == nil || a.history == nil {
+	if a.turnAIClient(ctx) == nil || a.history == nil {
 		return
 	}
 
@@ -374,7 +374,7 @@ Rules:
 		MaxTokens: intPtr(taskStateSummaryTokenLimit),
 	}
 
-	resp, err := a.aiClient.CallWithRequest(req)
+	resp, err := a.turnAIClient(ctx).CallWithRequest(req)
 	if err != nil {
 		return TaskState{}, err
 	}
@@ -427,7 +427,7 @@ Rules:
 		MaxTokens: intPtr(incrementalTaskStateTokenLimit),
 	}
 
-	resp, err := a.aiClient.CallWithRequest(req)
+	resp, err := a.turnAIClient(ctx).CallWithRequest(req)
 	if err != nil {
 		return TaskState{}, err
 	}

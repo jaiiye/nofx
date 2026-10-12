@@ -313,7 +313,7 @@ func (a *Agent) executeUnifiedTurnDecision(ctx context.Context, storeUserID stri
 		}
 		emitBrainReply(onEvent, decision.ReplyToUser)
 		a.recordSkillInteraction(userID, text, decision.ReplyToUser)
-		a.runPostResponseMaintenanceAsync(userID)
+		a.runPostResponseMaintenanceAsync(ctx, userID)
 		return decision.ReplyToUser, true, nil
 	case "new_skill":
 		if len(decision.Tasks) > 0 {

@@ -30,18 +30,23 @@ import (
 type Agent struct {
 	traderManager *manager.TraderManager
 	store         *store.Store
-	aiClient      mcp.AIClient
-	config        *Config
-	sentinel      *Sentinel
-	brain         *Brain
-	scheduler     *Scheduler
-	logger        *slog.Logger
-	history       *chatHistory
-	pending       *pendingTrades
-	stopCh        chan struct{} // signals background goroutines to stop
-	setupStates   sync.Map
-	flowLocks     sync.Map
-	NotifyFunc    func(userID int64, text string) error
+	// aiClient is the DEFAULT store user's client, used only by background
+	// jobs and as the fallback for callers without a turn context. Request
+	// paths must use turnAIClient(ctx) — the per-request injected client —
+	// so concurrent store users never clobber each other's model selection.
+	aiClient    mcp.AIClient
+	aiClientMu  sync.RWMutex
+	config      *Config
+	sentinel    *Sentinel
+	brain       *Brain
+	scheduler   *Scheduler
+	logger      *slog.Logger
+	history     *chatHistory
+	pending     *pendingTrades
+	stopCh      chan struct{} // signals background goroutines to stop
+	setupStates sync.Map
+	flowLocks   sync.Map
+	NotifyFunc  func(userID int64, text string) error
 }
 
 type Config struct {
@@ -78,7 +83,22 @@ func New(tm *manager.TraderManager, st *store.Store, cfg *Config, logger *slog.L
 	return &Agent{traderManager: tm, store: st, config: cfg, logger: logger, history: newChatHistory(chatHistoryMaxTurns), pending: newPendingTrades(), stopCh: make(chan struct{})}
 }
 
-func (a *Agent) SetAIClient(c mcp.AIClient) { a.aiClient = c }
+func (a *Agent) SetAIClient(c mcp.AIClient) { a.setDefaultAIClient(c) }
+
+// setDefaultAIClient updates the shared default client (mutex-guarded; the
+// request path never writes it).
+func (a *Agent) setDefaultAIClient(c mcp.AIClient) {
+	a.aiClientMu.Lock()
+	defer a.aiClientMu.Unlock()
+	a.aiClient = c
+}
+
+// defaultAIClient reads the shared default client.
+func (a *Agent) defaultAIClient() mcp.AIClient {
+	a.aiClientMu.RLock()
+	defer a.aiClientMu.RUnlock()
+	return a.aiClient
+}
 
 func (a *Agent) ensureHistory() {
 	if a.history == nil {
@@ -105,20 +125,24 @@ func (a *Agent) EnsureAIClient() {
 	a.ensureAIClientForStoreUser("default")
 }
 
+// ensureAIClientForStoreUser refreshes the SHARED default client. It must only
+// be used for the default store user (startup / background jobs); request paths
+// inject a per-request client via withTurnAIClient instead, so concurrent store
+// users never overwrite each other's model selection.
 func (a *Agent) ensureAIClientForStoreUser(storeUserID string) {
 	if storeUserID == "" {
 		storeUserID = "default"
 	}
 	if a.store != nil {
 		if client, modelName, ok := a.loadAIClientFromStoreUser(storeUserID); ok {
-			a.aiClient = client
+			a.setDefaultAIClient(client)
 			a.log().Info("agent AI client ready", "store_user_id", storeUserID, "model", modelName)
 			return
 		}
 	}
-	if a.aiClient != nil {
+	if a.defaultAIClient() != nil {
 		a.log().Warn("clearing stale AI client for store user", "store_user_id", storeUserID)
-		a.aiClient = nil
+		a.setDefaultAIClient(nil)
 	}
 	a.log().Warn("no AI client — agent will have limited capabilities", "store_user_id", storeUserID)
 }
@@ -414,7 +438,9 @@ func (a *Agent) HandleMessageForStoreUser(ctx context.Context, storeUserID strin
 }
 
 func (a *Agent) handleMessageForStoreUser(ctx context.Context, storeUserID string, userID int64, text string) (string, error) {
-	a.ensureAIClientForStoreUser(storeUserID)
+	// Per-request AI client injection: resolve this store user's model once
+	// and carry it through the turn context. Never touch the shared field.
+	ctx = a.withTurnAIClient(ctx, storeUserID)
 
 	lang := a.config.Language
 	if strings.HasPrefix(text, "[lang:") {
@@ -462,7 +488,8 @@ func (a *Agent) HandleMessageStreamForStoreUser(ctx context.Context, storeUserID
 }
 
 func (a *Agent) handleMessageStreamForStoreUser(ctx context.Context, storeUserID string, userID int64, text string, onEvent func(event, data string)) (string, error) {
-	a.ensureAIClientForStoreUser(storeUserID)
+	// Per-request AI client injection — see handleMessageForStoreUser.
+	ctx = a.withTurnAIClient(ctx, storeUserID)
 
 	lang := a.config.Language
 	if strings.HasPrefix(text, "[lang:") {
@@ -911,7 +938,7 @@ func (a *Agent) handleStatus(L string) string {
 		wc = a.sentinel.SymbolCount()
 	}
 	ai := "❌"
-	if a.aiClient != nil {
+	if a.defaultAIClient() != nil {
 		ai = "✅"
 	}
 	return fmt.Sprintf(a.msg(L, "status"), rc, tc, wc, ai, time.Now().Format("2006-01-02 15:04:05"))

@@ -821,13 +821,13 @@ func (a *Agent) thinkAndAct(ctx context.Context, storeUserID string, userID int6
 	lock := a.flowLock(userID)
 	lock.Lock()
 	defer lock.Unlock()
-	if a.shouldUseAgenticTurn(userID) {
+	if a.shouldUseAgenticTurn(ctx, userID) {
 		if answer, ok, err := a.runAgenticTurn(ctx, storeUserID, userID, lang, text, nil); ok || err != nil {
 			return a.maybeAppendResumePrompt(userID, lang, text, answer), err
 		}
 		// Not handled — fall through to the legacy routing stack.
 	}
-	if a.aiClient != nil {
+	if a.turnAIClient(ctx) != nil {
 		if answer, ok, err := a.tryLLMIntentRoute(ctx, storeUserID, userID, lang, text, nil); ok || err != nil {
 			return a.maybeAppendResumePrompt(userID, lang, text, answer), err
 		}
@@ -836,7 +836,7 @@ func (a *Agent) thinkAndAct(ctx context.Context, storeUserID string, userID int6
 			return a.maybeAppendResumePrompt(userID, lang, text, answer), err
 		}
 	}
-	if a.aiClient == nil {
+	if a.turnAIClient(ctx) == nil {
 		if !a.hasAnyActiveContext(userID) {
 			if answer, ok, err := a.tryStatePriorityPath(ctx, storeUserID, userID, lang, text, nil); ok || err != nil {
 				return a.maybeAppendResumePrompt(userID, lang, text, answer), err
@@ -858,13 +858,13 @@ func (a *Agent) thinkAndActStream(ctx context.Context, storeUserID string, userI
 	lock := a.flowLock(userID)
 	lock.Lock()
 	defer lock.Unlock()
-	if a.shouldUseAgenticTurn(userID) {
+	if a.shouldUseAgenticTurn(ctx, userID) {
 		if answer, ok, err := a.runAgenticTurn(ctx, storeUserID, userID, lang, text, onEvent); ok || err != nil {
 			return a.maybeAppendResumePrompt(userID, lang, text, answer), err
 		}
 		// Not handled — fall through to the legacy routing stack.
 	}
-	if a.aiClient != nil {
+	if a.turnAIClient(ctx) != nil {
 		if answer, ok, err := a.tryLLMIntentRoute(ctx, storeUserID, userID, lang, text, onEvent); ok || err != nil {
 			answer = a.maybeAppendResumePrompt(userID, lang, text, answer)
 			return answer, err
@@ -875,7 +875,7 @@ func (a *Agent) thinkAndActStream(ctx context.Context, storeUserID string, userI
 			return answer, err
 		}
 	}
-	if a.aiClient == nil {
+	if a.turnAIClient(ctx) == nil {
 		if !a.hasAnyActiveContext(userID) {
 			if answer, ok, err := a.tryStatePriorityPath(ctx, storeUserID, userID, lang, text, onEvent); ok || err != nil {
 				answer = a.maybeAppendResumePrompt(userID, lang, text, answer)
@@ -1276,7 +1276,7 @@ func (a *Agent) resolveExecutionStateTurn(ctx context.Context, userID int64, lan
 	if isInstantDirectReplyText(text) {
 		return unifiedFlowDecision{Intent: "instant_reply"}, executionFlowExtractionResult{Intent: "instant_reply"}
 	}
-	if a.aiClient != nil {
+	if a.turnAIClient(ctx) != nil {
 		result := a.extractExecutionStateContinuationWithLLM(ctx, userID, lang, state, text)
 		if decision := unifiedFlowDecisionFromIntent(result.Intent, result.TargetSnapshotID); decision.Intent != "" {
 			return decision, result
@@ -1307,7 +1307,7 @@ func unifiedFlowDecisionFromIntent(intent, targetSnapshotID string) unifiedFlowD
 
 func (a *Agent) replyToActiveFlowInstantReply(ctx context.Context, userID int64, lang, text string, onEvent func(event, data string)) string {
 	a.suspendActiveContexts(userID, lang)
-	if a.aiClient != nil {
+	if a.turnAIClient(ctx) != nil {
 		if answer, ok := a.tryDirectAnswer(ctx, userID, lang, text, onEvent); ok {
 			return a.maybeAppendResumePrompt(userID, lang, text, answer)
 		}
@@ -1320,7 +1320,7 @@ func (a *Agent) replyToActiveFlowInstantReply(ctx context.Context, userID int64,
 
 func (a *Agent) handoffFromActiveFlow(ctx context.Context, storeUserID string, userID int64, lang, text, targetSnapshotID string, onEvent func(event, data string)) (string, bool, error) {
 	if a.suspendAndTryRestoreSuspendedTask(userID, lang, text, targetSnapshotID) {
-		if a.aiClient != nil {
+		if a.turnAIClient(ctx) != nil {
 			return a.tryMinimalBrain(ctx, storeUserID, userID, lang, text, onEvent)
 		}
 		return a.tryStatePriorityPath(ctx, storeUserID, userID, lang, text, onEvent)
@@ -1331,7 +1331,7 @@ func (a *Agent) handoffFromActiveFlow(ctx context.Context, storeUserID string, u
 	if answer, ok := a.tryDirectAnswer(ctx, userID, lang, text, onEvent); ok {
 		return a.maybeAppendResumePrompt(userID, lang, text, answer), true, nil
 	}
-	if a.aiClient == nil {
+	if a.turnAIClient(ctx) == nil {
 		if a.tryRestoreSuspendedTaskAfterSwitch(userID, text, "") {
 			if answer, ok := a.tryHardSkill(ctx, storeUserID, userID, lang, text, onEvent); ok {
 				return answer, true, nil
@@ -1348,7 +1348,7 @@ func (a *Agent) handoffFromActiveFlow(ctx context.Context, storeUserID string, u
 }
 
 func (a *Agent) extractExecutionStateContinuationWithLLM(ctx context.Context, userID int64, lang string, state ExecutionState, text string) executionFlowExtractionResult {
-	if a == nil || a.aiClient == nil || strings.TrimSpace(text) == "" {
+	if a == nil || a.turnAIClient(ctx) == nil || strings.TrimSpace(text) == "" {
 		return executionFlowExtractionResult{}
 	}
 	recentConversationCtx := a.buildRecentConversationContext(userID, text)
@@ -1385,7 +1385,7 @@ Return JSON with this exact shape:
 {"intent":"continue|switch|cancel|instant_reply","target_snapshot_id":"","fields":{},"reason":""}`
 	stageCtx, cancel := withPlannerStageTimeout(ctx, directReplyTimeout)
 	defer cancel()
-	raw, err := a.aiClient.CallWithRequest(&mcp.Request{
+	raw, err := a.turnAIClient(ctx).CallWithRequest(&mcp.Request{
 		Messages: []mcp.Message{
 			mcp.NewSystemMessage(systemPrompt),
 			mcp.NewUserMessage(userPrompt),
@@ -1496,7 +1496,7 @@ func (a *Agent) classifySkillSessionInput(ctx context.Context, userID int64, lan
 			}
 		}
 	}
-	if a != nil && a.aiClient != nil {
+	if a != nil && a.turnAIClient(ctx) != nil {
 		if decision := a.classifySkillSessionIntentWithLLM(ctx, userID, lang, session, text); decision != "" {
 			return decision
 		}
@@ -1654,7 +1654,7 @@ func shouldInterruptSkillSessionByExplicitDomainMention(session skillSession, te
 }
 
 func (a *Agent) classifySkillSessionIntentWithLLM(ctx context.Context, userID int64, lang string, session skillSession, text string) string {
-	if a == nil || a.aiClient == nil {
+	if a == nil || a.turnAIClient(ctx) == nil {
 		return ""
 	}
 	if !shouldUseLLMSkillSessionClassifier(session, text) {
@@ -1685,7 +1685,7 @@ func (a *Agent) classifySkillSessionIntentWithLLM(ctx context.Context, userID in
 	)
 	stageCtx, cancel := withPlannerStageTimeout(ctx, directReplyTimeout)
 	defer cancel()
-	raw, err := a.aiClient.CallWithRequest(&mcp.Request{
+	raw, err := a.turnAIClient(ctx).CallWithRequest(&mcp.Request{
 		Messages: []mcp.Message{
 			mcp.NewSystemMessage(systemPrompt),
 			mcp.NewUserMessage(userPrompt),
@@ -1699,7 +1699,7 @@ func (a *Agent) classifySkillSessionIntentWithLLM(ctx context.Context, userID in
 }
 
 func (a *Agent) classifyExecutionStateIntentWithLLM(ctx context.Context, userID int64, lang string, state ExecutionState, text string) string {
-	if a == nil || a.aiClient == nil {
+	if a == nil || a.turnAIClient(ctx) == nil {
 		return ""
 	}
 	if strings.TrimSpace(text) == "" || isExplicitFlowAbort(text) || isYesReply(text) || isNoReply(text) || shouldResetExecutionStateForNewAttempt(text, state) {
@@ -1723,7 +1723,7 @@ func (a *Agent) classifyExecutionStateIntentWithLLM(ctx context.Context, userID 
 	)
 	stageCtx, cancel := withPlannerStageTimeout(ctx, directReplyTimeout)
 	defer cancel()
-	raw, err := a.aiClient.CallWithRequest(&mcp.Request{
+	raw, err := a.turnAIClient(ctx).CallWithRequest(&mcp.Request{
 		Messages: []mcp.Message{
 			mcp.NewSystemMessage(systemPrompt),
 			mcp.NewUserMessage(userPrompt),
@@ -1828,7 +1828,7 @@ func (a *Agent) classifyExecutionStateInput(ctx context.Context, userID int64, l
 	if isYesReply(text) || isNoReply(text) || shouldResetExecutionStateForNewAttempt(text, state) {
 		return "continue"
 	}
-	if a != nil && a.aiClient != nil {
+	if a != nil && a.turnAIClient(ctx) != nil {
 		if decision := a.classifyExecutionStateIntentWithLLM(ctx, userID, lang, state, text); decision != "" {
 			return decision
 		}
@@ -2113,7 +2113,7 @@ func (a *Agent) tryResumeSuspendedTask(userID int64, lang, text string) (string,
 }
 
 func (a *Agent) tryRestoreSuspendedTaskWithLLM(ctx context.Context, userID int64, lang, text string) bool {
-	if a == nil || a.aiClient == nil || strings.TrimSpace(text) == "" {
+	if a == nil || a.turnAIClient(ctx) == nil || strings.TrimSpace(text) == "" {
 		return false
 	}
 	snapshots := a.SnapshotManager(userID).List()
@@ -2137,7 +2137,7 @@ Return JSON with this exact shape:
 
 	stageCtx, cancel := withPlannerStageTimeout(ctx, directReplyTimeout)
 	defer cancel()
-	raw, err := a.aiClient.CallWithRequest(&mcp.Request{
+	raw, err := a.turnAIClient(ctx).CallWithRequest(&mcp.Request{
 		Messages: []mcp.Message{
 			mcp.NewSystemMessage(systemPrompt),
 			mcp.NewUserMessage(userPrompt),
@@ -2322,7 +2322,7 @@ func looksLikeNewTopLevelIntent(text string) bool {
 }
 
 func (a *Agent) tryDirectAnswer(ctx context.Context, userID int64, lang, text string, onEvent func(event, data string)) (string, bool) {
-	if a.aiClient == nil {
+	if a.turnAIClient(ctx) == nil {
 		return "", false
 	}
 
@@ -2371,7 +2371,7 @@ Return JSON with this exact shape:
 	stageCtx, cancel := withPlannerStageTimeout(ctx, directReplyTimeout)
 	defer cancel()
 
-	raw, err := a.aiClient.CallWithRequest(&mcp.Request{
+	raw, err := a.turnAIClient(ctx).CallWithRequest(&mcp.Request{
 		Messages: []mcp.Message{
 			mcp.NewSystemMessage(systemPrompt),
 			mcp.NewUserMessage(userPrompt),
@@ -2400,7 +2400,7 @@ Return JSON with this exact shape:
 	}
 	a.history.Add(userID, "user", text)
 	a.history.Add(userID, "assistant", answer)
-	a.runPostResponseMaintenanceAsync(userID)
+	a.runPostResponseMaintenanceAsync(ctx, userID)
 	if onEvent != nil {
 		emitStreamText(onEvent, answer)
 	}
@@ -2624,13 +2624,16 @@ func (a *Agent) runPlannedAgentWithContextMode(ctx context.Context, storeUserID 
 		answer = guarded
 	}
 	a.history.Add(userID, "assistant", answer)
-	a.runPostResponseMaintenanceAsync(userID)
+	a.runPostResponseMaintenanceAsync(ctx, userID)
 	a.logPlannerTiming(state.SessionID, userID, "run_planned_agent_total", requestStartedAt, nil)
 	return answer, nil
 }
 
-func (a *Agent) runPostResponseMaintenanceAsync(userID int64) {
-	if a == nil || a.aiClient == nil || a.history == nil {
+func (a *Agent) runPostResponseMaintenanceAsync(ctx context.Context, userID int64) {
+	// Capture the per-request client synchronously (before the goroutine),
+	// then re-attach it to a fresh context for the async continuation.
+	client := a.turnAIClient(ctx)
+	if a == nil || client == nil || a.history == nil {
 		return
 	}
 	go func() {
@@ -2639,7 +2642,7 @@ func (a *Agent) runPostResponseMaintenanceAsync(userID int64) {
 				a.log().Warn("post-response maintenance panicked", "user_id", userID, "panic", r)
 			}
 		}()
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		maintenanceCtx, cancel := context.WithTimeout(turnClientContext(ctx), 20*time.Second)
 		defer cancel()
 		// Respect agent shutdown: abort early if stopCh is closed.
 		select {
@@ -2647,8 +2650,8 @@ func (a *Agent) runPostResponseMaintenanceAsync(userID int64) {
 			return
 		default:
 		}
-		a.maybeUpdateTaskStateIncrementally(ctx, userID)
-		a.maybeCompressHistory(ctx, userID)
+		a.maybeUpdateTaskStateIncrementally(maintenanceCtx, userID)
+		a.maybeCompressHistory(maintenanceCtx, userID)
 	}()
 }
 
@@ -2768,7 +2771,7 @@ Return JSON with this exact shape:
 	defer cancel()
 
 	startedAt := time.Now()
-	raw, err := a.aiClient.CallWithRequest(&mcp.Request{
+	raw, err := a.turnAIClient(ctx).CallWithRequest(&mcp.Request{
 		Messages: []mcp.Message{
 			mcp.NewSystemMessage(systemPrompt),
 			mcp.NewUserMessage(userPrompt),
@@ -2975,7 +2978,7 @@ Rules:
 	defer cancel()
 
 	startedAt := time.Now()
-	resp, err := a.aiClient.CallWithRequest(&mcp.Request{
+	resp, err := a.turnAIClient(ctx).CallWithRequest(&mcp.Request{
 		Messages: []mcp.Message{
 			mcp.NewSystemMessage(systemPrompt),
 			mcp.NewUserMessage(userPrompt),
@@ -3422,7 +3425,7 @@ Rules:
 	defer cancel()
 
 	startedAt := time.Now()
-	raw, err := a.aiClient.CallWithRequest(&mcp.Request{
+	raw, err := a.turnAIClient(ctx).CallWithRequest(&mcp.Request{
 		Messages: []mcp.Message{
 			mcp.NewSystemMessage(systemPrompt),
 			mcp.NewUserMessage(userPrompt),
@@ -3718,7 +3721,7 @@ func (a *Agent) executeReasonStep(ctx context.Context, userID int64, lang, goal 
 	defer cancel()
 
 	startedAt := time.Now()
-	resp, err := a.aiClient.CallWithRequest(&mcp.Request{
+	resp, err := a.turnAIClient(ctx).CallWithRequest(&mcp.Request{
 		Messages: []mcp.Message{
 			mcp.NewSystemMessage("You are the reasoning module for NOFXi. Return one short paragraph only. No markdown, no bullet list."),
 			mcp.NewUserMessage(fmt.Sprintf("Language: %s\nGoal: %s\nReasoning task: %s\nObservations JSON: %s\nPersistent preferences: %s\nTask state: %s", lang, goal, step.Instruction, string(obsJSON), a.buildPersistentPreferencesContext(userID), buildTaskStateContext(a.getTaskState(userID)))),
@@ -3742,7 +3745,7 @@ func (a *Agent) generateFinalPlanResponse(ctx context.Context, storeUserID strin
 	stageCtx, cancel := withPlannerStageTimeout(ctx, plannerFinalTimeout)
 	defer cancel()
 	startedAt := time.Now()
-	resp, err := a.aiClient.CallWithRequest(&mcp.Request{
+	resp, err := a.turnAIClient(ctx).CallWithRequest(&mcp.Request{
 		Messages: []mcp.Message{
 			mcp.NewSystemMessage(finalPlanResponseSystemPrompt(lang)),
 			mcp.NewUserMessage(fmt.Sprintf("Goal: %s\nInstruction: %s\nRecent conversation:\n%s\nTool results:\n%s\nPreferences:\n%s", state.Goal, instruction, defaultIfEmpty(conversationCtx, "(first message)"), obsSummary, a.buildPersistentPreferencesContext(userID))),
@@ -4006,10 +4009,10 @@ func (a *Agent) thinkAndActLegacyWithStore(ctx context.Context, storeUserID stri
 			Ctx:        ctx,
 		}
 
-		resp, err := a.aiClient.CallWithRequestFull(req)
+		resp, err := a.turnAIClient(ctx).CallWithRequestFull(req)
 		if err != nil {
 			if round == 0 {
-				plainResp, plainErr := a.aiClient.CallWithRequest(&mcp.Request{Messages: messages, Ctx: ctx})
+				plainResp, plainErr := a.turnAIClient(ctx).CallWithRequest(&mcp.Request{Messages: messages, Ctx: ctx})
 				if plainErr != nil {
 					a.logger.Warn("legacy AI plain fallback failed", "error", plainErr, "user_id", userID)
 					if answer, ok, fallbackErr := a.tryDeterministicFallbackAfterAIServiceFailure(ctx, userID, lang, text, onEvent); ok || fallbackErr != nil {
@@ -4092,7 +4095,7 @@ func (a *Agent) thinkAndActLegacyWithStore(ctx context.Context, storeUserID stri
 		}
 	}
 
-	finalResp, err := a.aiClient.CallWithRequest(&mcp.Request{Messages: messages, Ctx: ctx})
+	finalResp, err := a.turnAIClient(ctx).CallWithRequest(&mcp.Request{Messages: messages, Ctx: ctx})
 	if err != nil {
 		a.logger.Warn("legacy AI final response failed", "error", err, "user_id", userID)
 		if answer, ok, fallbackErr := a.tryDeterministicFallbackAfterAIServiceFailure(ctx, userID, lang, text, onEvent); ok || fallbackErr != nil {

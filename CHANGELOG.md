@@ -50,6 +50,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   waiting for the retry loop to finish.
 - `AutoTrader.runCtx`/`runCancel` are now published under `isRunningMutex` to remove a data
   race between `Run()` and `Stop()`.
+- The agent no longer reassigns the shared `Agent.aiClient` field on every incoming message.
+  Each request resolves its own AI client once and injects it into the turn context
+  (`withTurnAIClient`/`turnAIClient`), so concurrent store users can no longer clobber each
+  other's model selection. Background jobs keep using the mutex-guarded default client.
 
 ### Removed
 - Dead `kernel.PromptBuilder` (`kernel/prompt_builder.go`), an unused legacy prompt template

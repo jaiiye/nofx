@@ -2895,7 +2895,7 @@ func (a *Agent) collectTraderDiagnosisEvidence(storeUserID, traderID, traderName
 }
 
 func (a *Agent) generateTraderDiagnosisAnswerWithLLM(ctx context.Context, lang, userText string, ev traderDiagnosisEvidence) (string, bool) {
-	if a == nil || a.aiClient == nil || ev.TraderConfig == nil {
+	if a == nil || a.turnAIClient(ctx) == nil || ev.TraderConfig == nil {
 		return "", false
 	}
 	evidenceJSON, err := json.MarshalIndent(ev, "", "  ")
@@ -2920,7 +2920,7 @@ Your job:
 
 Return plain text only. No markdown tables.`
 	userPrompt := fmt.Sprintf("Language: %s\nUser question: %s\n\nEvidence JSON:\n%s", lang, userText, string(evidenceJSON))
-	raw, err := a.aiClient.CallWithRequest(&mcp.Request{
+	raw, err := a.turnAIClient(ctx).CallWithRequest(&mcp.Request{
 		Messages: []mcp.Message{
 			mcp.NewSystemMessage(systemPrompt),
 			mcp.NewUserMessage(userPrompt),

@@ -410,7 +410,7 @@ func (a *Agent) recordSkillInteraction(userID int64, userText, answer string) {
 
 func (a *Agent) rerouteRejectedSkillFlow(ctx context.Context, storeUserID string, userID int64, lang, text string) (string, bool) {
 	a.clearSkillSession(userID)
-	if a == nil || a.aiClient == nil {
+	if a == nil || a.turnAIClient(ctx) == nil {
 		return "", false
 	}
 	if answer, handled, err := a.tryLLMIntentRoute(ctx, storeUserID, userID, lang, text, nil); err == nil && handled {

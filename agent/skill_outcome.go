@@ -133,7 +133,7 @@ func parseTaskReviewDecision(raw string) (taskReviewDecision, error) {
 }
 
 func (a *Agent) reviewTaskCompletion(ctx context.Context, userID int64, lang, text string, outcome skillOutcome) (taskReviewDecision, error) {
-	if a.aiClient == nil {
+	if a.turnAIClient(ctx) == nil {
 		if outcome.Status == skillOutcomeRecoverableError || outcome.Status == skillOutcomeFatalError || outcome.Status == skillOutcomeNotHandled {
 			return taskReviewDecision{Route: "replan"}, nil
 		}
@@ -161,7 +161,7 @@ Return JSON with this exact shape:
 	stageCtx, cancel := withPlannerStageTimeout(ctx, directReplyTimeout)
 	defer cancel()
 
-	raw, err := a.aiClient.CallWithRequest(&mcp.Request{
+	raw, err := a.turnAIClient(ctx).CallWithRequest(&mcp.Request{
 		Messages: []mcp.Message{
 			mcp.NewSystemMessage(systemPrompt),
 			mcp.NewUserMessage(userPrompt),
