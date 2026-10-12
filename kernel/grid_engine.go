@@ -1,6 +1,7 @@
 package kernel
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"nofx/logger"
@@ -74,6 +75,10 @@ type GridContext struct {
 	AvailableBalance float64 `json:"available_balance"`
 	CurrentPosition  float64 `json:"current_position"` // Net position size
 	UnrealizedPnL    float64 `json:"unrealized_pnl"`
+
+	// GoCtx is an optional stdlib context used to cancel the LLM call and
+	// its retry backoff. Nil means context.Background().
+	GoCtx context.Context `json:"-"`
 
 	// Performance
 	TotalProfit   float64 `json:"total_profit"`
@@ -450,7 +455,11 @@ func GetGridDecisions(ctx *GridContext, mcpClient mcp.AIClient, config *store.Gr
 	logger.Infof("🤖 [Grid] Calling AI for grid decisions...")
 
 	// Call AI
-	response, err := mcpClient.CallWithMessages(systemPrompt, userPrompt)
+	aiCtx := ctx.GoCtx
+	if aiCtx == nil {
+		aiCtx = context.Background()
+	}
+	response, err := mcpClient.CallWithMessages(aiCtx, systemPrompt, userPrompt)
 	if err != nil {
 		return nil, fmt.Errorf("AI call failed: %w", err)
 	}

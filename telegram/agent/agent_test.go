@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -23,7 +24,7 @@ type mockLLM struct {
 func (m *mockLLM) SetAPIKey(_, _, _ string)   {}
 func (m *mockLLM) SetTimeout(_ time.Duration) {}
 
-func (m *mockLLM) CallWithMessages(_, _ string) (string, error) { return "", nil }
+func (m *mockLLM) CallWithMessages(_ context.Context, _, _ string) (string, error) { return "", nil }
 
 func (m *mockLLM) CallWithRequest(req *mcp.Request) (string, error) {
 	r, err := m.next()

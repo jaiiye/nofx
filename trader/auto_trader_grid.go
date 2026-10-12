@@ -420,6 +420,7 @@ func (at *AutoTrader) RunGridCycle() error {
 	if err != nil {
 		return fmt.Errorf("failed to build grid context: %w", err)
 	}
+	gridCtx.GoCtx = at.runCtx
 
 	// Get AI decisions
 	decision, err := kernel.GetGridDecisions(gridCtx, at.mcpClient, gridConfig, lang)

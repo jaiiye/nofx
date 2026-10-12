@@ -28,7 +28,7 @@ type scriptedAIClient struct {
 
 func (c *scriptedAIClient) SetAPIKey(apiKey string, customURL string, customModel string) {}
 func (c *scriptedAIClient) SetTimeout(timeout time.Duration)                              {}
-func (c *scriptedAIClient) CallWithMessages(systemPrompt, userPrompt string) (string, error) {
+func (c *scriptedAIClient) CallWithMessages(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
 	return c.plainResponse, c.plainErr
 }
 func (c *scriptedAIClient) CallWithRequest(req *mcp.Request) (string, error) {

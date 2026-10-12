@@ -1,6 +1,7 @@
 package kernel
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"nofx/logger"
@@ -110,8 +111,12 @@ func GetFullDecisionWithStrategy(ctx *Context, mcpClient mcp.AIClient, engine *S
 	userPrompt := engine.BuildUserPrompt(ctx)
 
 	// 4. Call AI API
+	aiCtx := ctx.GoCtx
+	if aiCtx == nil {
+		aiCtx = context.Background()
+	}
 	aiCallStart := time.Now()
-	aiResponse, err := mcpClient.CallWithMessages(systemPrompt, userPrompt)
+	aiResponse, err := mcpClient.CallWithMessages(aiCtx, systemPrompt, userPrompt)
 	aiCallDuration := time.Since(aiCallStart)
 	if err != nil {
 		return nil, fmt.Errorf("AI API call failed: %w", err)

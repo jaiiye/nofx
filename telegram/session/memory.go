@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"fmt"
 	"nofx/mcp"
 	"strings"
@@ -91,7 +92,7 @@ Must preserve:
 
 Output: plain text summary, under 200 words.`
 
-	summary, err := m.llm.CallWithMessages(systemPrompt, history)
+	summary, err := m.llm.CallWithMessages(context.Background(), systemPrompt, history)
 	if err != nil {
 		// Compaction failed: keep short-term as-is, never lose user data
 		return

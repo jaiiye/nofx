@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -34,7 +35,7 @@ func TestConfig_MaxRetries_IsUsed(t *testing.T) {
 	)
 
 	// Call API (should fail)
-	_, err := client.CallWithMessages("system", "user")
+	_, err := client.CallWithMessages(context.Background(), "system", "user")
 
 	if err == nil {
 		t.Error("should error")
@@ -97,7 +98,7 @@ func TestConfig_Temperature_IsUsed(t *testing.T) {
 	}
 
 	// Can also verify through actual HTTP request
-	_, err := client.CallWithMessages("system", "user")
+	_, err := client.CallWithMessages(context.Background(), "system", "user")
 	if err != nil {
 		t.Fatalf("should not error: %v", err)
 	}
@@ -159,7 +160,7 @@ func TestConfig_RetryWaitBase_IsUsed(t *testing.T) {
 	start := time.Now()
 
 	// Call API
-	_, err := client.CallWithMessages("system", "user")
+	_, err := client.CallWithMessages(context.Background(), "system", "user")
 
 	// Record end time
 	elapsed := time.Since(start)

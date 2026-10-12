@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -693,7 +694,7 @@ func (s *Server) handleStrategyTestRun(c *gin.Context) {
 
 	// If requesting real AI call
 	if req.RunRealAI && req.AIModelID != "" {
-		aiResponse, aiErr := s.runRealAITest(userID, req.AIModelID, systemPrompt, userPrompt)
+		aiResponse, aiErr := s.runRealAITest(c.Request.Context(), userID, req.AIModelID, systemPrompt, userPrompt)
 		if aiErr != nil {
 			c.JSON(http.StatusOK, gin.H{
 				"system_prompt":   systemPrompt,
@@ -732,8 +733,9 @@ func (s *Server) handleStrategyTestRun(c *gin.Context) {
 	})
 }
 
-// runRealAITest Execute real AI test call
-func (s *Server) runRealAITest(userID, modelID, systemPrompt, userPrompt string) (string, error) {
+// runRealAITest Execute real AI test call. ctx cancels the underlying LLM
+// request (including retry backoff); nil is treated as context.Background().
+func (s *Server) runRealAITest(ctx context.Context, userID, modelID, systemPrompt, userPrompt string) (string, error) {
 	// Get AI model configuration
 	model, err := s.store.AIModel().Get(userID, modelID)
 	if err != nil {
@@ -766,7 +768,10 @@ func (s *Server) runRealAITest(userID, modelID, systemPrompt, userPrompt string)
 	}
 
 	// Call AI API
-	response, err := aiClient.CallWithMessages(systemPrompt, userPrompt)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	response, err := aiClient.CallWithMessages(ctx, systemPrompt, userPrompt)
 	if err != nil {
 		return "", fmt.Errorf("AI API call failed: %w", err)
 	}

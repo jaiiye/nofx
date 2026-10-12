@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"testing"
@@ -87,7 +88,7 @@ func TestClient_CallWithMessages_Success(t *testing.T) {
 		WithBaseURL("https://api.test.com"),
 	)
 
-	result, err := client.CallWithMessages("system prompt", "user prompt")
+	result, err := client.CallWithMessages(context.Background(), "system prompt", "user prompt")
 
 	if err != nil {
 		t.Fatalf("should not error: %v", err)
@@ -117,7 +118,7 @@ func TestClient_CallWithMessages_Success(t *testing.T) {
 func TestClient_CallWithMessages_NoAPIKey(t *testing.T) {
 	client := NewClient()
 
-	_, err := client.CallWithMessages("system", "user")
+	_, err := client.CallWithMessages(context.Background(), "system", "user")
 
 	if err == nil {
 		t.Error("should error when API key is not set")
@@ -139,7 +140,7 @@ func TestClient_CallWithMessages_HTTPError(t *testing.T) {
 		WithAPIKey("test-key"),
 	)
 
-	_, err := client.CallWithMessages("system", "user")
+	_, err := client.CallWithMessages(context.Background(), "system", "user")
 
 	if err == nil {
 		t.Error("should error on HTTP error")
@@ -183,7 +184,7 @@ func TestClient_Retry_Success(t *testing.T) {
 	MaxRetryTimes = 3
 	defer func() { MaxRetryTimes = oldRetries }()
 
-	_, err := c.CallWithMessages("system", "user")
+	_, err := c.CallWithMessages(context.Background(), "system", "user")
 
 	// First fails (connection reset), second succeeds, but response format is wrong, will fail
 	// But at least verify retry logic was triggered
@@ -221,7 +222,7 @@ func TestClient_Retry_NonRetryableError(t *testing.T) {
 		WithAPIKey("test-key"),
 	)
 
-	_, err := client.CallWithMessages("system", "user")
+	_, err := client.CallWithMessages(context.Background(), "system", "user")
 
 	if err == nil {
 		t.Error("should error")

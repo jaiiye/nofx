@@ -20,7 +20,7 @@ type staticAIClient struct {
 
 func (c *staticAIClient) SetAPIKey(apiKey string, customURL string, customModel string) {}
 func (c *staticAIClient) SetTimeout(timeout time.Duration)                              {}
-func (c *staticAIClient) CallWithMessages(systemPrompt, userPrompt string) (string, error) {
+func (c *staticAIClient) CallWithMessages(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
 	return c.response, nil
 }
 func (c *staticAIClient) CallWithRequest(req *mcp.Request) (string, error) {

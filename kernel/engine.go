@@ -109,6 +109,9 @@ type Context struct {
 	BTCETHLeverage     int                                `json:"-"`
 	AltcoinLeverage    int                                `json:"-"`
 	Timeframes         []string                           `json:"-"`
+	// GoCtx is an optional stdlib context used to cancel the LLM call and
+	// its retry backoff. Nil means context.Background().
+	GoCtx context.Context `json:"-"`
 }
 
 // Decision AI trading decision

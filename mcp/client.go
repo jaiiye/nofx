@@ -167,7 +167,12 @@ func (client *Client) SetTimeout(timeout time.Duration) {
 }
 
 // CallWithMessages template method - fixed retry flow (cannot be overridden)
-func (client *Client) CallWithMessages(systemPrompt, userPrompt string) (string, error) {
+// The ctx parameter (nil allowed) cancels both the in-flight HTTP call and
+// the retry backoff waits; nil is treated as context.Background().
+func (client *Client) CallWithMessages(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if client.APIKey == "" {
 		return "", fmt.Errorf("AI API key not set, please call SetAPIKey first")
 	}
@@ -200,7 +205,7 @@ func (client *Client) CallWithMessages(systemPrompt, userPrompt string) (string,
 		if attempt < maxRetries {
 			waitTime := client.Cfg.RetryWaitBase * time.Duration(attempt)
 			client.Log.Infof("⏳ Waiting %v before retry...", waitTime)
-			if err := sleepWithContext(context.Background(), waitTime); err != nil {
+			if err := sleepWithContext(ctx, waitTime); err != nil {
 				return "", err
 			}
 		}

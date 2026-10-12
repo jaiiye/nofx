@@ -1,6 +1,7 @@
 package mcp_test
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"time"
@@ -19,7 +20,7 @@ func Example_backward_compatible() {
 	client.SetAPIKey("sk-xxx", "https://api.custom.com", "gpt-4")
 
 	// Usage
-	result, _ := client.CallWithMessages("system prompt", "user prompt")
+	result, _ := client.CallWithMessages(context.Background(), "system prompt", "user prompt")
 	fmt.Println(result)
 }
 
@@ -28,7 +29,7 @@ func Example_deepseek_backward_compatible() {
 	client := provider.NewDeepSeekClient()
 	client.SetAPIKey("sk-xxx", "", "")
 
-	result, _ := client.CallWithMessages("system", "user")
+	result, _ := client.CallWithMessages(context.Background(), "system", "user")
 	fmt.Println(result)
 }
 
@@ -63,7 +64,7 @@ func Example_new_client_with_options() {
 		mcp.WithTemperature(0.7),
 	)
 
-	result, _ := client.CallWithMessages("system", "user")
+	result, _ := client.CallWithMessages(context.Background(), "system", "user")
 	fmt.Println(result)
 }
 
@@ -99,7 +100,7 @@ func Example_custom_logger() {
 		mcp.WithLogger(customLogger),
 	)
 
-	result, _ := client.CallWithMessages("system", "user")
+	result, _ := client.CallWithMessages(context.Background(), "system", "user")
 	fmt.Println(result)
 }
 
@@ -109,7 +110,7 @@ func Example_no_logger_for_testing() {
 		mcp.WithLogger(mcp.NewNoopLogger()),
 	)
 
-	result, _ := client.CallWithMessages("system", "user")
+	result, _ := client.CallWithMessages(context.Background(), "system", "user")
 	fmt.Println(result)
 }
 
@@ -132,7 +133,7 @@ func Example_custom_http_client() {
 		mcp.WithHTTPClient(customHTTP),
 	)
 
-	result, _ := client.CallWithMessages("system", "user")
+	result, _ := client.CallWithMessages(context.Background(), "system", "user")
 	fmt.Println(result)
 }
 
@@ -154,7 +155,7 @@ func Example_deepseek_new_api() {
 		mcp.WithMaxTokens(8000),
 	)
 
-	result, _ := client.CallWithMessages("system", "user")
+	result, _ := client.CallWithMessages(context.Background(), "system", "user")
 	fmt.Println(result)
 }
 
@@ -175,7 +176,7 @@ func Example_qwen_new_api() {
 		mcp.WithTimeout(90*time.Second),
 	)
 
-	result, _ := client.CallWithMessages("system", "user")
+	result, _ := client.CallWithMessages(context.Background(), "system", "user")
 	fmt.Println(result)
 }
 
@@ -235,7 +236,7 @@ func Example_testing_with_mock() {
 		mcp.WithLogger(mcp.NewNoopLogger()), // Disable logging
 	)
 
-	result, _ := client.CallWithMessages("system", "user")
+	result, _ := client.CallWithMessages(context.Background(), "system", "user")
 	fmt.Println(result)
 }
 
@@ -257,8 +258,8 @@ func Example_environment_specific() {
 		mcp.WithMaxRetries(3),
 	)
 
-	_, _ = devClient.CallWithMessages("system", "user")
-	_, _ = prodClient.CallWithMessages("system", "user")
+	_, _ = devClient.CallWithMessages(context.Background(), "system", "user")
+	_, _ = prodClient.CallWithMessages(context.Background(), "system", "user")
 }
 
 // ============================================================
@@ -280,7 +281,7 @@ func Example_real_world_usage() {
 	systemPrompt := "You are a professional quantitative trading advisor"
 	userPrompt := "Analyze current BTC trend"
 
-	result, err := client.CallWithMessages(systemPrompt, userPrompt)
+	result, err := client.CallWithMessages(context.Background(), systemPrompt, userPrompt)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return

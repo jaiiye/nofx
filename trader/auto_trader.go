@@ -1,6 +1,7 @@
 package trader
 
 import (
+	"context"
 	"fmt"
 	"github.com/ethereum/go-ethereum/crypto"
 	"nofx/kernel"
@@ -171,6 +172,8 @@ type AutoTrader struct {
 	strategyEngine        *kernel.StrategyEngine // Strategy engine (uses strategy configuration)
 	candidateSelector     kernel.CandidateSelector
 	decisionMaker         *kernel.DecisionMaker
+	runCtx                context.Context        // Cancelled by Stop(); flows into kernel contexts for LLM cancellation
+	runCancel             context.CancelFunc
 	cycleNumber           int // Current cycle number
 	initialBalance        float64
 	dailyPnL              float64
@@ -429,6 +432,9 @@ func NewAutoTrader(config AutoTraderConfig, st *store.Store, userID string) (*Au
 func (at *AutoTrader) Run() error {
 	at.isRunningMutex.Lock()
 	at.isRunning = true
+	// runCtx/runCancel are published under isRunningMutex so that a concurrent
+	// Stop() always observes the ctx belonging to this run.
+	at.runCtx, at.runCancel = context.WithCancel(context.Background())
 	at.isRunningMutex.Unlock()
 
 	at.stopMonitorCh = make(chan struct{})
@@ -635,9 +641,13 @@ func (at *AutoTrader) Stop() {
 		return
 	}
 	at.isRunning = false
+	cancel := at.runCancel
 	at.isRunningMutex.Unlock()
 
 	close(at.stopMonitorCh) // Notify monitoring goroutine to stop
+	if cancel != nil {
+		cancel() // Cancel any in-flight LLM call / retry backoff
+	}
 	at.monitorWg.Wait()     // Wait for monitoring goroutine to finish
 	logger.Info("⏹ Automatic trading system stopped")
 }
