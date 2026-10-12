@@ -22,6 +22,25 @@ NOFX 项目的所有重要更改都将记录在此文件中。
 - 重组文档结构为逻辑分类
 - 更新所有 README 文件，添加适当的导航链接
 
+### 变更（破坏性）
+- `mcp.AIClient.CallWithMessages` 新增首个 `context.Context` 参数：
+  `CallWithMessages(ctx, systemPrompt, userPrompt)`。迁移时传入 `context.Background()`
+  或请求/交易员上下文；自行实现 `mcp.AIClient` 的下游代码需同步修改方法签名。
+
+### 修复
+- 交易模式现在真正生效。实盘循环此前硬编码传入 `"balanced"`，而 `writeModeVariant`
+  并不识别该值，导致**模式段落永远不会输出**，用户配置的交易风格完全不起作用。
+  现在模式从 `strategy.trading_mode` 读取，策略编辑器新增风格选择器
+  （平衡 / 激进 / 保守 / 短线），预览与测试运行使用与实盘一致的模式。
+- LLM 重试退避现在可被取消：`CallWithMessages` 不再在 `context.Background()` 上等待，
+  `AutoTrader.Stop()` 会立即取消进行中的 LLM 调用，而不再等待重试循环结束。
+- `AutoTrader.runCtx`/`runCancel` 改为在 `isRunningMutex` 保护下读写，消除 `Run()` 与
+  `Stop()` 之间的数据竞争。
+
+### 移除
+- 删除无用的 `kernel.PromptBuilder`（`kernel/prompt_builder.go`）。这是遗留的 prompt
+  模板，其动作命名（`OPEN_NEW`/`PARTIAL_CLOSE`）与主流程不一致且无任何引用。
+
 ---
 
 ## [3.0.0] - 2025-10-30

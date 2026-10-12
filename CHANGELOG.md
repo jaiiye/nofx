@@ -22,6 +22,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reorganized documentation structure into logical categories
 - Updated all README files with proper navigation links
 
+### Changed (Breaking)
+- `mcp.AIClient.CallWithMessages` now takes a leading `context.Context` parameter:
+  `CallWithMessages(ctx, systemPrompt, userPrompt)`. Pass `context.Background()` (or a
+  request/trader context) when migrating. Out-of-tree implementations of `mcp.AIClient`
+  must update their method signature.
+
+### Fixed
+- Trading mode now actually reaches the system prompt. The live loop previously passed a
+  hardcoded `"balanced"` that `writeModeVariant` did not recognise, so **no mode section was
+  ever emitted** and the configured trading style had no effect. The mode is now read from
+  `strategy.trading_mode`, the strategy editor exposes a mode selector
+  (Balanced / Aggressive / Conservative / Scalping), and preview/test-run use the same mode
+  as the live trader.
+- LLM retry backoff is now cancellable: `CallWithMessages` no longer waits on
+  `context.Background()`, and `AutoTrader.Stop()` cancels an in-flight LLM call instead of
+  waiting for the retry loop to finish.
+- `AutoTrader.runCtx`/`runCancel` are now published under `isRunningMutex` to remove a data
+  race between `Run()` and `Stop()`.
+
+### Removed
+- Dead `kernel.PromptBuilder` (`kernel/prompt_builder.go`), an unused legacy prompt template
+  whose action names (`OPEN_NEW`/`PARTIAL_CLOSE`) did not match the live pipeline.
+
 ---
 
 ## [3.0.0] - 2025-10-30
