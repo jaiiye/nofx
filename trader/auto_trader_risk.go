@@ -23,7 +23,7 @@ func (at *AutoTrader) startDrawdownMonitor() {
 			select {
 			case <-ticker.C:
 				at.checkPositionDrawdown()
-			case <-at.stopMonitorCh:
+			case <-at.runCtx.Done():
 				logger.Info("⏹ Stopped position drawdown monitoring")
 				return
 			}

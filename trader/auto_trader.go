@@ -186,7 +186,6 @@ type AutoTrader struct {
 	startTime             time.Time          // System start time
 	callCount             int                // AI call count
 	positionFirstSeenTime map[string]int64   // Position first seen time (symbol_side -> timestamp in milliseconds)
-	stopMonitorCh         chan struct{}      // Used to stop monitoring goroutine
 	monitorWg             sync.WaitGroup     // Used to wait for monitoring goroutine to finish
 	peakPnLCache          map[string]float64 // Peak profit cache (symbol -> peak P&L percentage)
 	peakPnLCacheMutex     sync.RWMutex       // Cache read-write lock
@@ -419,7 +418,6 @@ func NewAutoTrader(config AutoTraderConfig, st *store.Store, userID string) (*Au
 		callCount:             0,
 		isRunning:             false,
 		positionFirstSeenTime: make(map[string]int64),
-		stopMonitorCh:         make(chan struct{}),
 		monitorWg:             sync.WaitGroup{},
 		peakPnLCache:          make(map[string]float64),
 		peakPnLCacheMutex:     sync.RWMutex{},
@@ -437,7 +435,6 @@ func (at *AutoTrader) Run() error {
 	at.runCtx, at.runCancel = context.WithCancel(context.Background())
 	at.isRunningMutex.Unlock()
 
-	at.stopMonitorCh = make(chan struct{})
 	at.startTime = time.Now()
 
 	logger.Info("🚀 AI-driven automatic trading system started")
@@ -460,7 +457,7 @@ func (at *AutoTrader) Run() error {
 	// Start Lighter order sync if using Lighter exchange
 	if at.exchange == "lighter" {
 		if lighterTrader, ok := at.trader.(*lighter.LighterTraderV2); ok && at.store != nil {
-			lighterTrader.StartOrderSync(at.id, at.exchangeID, at.exchange, at.store, 30*time.Second, at.stopMonitorCh)
+			lighterTrader.StartOrderSync(at.id, at.exchangeID, at.exchange, at.store, 30*time.Second, at.runCtx.Done())
 			at.logInfof("🔄 Lighter order+position sync enabled (every 30s)")
 		}
 	}
@@ -468,7 +465,7 @@ func (at *AutoTrader) Run() error {
 	// Start Hyperliquid order sync if using Hyperliquid exchange
 	if at.exchange == "hyperliquid" {
 		if hyperliquidTrader, ok := at.trader.(*hyperliquid.HyperliquidTrader); ok && at.store != nil {
-			hyperliquidTrader.StartOrderSync(at.id, at.exchangeID, at.exchange, at.store, 30*time.Second, at.stopMonitorCh)
+			hyperliquidTrader.StartOrderSync(at.id, at.exchangeID, at.exchange, at.store, 30*time.Second, at.runCtx.Done())
 			at.logInfof("🔄 Hyperliquid order+position sync enabled (every 30s)")
 		}
 	}
@@ -476,7 +473,7 @@ func (at *AutoTrader) Run() error {
 	// Start Bybit order sync if using Bybit exchange
 	if at.exchange == "bybit" {
 		if bybitTrader, ok := at.trader.(*bybit.BybitTrader); ok && at.store != nil {
-			bybitTrader.StartOrderSync(at.id, at.exchangeID, at.exchange, at.store, 30*time.Second, at.stopMonitorCh)
+			bybitTrader.StartOrderSync(at.id, at.exchangeID, at.exchange, at.store, 30*time.Second, at.runCtx.Done())
 			at.logInfof("🔄 Bybit order+position sync enabled (every 30s)")
 		}
 	}
@@ -484,7 +481,7 @@ func (at *AutoTrader) Run() error {
 	// Start OKX order sync if using OKX exchange
 	if at.exchange == "okx" {
 		if okxTrader, ok := at.trader.(*okx.OKXTrader); ok && at.store != nil {
-			okxTrader.StartOrderSync(at.id, at.exchangeID, at.exchange, at.store, 30*time.Second, at.stopMonitorCh)
+			okxTrader.StartOrderSync(at.id, at.exchangeID, at.exchange, at.store, 30*time.Second, at.runCtx.Done())
 			at.logInfof("🔄 OKX order+position sync enabled (every 30s)")
 		}
 	}
@@ -492,7 +489,7 @@ func (at *AutoTrader) Run() error {
 	// Start Bitget order sync if using Bitget exchange
 	if at.exchange == "bitget" {
 		if bitgetTrader, ok := at.trader.(*bitget.BitgetTrader); ok && at.store != nil {
-			bitgetTrader.StartOrderSync(at.id, at.exchangeID, at.exchange, at.store, 30*time.Second, at.stopMonitorCh)
+			bitgetTrader.StartOrderSync(at.id, at.exchangeID, at.exchange, at.store, 30*time.Second, at.runCtx.Done())
 			at.logInfof("🔄 Bitget order+position sync enabled (every 30s)")
 		}
 	}
@@ -500,7 +497,7 @@ func (at *AutoTrader) Run() error {
 	// Start Aster order sync if using Aster exchange
 	if at.exchange == "aster" {
 		if asterTrader, ok := at.trader.(*aster.AsterTrader); ok && at.store != nil {
-			asterTrader.StartOrderSync(at.id, at.exchangeID, at.exchange, at.store, 30*time.Second, at.stopMonitorCh)
+			asterTrader.StartOrderSync(at.id, at.exchangeID, at.exchange, at.store, 30*time.Second, at.runCtx.Done())
 			at.logInfof("🔄 Aster order+position sync enabled (every 30s)")
 		}
 	}
@@ -508,7 +505,7 @@ func (at *AutoTrader) Run() error {
 	// Start Binance order sync if using Binance exchange
 	if at.exchange == "binance" {
 		if binanceTrader, ok := at.trader.(*binance.FuturesTrader); ok && at.store != nil {
-			binanceTrader.StartOrderSync(at.id, at.exchangeID, at.exchange, at.store, 30*time.Second, at.stopMonitorCh)
+			binanceTrader.StartOrderSync(at.id, at.exchangeID, at.exchange, at.store, 30*time.Second, at.runCtx.Done())
 			at.logInfof("🔄 Binance order+position sync enabled (every 30s)")
 		}
 	}
@@ -516,7 +513,7 @@ func (at *AutoTrader) Run() error {
 	// Start Gate order sync if using Gate exchange
 	if at.exchange == "gate" {
 		if gateTrader, ok := at.trader.(*gate.GateTrader); ok && at.store != nil {
-			gateTrader.StartOrderSync(at.id, at.exchangeID, at.exchange, at.store, 30*time.Second, at.stopMonitorCh)
+			gateTrader.StartOrderSync(at.id, at.exchangeID, at.exchange, at.store, 30*time.Second, at.runCtx.Done())
 			at.logInfof("🔄 Gate order+position sync enabled (every 30s)")
 		}
 	}
@@ -524,7 +521,7 @@ func (at *AutoTrader) Run() error {
 	// Start KuCoin order sync if using KuCoin exchange
 	if at.exchange == "kucoin" {
 		if kucoinTrader, ok := at.trader.(*kucoin.KuCoinTrader); ok && at.store != nil {
-			kucoinTrader.StartOrderSync(at.id, at.exchangeID, at.exchange, at.store, 30*time.Second, at.stopMonitorCh)
+			kucoinTrader.StartOrderSync(at.id, at.exchangeID, at.exchange, at.store, 30*time.Second, at.runCtx.Done())
 			at.logInfof("🔄 KuCoin order+position sync enabled (every 30s)")
 		}
 	}
@@ -538,7 +535,7 @@ func (at *AutoTrader) Run() error {
 		timer := time.NewTimer(delay)
 		select {
 		case <-timer.C:
-		case <-at.stopMonitorCh:
+		case <-at.runCtx.Done():
 			timer.Stop()
 			at.logInfof("⏹ Stop signal received during candle alignment")
 			return nil
@@ -589,7 +586,7 @@ func (at *AutoTrader) Run() error {
 					at.logErrorf("❌ Execution failed: %v", err)
 				}
 			}
-		case <-at.stopMonitorCh:
+		case <-at.runCtx.Done():
 			at.logInfof("⏹ Stop signal received, exiting automatic trading main loop")
 			return nil
 		}
@@ -644,9 +641,11 @@ func (at *AutoTrader) Stop() {
 	cancel := at.runCancel
 	at.isRunningMutex.Unlock()
 
-	close(at.stopMonitorCh) // Notify monitoring goroutine to stop
 	if cancel != nil {
-		cancel() // Cancel any in-flight LLM call / retry backoff
+		// Cancelling runCtx is the single stop signal: it unwinds the main
+		// loop, the drawdown monitor, the order-sync loops, and any in-flight
+		// LLM call / retry backoff.
+		cancel()
 	}
 	at.monitorWg.Wait()     // Wait for monitoring goroutine to finish
 	logger.Info("⏹ Automatic trading system stopped")
