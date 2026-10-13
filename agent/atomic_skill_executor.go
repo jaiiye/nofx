@@ -60,28 +60,3 @@ func (a *Agent) executeAtomicSkillTaskWithSession(storeUserID string, userID int
 	}
 	return answer, handled
 }
-
-func (a *Agent) executeAtomicSkillTaskOutcome(storeUserID string, userID int64, lang, text, skill, action string, onEvent func(event, data string)) (skillOutcome, bool) {
-	return a.executeAtomicSkillTaskOutcomeWithSession(storeUserID, userID, lang, text, skillSession{Name: strings.TrimSpace(skill), Action: normalizeAtomicSkillAction(strings.TrimSpace(skill), action), Phase: "collecting"}, onEvent)
-}
-
-func (a *Agent) executeAtomicSkillTaskOutcomeWithSession(storeUserID string, userID int64, lang, text string, session skillSession, onEvent func(event, data string)) (skillOutcome, bool) {
-	answer, handled := a.executeAtomicSkillTaskWithSession(storeUserID, userID, lang, text, session, onEvent)
-	if !handled {
-		return skillOutcome{}, false
-	}
-	skill := strings.TrimSpace(session.Name)
-	action := normalizeAtomicSkillAction(skill, session.Action)
-	switch skill {
-	case "model_diagnosis", "exchange_diagnosis", "trader_diagnosis", "strategy_diagnosis":
-		return skillOutcome{
-			Skill:        skill,
-			Action:       defaultIfEmpty(action, "diagnose"),
-			Status:       skillOutcomeSuccess,
-			GoalAchieved: true,
-			UserMessage:  answer,
-		}, true
-	default:
-		return inferSkillOutcome(skill, action, answer, a.getSkillSession(userID), skillDataForAction(storeUserID, skill, action, a)), true
-	}
-}

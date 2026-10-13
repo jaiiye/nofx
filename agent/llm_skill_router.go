@@ -327,6 +327,11 @@ func (a *Agent) executeUnifiedTurnDecision(ctx context.Context, storeUserID stri
 		if skill == "" {
 			return "", false, nil
 		}
+		// Same admission rule as the workflow stack: reject actions the skill
+		// JSON does not define instead of burning a session on them.
+		if !supportedWorkflowSkill(skill, action) {
+			return "", false, nil
+		}
 		if a.hasAnyActiveContext(userID) && decision.ContextMode == "fresh_context" {
 			if !a.suspendActiveContexts(userID, lang) {
 				a.clearSkillSession(userID)
@@ -570,16 +575,6 @@ func formatReferenceSourceLabel(lang, source string) string {
 	default:
 		return source
 	}
-}
-
-func hasAnyActiveContext(a *Agent, userID int64) bool {
-	if a == nil {
-		return false
-	}
-	if _, ok := a.getActiveSkillSession(userID); ok {
-		return true
-	}
-	return a.hasActiveSkillSession(userID) || hasActiveWorkflowSession(a.getWorkflowSession(userID)) || hasActiveExecutionState(a.getExecutionState(userID))
 }
 
 func (a *Agent) clearAnyActiveContext(userID int64) bool {

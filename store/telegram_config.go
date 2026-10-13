@@ -6,18 +6,23 @@ import (
 	"sync"
 	"time"
 
+	"nofx/crypto"
+
 	"gorm.io/gorm"
 )
 
 // TelegramConfig stores the Telegram bot binding (single row, always ID=1)
 type TelegramConfig struct {
-	ID        uint      `gorm:"primaryKey"`
-	BotToken  string    `gorm:"column:bot_token"`
-	ChatID    int64     `gorm:"column:chat_id"`
-	Username  string    `gorm:"column:username"` // @username for display
-	BoundAt   time.Time `gorm:"column:bound_at"`
-	ModelID   string    `gorm:"column:model_id;default:''"` // AI model used for Telegram replies
-	Language  string    `gorm:"column:language;default:''"` // "zh" or "en"; empty = not chosen yet
+	ID uint `gorm:"primaryKey"`
+	// BotToken is encrypted at rest like exchange credentials. Tokens saved
+	// before this field was encrypted read back as-is (legacy plaintext) and
+	// are re-encrypted the next time the token is saved from the Web UI.
+	BotToken  crypto.EncryptedString `gorm:"column:bot_token;default:''"`
+	ChatID    int64                  `gorm:"column:chat_id"`
+	Username  string                 `gorm:"column:username"` // @username for display
+	BoundAt   time.Time              `gorm:"column:bound_at"`
+	ModelID   string                 `gorm:"column:model_id;default:''"` // AI model used for Telegram replies
+	Language  string                 `gorm:"column:language;default:''"` // "zh" or "en"; empty = not chosen yet
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -82,7 +87,7 @@ func (s *telegramConfigStore) Save(botToken, modelID string) error {
 		return result.Error
 	}
 	cfg.ID = 1
-	cfg.BotToken = botToken
+	cfg.BotToken = crypto.EncryptedString(botToken)
 	cfg.ModelID = modelID
 	return s.db.Save(&cfg).Error
 }

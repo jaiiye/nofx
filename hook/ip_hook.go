@@ -1,6 +1,6 @@
 package hook
 
-import "github.com/rs/zerolog/log"
+import "nofx/logger"
 
 type IpResult struct {
 	Err error
@@ -13,7 +13,7 @@ func (r *IpResult) Error() error {
 
 func (r *IpResult) GetResult() string {
 	if r.Err != nil {
-		log.Printf("⚠️ Error executing GetIP: %v", r.Err)
+		logger.Warnf("⚠️ Error executing GetIP: %v", r.Err)
 	}
 	return r.IP
 }

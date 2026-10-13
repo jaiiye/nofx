@@ -53,11 +53,18 @@ func (at *AutoTrader) runCycle() error {
 		return nil
 	}
 
-	// 2. Reset daily P&L (reset every day)
+	// 2. Daily P&L window + code-enforced daily loss halt. The AI prompt
+	// promises a daily-loss stop; enforce it against the net realized PnL
+	// recorded since the window opened.
 	if time.Since(at.lastResetTime) > 24*time.Hour {
-		at.dailyPnL = 0
 		at.lastResetTime = time.Now()
-		logger.Info("📅 Daily P&L reset")
+		logger.Info("📅 Daily P&L window reset")
+	}
+	if at.checkDailyLossHalt(record) {
+		if err := at.saveDecision(record); err != nil {
+			at.logWarnf("⚠ Failed to save decision record: %v", err)
+		}
+		return nil
 	}
 
 	// 4. Collect trading context

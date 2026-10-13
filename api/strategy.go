@@ -632,7 +632,7 @@ func (s *Server) handleStrategyTestRun(c *gin.Context) {
 		klineCount = 30
 	}
 
-	fmt.Printf("📊 Using timeframes: %v, primary: %s, kline count: %d\n", timeframes, primaryTimeframe, klineCount)
+	logger.Infof("📊 Using timeframes: %v, primary: %s, kline count: %d", timeframes, primaryTimeframe, klineCount)
 
 	// Get real market data (using multiple timeframes)
 	marketDataMap := make(map[string]*market.Data)
@@ -640,7 +640,7 @@ func (s *Server) handleStrategyTestRun(c *gin.Context) {
 		data, err := market.GetWithTimeframes(coin.Symbol, timeframes, primaryTimeframe, klineCount)
 		if err != nil {
 			// If getting data for a coin fails, log but continue
-			fmt.Printf("⚠️  Failed to get market data for %s: %v\n", coin.Symbol, err)
+			logger.Warnf("Failed to get market data for %s: %v", coin.Symbol, err)
 			continue
 		}
 		marketDataMap[coin.Symbol] = data

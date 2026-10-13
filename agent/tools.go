@@ -940,6 +940,14 @@ func buildAgentTools() []mcp.Tool {
 
 // handleToolCall processes a single tool call from the LLM and returns the result.
 func (a *Agent) handleToolCall(ctx context.Context, storeUserID string, userID int64, lang string, tc mcp.ToolCall) string {
+	// Skill domain tools are generated dynamically from the management skill
+	// JSONs, so route them by prefix — hardcoding the four current names here
+	// would leave a newly added management skill with a tool the LLM can call
+	// but this switch cannot route. handleSkillDomainToolCall validates the
+	// name against the skill registry and rejects unknowns itself.
+	if strings.HasPrefix(tc.Function.Name, skillDomainToolPrefix) {
+		return a.handleSkillDomainToolCall(ctx, storeUserID, userID, lang, tc)
+	}
 	switch tc.Function.Name {
 	case "get_preferences":
 		return a.toolGetPreferences(userID)
@@ -963,8 +971,6 @@ func (a *Agent) handleToolCall(ctx context.Context, storeUserID string, userID i
 		return a.toolManageStrategy(storeUserID, tc.Function.Arguments)
 	case "manage_trader":
 		return a.toolManageTrader(storeUserID, tc.Function.Arguments)
-	case "skill_exchange_management", "skill_model_management", "skill_strategy_management", "skill_trader_management":
-		return a.handleSkillDomainToolCall(ctx, storeUserID, userID, lang, tc)
 	case "search_stock":
 		return a.toolSearchStock(tc.Function.Arguments)
 	case "execute_trade":

@@ -4,9 +4,64 @@ import (
 	"fmt"
 	"nofx/logger"
 	"nofx/market"
+	"nofx/store"
 	"strings"
 	"time"
 )
+
+// dailyLossHaltLimit returns the daily net-loss fraction (0.10 = 10%) at
+// which trading pauses. Configured values are fractions (0.1 = 10%, negative
+// normalized); a percentage-style value (>1) is divided by 100. Defaults to
+// 10%, matching the default advertised to the AI in the kernel schema.
+func (at *AutoTrader) dailyLossHaltLimit() float64 {
+	v := at.config.MaxDailyLoss
+	if v < 0 {
+		v = -v
+	}
+	if v > 0 && v <= 1 {
+		return v
+	}
+	if v > 1 {
+		return v / 100
+	}
+	return 0.10
+}
+
+// checkDailyLossHalt pauses trading once the day's net realized loss breaches
+// the configured fraction of the initial balance. The halt relies on the
+// position records every close path lands in (direct recording or OrderSync).
+// Returns true when trading is paused.
+func (at *AutoTrader) checkDailyLossHalt(record *store.DecisionRecord) bool {
+	if at.store == nil || at.initialBalance <= 0 {
+		return false
+	}
+	netPnL, err := at.store.Position().GetNetRealizedPnLSince(at.id, at.lastResetTime.UTC().UnixMilli())
+	if err != nil {
+		// Fail-open: this halt is a comfort layer on top of the fail-closed
+		// position-level protections; a query gap must not freeze trading.
+		at.logWarnf("⚠ Daily loss check failed, skipping: %v", err)
+		return false
+	}
+	at.dailyPnL = netPnL
+
+	limit := at.dailyLossHaltLimit()
+	if netPnL > -at.initialBalance*limit {
+		return false
+	}
+
+	pause := at.config.StopTradingTime
+	if pause <= 0 {
+		// Hold until the daily window rolls over (24h cadence).
+		pause = 24 * time.Hour
+	}
+	at.stopUntil = time.Now().Add(pause)
+	at.logWarnf("🛑 Daily loss halt: net realized PnL %.2f USDT (%.1f%%) breached the %.1f%% limit — pausing trading until %s",
+		netPnL, netPnL/at.initialBalance*100, limit*100, at.stopUntil.Format("2006-01-02 15:04"))
+	record.Success = false
+	record.ErrorMessage = fmt.Sprintf("Daily loss halt: net realized PnL %.2f USDT (%.1f%%) breaches the %.1f%% daily limit",
+		netPnL, netPnL/at.initialBalance*100, limit*100)
+	return true
+}
 
 // startDrawdownMonitor starts drawdown monitoring
 func (at *AutoTrader) startDrawdownMonitor() {

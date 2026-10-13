@@ -36,6 +36,11 @@ func NewServer(traderManager *manager.TraderManager, st *store.Store, cryptoServ
 	gin.SetMode(gin.ReleaseMode)
 
 	router := gin.Default()
+	// Trust no proxy headers by default: with the default "trust all" setting
+	// a client can spoof X-Forwarded-For and rotate fake IPs to bypass the
+	// login/register rate limiter (which keys on ClientIP). Deployments behind
+	// a known reverse proxy can re-enable trust explicitly.
+	_ = router.SetTrustedProxies(nil)
 
 	// Enable CORS
 	router.Use(corsMiddleware())

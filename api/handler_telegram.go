@@ -24,7 +24,7 @@ func (s *Server) handleGetTelegramConfig(c *gin.Context) {
 	tokenMasked := ""
 	if cfg.BotToken != "" {
 		if len(cfg.BotToken) > 6 {
-			tokenMasked = "***" + cfg.BotToken[len(cfg.BotToken)-6:]
+			tokenMasked = "***" + string(cfg.BotToken[len(cfg.BotToken)-6:])
 		} else {
 			tokenMasked = "***"
 		}
@@ -96,7 +96,7 @@ func (s *Server) handleUpdateTelegramModel(c *gin.Context) {
 		return
 	}
 
-	if err := s.store.TelegramConfig().Save(cfg.BotToken, req.ModelID); err != nil {
+	if err := s.store.TelegramConfig().Save(string(cfg.BotToken), req.ModelID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save model config"})
 		return
 	}

@@ -166,6 +166,47 @@ func (client *Client) SetTimeout(timeout time.Duration) {
 	client.HTTPClient.Timeout = timeout
 }
 
+// retryCall runs fn under the client's fixed retry flow: hook-driven
+// retryability, linear backoff (RetryWaitBase × attempt) and ctx-cancellable
+// backoff waits. CallWithMessages, CallWithRequest and CallWithRequestFull
+// used to carry three copies of this loop.
+func retryCall[T any](ctx context.Context, client *Client, fn func() (T, error)) (T, error) {
+	var zero T
+	maxRetries := client.Cfg.MaxRetries
+	var lastErr error
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		if attempt > 1 {
+			client.Log.Warnf("⚠️  AI API call failed, retrying (%d/%d)...", attempt, maxRetries)
+		}
+
+		result, err := fn()
+		if err == nil {
+			if attempt > 1 {
+				client.Log.Infof("✓ AI API retry succeeded")
+			}
+			return result, nil
+		}
+
+		lastErr = err
+		// Check if error is retryable via hooks (supports custom retry strategy)
+		if !client.Hooks.IsRetryableError(err) {
+			return zero, err
+		}
+
+		// Wait before retry
+		if attempt < maxRetries {
+			waitTime := client.Cfg.RetryWaitBase * time.Duration(attempt)
+			client.Log.Infof("⏳ Waiting %v before retry...", waitTime)
+			if err := sleepWithContext(ctx, waitTime); err != nil {
+				return zero, err
+			}
+		}
+	}
+
+	return zero, fmt.Errorf("still failed after %d retries: %w", maxRetries, lastErr)
+}
+
 // CallWithMessages template method - fixed retry flow (cannot be overridden)
 // The ctx parameter (nil allowed) cancels both the in-flight HTTP call and
 // the retry backoff waits; nil is treated as context.Background().
@@ -177,41 +218,10 @@ func (client *Client) CallWithMessages(ctx context.Context, systemPrompt, userPr
 		return "", fmt.Errorf("AI API key not set, please call SetAPIKey first")
 	}
 
-	// Fixed retry flow
-	var lastErr error
-	maxRetries := client.Cfg.MaxRetries
-
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		if attempt > 1 {
-			client.Log.Warnf("⚠️  AI API call failed, retrying (%d/%d)...", attempt, maxRetries)
-		}
-
+	return retryCall(ctx, client, func() (string, error) {
 		// Call the fixed single-call flow
-		result, err := client.Hooks.Call(systemPrompt, userPrompt)
-		if err == nil {
-			if attempt > 1 {
-				client.Log.Infof("✓ AI API retry succeeded")
-			}
-			return result, nil
-		}
-
-		lastErr = err
-		// Check if error is retryable via hooks (supports custom retry strategy)
-		if !client.Hooks.IsRetryableError(err) {
-			return "", err
-		}
-
-		// Wait before retry
-		if attempt < maxRetries {
-			waitTime := client.Cfg.RetryWaitBase * time.Duration(attempt)
-			client.Log.Infof("⏳ Waiting %v before retry...", waitTime)
-			if err := sleepWithContext(ctx, waitTime); err != nil {
-				return "", err
-			}
-		}
-	}
-
-	return "", fmt.Errorf("still failed after %d retries: %w", maxRetries, lastErr)
+		return client.Hooks.Call(systemPrompt, userPrompt)
+	})
 }
 
 func (client *Client) SetAuthHeader(reqHeader http.Header) {
@@ -466,41 +476,10 @@ func (client *Client) CallWithRequest(req *Request) (string, error) {
 		req.Model = client.Model
 	}
 
-	// Fixed retry flow
-	var lastErr error
-	maxRetries := client.Cfg.MaxRetries
-
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		if attempt > 1 {
-			client.Log.Warnf("⚠️  AI API call failed, retrying (%d/%d)...", attempt, maxRetries)
-		}
-
+	return retryCall(contextFromRequest(req), client, func() (string, error) {
 		// Call single request
-		result, err := client.callWithRequest(req)
-		if err == nil {
-			if attempt > 1 {
-				client.Log.Infof("✓ AI API retry succeeded")
-			}
-			return result, nil
-		}
-
-		lastErr = err
-		// Check if error is retryable
-		if !client.Hooks.IsRetryableError(err) {
-			return "", err
-		}
-
-		// Wait before retry
-		if attempt < maxRetries {
-			waitTime := client.Cfg.RetryWaitBase * time.Duration(attempt)
-			client.Log.Infof("⏳ Waiting %v before retry...", waitTime)
-			if err := sleepWithContext(contextFromRequest(req), waitTime); err != nil {
-				return "", err
-			}
-		}
-	}
-
-	return "", fmt.Errorf("still failed after %d retries: %w", maxRetries, lastErr)
+		return client.callWithRequest(req)
+	})
 }
 
 // CallWithRequestFull calls the AI API and returns both text content and tool calls.
@@ -512,28 +491,9 @@ func (client *Client) CallWithRequestFull(req *Request) (*LLMResponse, error) {
 		req.Model = client.Model
 	}
 
-	var lastErr error
-	maxRetries := client.Cfg.MaxRetries
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		if attempt > 1 {
-			client.Log.Warnf("⚠️  AI API call failed, retrying (%d/%d)...", attempt, maxRetries)
-		}
-		result, err := client.callWithRequestFull(req)
-		if err == nil {
-			return result, nil
-		}
-		lastErr = err
-		if !client.Hooks.IsRetryableError(err) {
-			return nil, err
-		}
-		if attempt < maxRetries {
-			waitTime := client.Cfg.RetryWaitBase * time.Duration(attempt)
-			if err := sleepWithContext(contextFromRequest(req), waitTime); err != nil {
-				return nil, err
-			}
-		}
-	}
-	return nil, fmt.Errorf("still failed after %d retries: %w", maxRetries, lastErr)
+	return retryCall(contextFromRequest(req), client, func() (*LLMResponse, error) {
+		return client.callWithRequestFull(req)
+	})
 }
 
 // callWithRequestFull single call that returns LLMResponse (content + tool calls).

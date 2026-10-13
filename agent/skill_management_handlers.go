@@ -2625,10 +2625,6 @@ func (a *Agent) handleSimpleEntitySkill(storeUserID string, userID int64, lang, 
 	}
 }
 
-func (a *Agent) askLLMAmbiguousTargetQuestion(storeUserID string, userID int64, lang, text string, session skillSession, skillName, action string, allOptions, ambiguous []traderSkillOption) string {
-	return formatAmbiguousTargetPrompt(lang, ambiguous)
-}
-
 func defaultIfEmpty(value, fallback string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {

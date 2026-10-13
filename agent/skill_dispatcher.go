@@ -873,24 +873,6 @@ func enabledTraderSkillOptions(options []traderSkillOption) []traderSkillOption 
 	return out
 }
 
-func resolveSemanticExistingTraderDependency(currentRef *EntityReference, options []traderSkillOption) targetResolution {
-	if currentRef != nil && strings.TrimSpace(currentRef.ID) != "" {
-		for _, opt := range options {
-			if opt.ID == currentRef.ID {
-				return targetResolution{Ref: &EntityReference{ID: opt.ID, Name: opt.Name}}
-			}
-		}
-	}
-	enabled := enabledTraderSkillOptions(options)
-	if len(enabled) == 1 {
-		return targetResolution{Ref: &EntityReference{ID: enabled[0].ID, Name: enabled[0].Name}}
-	}
-	if len(enabled) > 1 {
-		return targetResolution{Ambiguous: enabled}
-	}
-	return targetResolution{}
-}
-
 func (a *Agent) hydrateCreateTraderSlotReferences(storeUserID string, session *skillSession) {
 	if session == nil {
 		return

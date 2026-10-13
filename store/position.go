@@ -430,6 +430,21 @@ func (s *PositionStore) GetClosedPositions(traderID string, limit int) ([]*Trade
 	return positions, nil
 }
 
+// GetNetRealizedPnLSince returns the net realized PnL summed over the
+// trader's positions closed at or after sinceMs. Net follows the same
+// accounting AddFundingFee assumes: realized_pnl - fee - funding_fee.
+func (s *PositionStore) GetNetRealizedPnLSince(traderID string, sinceMs int64) (float64, error) {
+	var net float64
+	err := s.db.Model(&TraderPosition{}).
+		Select("COALESCE(SUM(realized_pnl - fee - funding_fee), 0)").
+		Where("trader_id = ? AND status = ? AND exit_time >= ?", traderID, "CLOSED", sinceMs).
+		Scan(&net).Error
+	if err != nil {
+		return 0, fmt.Errorf("failed to query net realized pnl: %w", err)
+	}
+	return net, nil
+}
+
 // GetAllOpenPositions gets all traders' open positions
 func (s *PositionStore) GetAllOpenPositions() ([]*TraderPosition, error) {
 	var positions []*TraderPosition

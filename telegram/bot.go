@@ -47,7 +47,7 @@ func Start(cfg *config.Config, st *store.Store, reloadCh <-chan struct{}, nofxAg
 func resolveToken(st *store.Store) string {
 	dbCfg, err := st.TelegramConfig().Get()
 	if err == nil && dbCfg.BotToken != "" {
-		return dbCfg.BotToken
+		return string(dbCfg.BotToken)
 	}
 	return ""
 }

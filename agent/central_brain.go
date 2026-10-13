@@ -245,6 +245,12 @@ func (a *Agent) executeBrainDecision(ctx context.Context, storeUserID string, us
 			answer, err := a.runPlannedAgent(ctx, storeUserID, userID, lang, text, onEvent)
 			return answer, true, err
 		}
+		// Same admission rule as the workflow stack: an unknown action falls
+		// through to dynamic planning instead of an unusable session.
+		if !supportedWorkflowSkill(skill, action) {
+			answer, err := a.runPlannedAgent(ctx, storeUserID, userID, lang, text, onEvent)
+			return answer, true, err
+		}
 		session := newActiveSkillSession(userID, skill, action)
 		session.Goal = strings.TrimSpace(text)
 		d.ExtractedData = filterExtractedDataForActiveSession(session, d.ExtractedData, lang)
