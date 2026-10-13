@@ -85,8 +85,10 @@ func New(tm *manager.TraderManager, st *store.Store, cfg *Config, logger *slog.L
 
 func (a *Agent) SetAIClient(c mcp.AIClient) { a.setDefaultAIClient(c) }
 
-// setDefaultAIClient updates the shared default client (mutex-guarded; the
-// request path never writes it).
+// setDefaultAIClient updates the shared default client. All accesses are
+// mutex-guarded. Request paths resolve their own client via withTurnAIClient;
+// incoming messages additionally refresh this default so background jobs keep
+// tracking the default store user's model config.
 func (a *Agent) setDefaultAIClient(c mcp.AIClient) {
 	a.aiClientMu.Lock()
 	defer a.aiClientMu.Unlock()
@@ -98,6 +100,19 @@ func (a *Agent) defaultAIClient() mcp.AIClient {
 	a.aiClientMu.RLock()
 	defer a.aiClientMu.RUnlock()
 	return a.aiClient
+}
+
+// saveAgentState persists turn-scoped state (skill sessions, workflow state,
+// execution stacks) to the system config store. A failed write silently wipes
+// the user's multi-turn progress — the flow itself degrades gracefully (the
+// user gets re-asked), but the failure must not be invisible.
+func (a *Agent) saveAgentState(key, value string) {
+	if a.store == nil {
+		return
+	}
+	if err := a.store.SetSystemConfig(key, value); err != nil {
+		a.log().Error("failed to persist agent session state", "key", key, "error", err)
+	}
 }
 
 func (a *Agent) ensureHistory() {

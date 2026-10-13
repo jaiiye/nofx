@@ -9,6 +9,7 @@ import (
 	"nofx/store"
 	"nofx/telemetry"
 	"nofx/trader/connector"
+	"nofx/trader/execution"
 	"time"
 )
 
@@ -271,12 +272,21 @@ func (at *AutoTrader) recordAndConfirmOrder(orderResult *connector.OrderResult, 
 	var actualQty = quantity
 	var fee float64
 
+	// Paper mode fills instantly in memory and has no OrderSync loop, so the
+	// order must be recorded here — skipping it would leave the DB-backed
+	// protections (losing-closes, cooldown, drawdown halt) and the AI trade
+	// history permanently empty. The exact fill (price/qty/fee) is already in
+	// the order result.
+	_, isPaper := at.execMode.(*execution.SimulatedTrader)
+
 	// Exchanges with OrderSync: Skip immediate order recording, let OrderSync handle it
 	// This ensures accurate data from GetTrades API and avoids duplicate records
-	switch at.exchange {
-	case "binance", "lighter", "hyperliquid", "bybit", "okx", "bitget", "aster", "kucoin", "gate":
-		logger.Infof("  📝 Order submitted (id: %s), will be synced by OrderSync", orderID)
-		return
+	if !isPaper {
+		switch at.exchange {
+		case "binance", "lighter", "hyperliquid", "bybit", "okx", "bitget", "aster", "kucoin", "gate":
+			logger.Infof("  📝 Order submitted (id: %s), will be synced by OrderSync", orderID)
+			return
+		}
 	}
 
 	// For exchanges without OrderSync (e.g., Binance): record immediately and poll for fill data
@@ -287,43 +297,59 @@ func (at *AutoTrader) recordAndConfirmOrder(orderResult *connector.OrderResult, 
 		logger.Infof("  📝 Order recorded: %s [%s] %s", orderID, action, symbol)
 	}
 
-	// Wait for order to be filled and get actual fill data
-	time.Sleep(500 * time.Millisecond)
-	for i := 0; i < 5; i++ {
-		status, err := at.trader.GetOrderStatus(symbol, orderID)
-		if err == nil && status != nil {
-			statusStr := status.Status
-			if statusStr == "FILLED" {
-				// Get actual fill price
-				if status.AvgFillPrice > 0 {
-					actualPrice = status.AvgFillPrice
-				}
-				// Get actual executed quantity
-				if status.FilledQty > 0 {
-					actualQty = status.FilledQty
-				}
-				// Get commission/fee
-				fee = status.Fee
-				logger.Infof("  ✅ Order filled: avgPrice=%.6f, qty=%.6f, fee=%.6f", actualPrice, actualQty, fee)
-
-				// Update order status to FILLED
-				if err := at.store.Order().UpdateOrderStatus(orderRecord.ID, "FILLED", actualQty, actualPrice, fee); err != nil {
-					logger.Infof("  ⚠️ Failed to update order status: %v", err)
-				}
-
-				// Record fill details
-				at.recordOrderFill(orderRecord.ID, orderID, symbol, action, actualPrice, actualQty, fee)
-				break
-			} else if statusStr == "CANCELED" || statusStr == "EXPIRED" || statusStr == "REJECTED" {
-				logger.Infof("  ⚠️ Order %s, skipping position record", statusStr)
-				// Update order status
-				if err := at.store.Order().UpdateOrderStatus(orderRecord.ID, statusStr, 0, 0, 0); err != nil {
-					logger.Infof("  ⚠️ Failed to update order status: %v", err)
-				}
-				return
-			}
+	if isPaper {
+		if orderResult.AvgFillPrice > 0 {
+			actualPrice = orderResult.AvgFillPrice
 		}
+		if orderResult.FilledQty > 0 {
+			actualQty = orderResult.FilledQty
+		}
+		fee = orderResult.Fee
+		logger.Infof("  ✅ Simulated order filled: avgPrice=%.6f, qty=%.6f, fee=%.6f", actualPrice, actualQty, fee)
+
+		if err := at.store.Order().UpdateOrderStatus(orderRecord.ID, "FILLED", actualQty, actualPrice, fee); err != nil {
+			logger.Infof("  ⚠️ Failed to update order status: %v", err)
+		}
+		at.recordOrderFill(orderRecord.ID, orderID, symbol, action, actualPrice, actualQty, fee)
+	} else {
+		// Wait for order to be filled and get actual fill data
 		time.Sleep(500 * time.Millisecond)
+		for i := 0; i < 5; i++ {
+			status, err := at.trader.GetOrderStatus(symbol, orderID)
+			if err == nil && status != nil {
+				statusStr := status.Status
+				if statusStr == "FILLED" {
+					// Get actual fill price
+					if status.AvgFillPrice > 0 {
+						actualPrice = status.AvgFillPrice
+					}
+					// Get actual executed quantity
+					if status.FilledQty > 0 {
+						actualQty = status.FilledQty
+					}
+					// Get commission/fee
+					fee = status.Fee
+					logger.Infof("  ✅ Order filled: avgPrice=%.6f, qty=%.6f, fee=%.6f", actualPrice, actualQty, fee)
+
+					// Update order status to FILLED
+					if err := at.store.Order().UpdateOrderStatus(orderRecord.ID, "FILLED", actualQty, actualPrice, fee); err != nil {
+						logger.Infof("  ⚠️ Failed to update order status: %v", err)
+					}
+
+					// Record fill details
+					at.recordOrderFill(orderRecord.ID, orderID, symbol, action, actualPrice, actualQty, fee)
+					break
+				} else if statusStr == "CANCELED" || statusStr == "EXPIRED" || statusStr == "REJECTED" {
+					logger.Infof("  ⚠️ Order %s, skipping position record", statusStr)
+					// Update order status
+					if err := at.store.Order().UpdateOrderStatus(orderRecord.ID, statusStr, 0, 0, 0); err != nil {
+						logger.Infof("  ⚠️ Failed to update order status: %v", err)
+					}
+					return
+				}
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
 	}
 
 	// Normalize symbol for position record consistency

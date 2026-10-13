@@ -41,9 +41,11 @@ type SimulatedTrader struct {
 	fees    connector.FeeModel
 	initial float64
 
-	mu        sync.Mutex
-	seq       int64
-	positions map[string]*simPosition // key: SYMBOL|SIDE
+	mu          sync.Mutex
+	seq         int64
+	positions   map[string]*simPosition // key: SYMBOL|SIDE
+	realizedPnL float64
+	feesPaid    float64
 }
 
 type simPosition struct {
@@ -113,9 +115,10 @@ func (s *SimulatedTrader) open(symbol, side string, quantity float64, leverage i
 		s.positions[k] = &simPosition{symbol: symbol, side: strings.ToUpper(side), quantity: quantity, entry: px, leverage: lev}
 	}
 	id := s.nextID("open")
+	fee := s.fees.Estimate(px*quantity, false)
+	s.feesPaid += fee.Amount
 	s.mu.Unlock()
 
-	fee := s.fees.Estimate(px*quantity, false)
 	return &connector.OrderResult{
 		OrderID: id, Symbol: symbol, Status: "FILLED",
 		AvgFillPrice: px, FilledQty: quantity, Fee: fee.Amount, FeeAsset: fee.Asset,
@@ -139,14 +142,19 @@ func (s *SimulatedTrader) close(symbol, side string, quantity float64) (*connect
 	if closed <= 0 || closed >= p.quantity {
 		closed = p.quantity
 	}
+	dir := 1.0
+	if p.side == "SHORT" {
+		dir = -1.0
+	}
+	s.realizedPnL += (px - p.entry) * closed * dir
 	p.quantity -= closed
 	if p.quantity <= 0 {
 		delete(s.positions, k)
 	}
 	id := s.nextID("close")
-	s.mu.Unlock()
-
 	fee := s.fees.Estimate(px*closed, false)
+	s.feesPaid += fee.Amount
+	s.mu.Unlock()
 	return &connector.OrderResult{
 		OrderID: id, Symbol: symbol, Status: "FILLED",
 		AvgFillPrice: px, FilledQty: closed, Fee: fee.Amount, FeeAsset: fee.Asset,
@@ -203,8 +211,23 @@ func (s *SimulatedTrader) GetPositions() ([]map[string]interface{}, error) {
 	return out, nil
 }
 
-// GetBalance returns a virtual balance marked to market.
+// GetBalance returns a virtual balance marked to market. Realized PnL and
+// accumulated fees flow into the wallet, and the available balance excludes
+// the margin currently backing open positions — keeping the risk gate's
+// balance-sufficiency check meaningful in paper mode.
 func (s *SimulatedTrader) GetBalance() (map[string]interface{}, error) {
+	s.mu.Lock()
+	var marginUsed float64
+	for _, p := range s.positions {
+		lev := float64(p.leverage)
+		if lev <= 0 {
+			lev = 1
+		}
+		marginUsed += p.entry * p.quantity / lev
+	}
+	wallet := s.initial + s.realizedPnL - s.feesPaid
+	s.mu.Unlock()
+
 	var unrealized float64
 	positions, _ := s.GetPositions()
 	for _, p := range positions {
@@ -212,11 +235,15 @@ func (s *SimulatedTrader) GetBalance() (map[string]interface{}, error) {
 			unrealized += v
 		}
 	}
-	equity := s.initial + unrealized
+	equity := wallet + unrealized
+	available := equity - marginUsed
+	if available < 0 {
+		available = 0
+	}
 	return map[string]interface{}{
 		"totalEquity":           equity,
-		"totalWalletBalance":    s.initial,
-		"availableBalance":      equity,
+		"totalWalletBalance":    wallet,
+		"availableBalance":      available,
 		"totalUnrealizedProfit": unrealized,
 	}, nil
 }

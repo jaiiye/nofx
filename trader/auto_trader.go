@@ -434,6 +434,11 @@ func (at *AutoTrader) Run() error {
 	// Stop() always observes the ctx belonging to this run.
 	at.runCtx, at.runCancel = context.WithCancel(context.Background())
 	at.isRunningMutex.Unlock()
+	// Cancel runCtx when Run() exits for ANY reason. Early returns (grid init
+	// failure, stop during candle alignment) would otherwise leave the
+	// order-sync and drawdown-monitor goroutines polling forever. On a normal
+	// Stop() the ctx is already done and the cancel is a no-op.
+	defer at.runCancel()
 
 	at.startTime = time.Now()
 

@@ -24,12 +24,47 @@ const (
 	aggressiveSellPriceFactor = 0.99
 )
 
-func (t *HyperliquidTrader) placeOrderWithBuilderFee(order hyperliquid.CreateOrderRequest) error {
-	_, err := t.exchange.Order(t.ctx, order, defaultBuilder)
-	if err == nil {
-		return nil
+func (t *HyperliquidTrader) placeOrderWithBuilderFee(order hyperliquid.CreateOrderRequest) (hyperliquid.OrderStatus, error) {
+	status, err := t.exchange.Order(t.ctx, order, defaultBuilder)
+	if err != nil {
+		return status, wrapBuilderFeeNotApproved(err)
 	}
-	return wrapBuilderFeeNotApproved(err)
+	return status, nil
+}
+
+// confirmedFillResult verifies the venue reported an actual IOC fill before the
+// caller treats a position as opened/closed. Unfilled IOC orders used to be
+// reported as FILLED with a placeholder order ID, so the system tracked a
+// position that did not exist. Partial fills return the real filled size and
+// average price; the venue cancels the remainder.
+func confirmedFillResult(status *hyperliquid.OrderStatus, symbol string, requestedQty float64) (*connector.OrderResult, error) {
+	if status.Error != nil {
+		return nil, fmt.Errorf("order rejected: %s", *status.Error)
+	}
+	if status.Filled == nil {
+		if status.Resting != nil {
+			return nil, fmt.Errorf("IOC order did not fill (resting oid=%d, expired without matching)", status.Resting.Oid)
+		}
+		return nil, fmt.Errorf("IOC order did not fill (no fill in response)")
+	}
+
+	filledQty, err := strconv.ParseFloat(status.Filled.TotalSz, 64)
+	if err != nil || filledQty <= 0 {
+		return nil, fmt.Errorf("IOC order did not fill (filled size %q)", status.Filled.TotalSz)
+	}
+	avgPx, _ := strconv.ParseFloat(status.Filled.AvgPx, 64)
+
+	if filledQty < requestedQty {
+		logger.Infof("  ⚠ IOC partial fill for %s: requested %.8f, filled %.8f (remainder cancelled)", symbol, requestedQty, filledQty)
+	}
+
+	return &connector.OrderResult{
+		OrderID:      strconv.FormatInt(int64(status.Filled.Oid), 10),
+		Symbol:       symbol,
+		Status:       "FILLED",
+		AvgFillPrice: avgPx,
+		FilledQty:    filledQty,
+	}, nil
 }
 
 func isBuilderFeeNotApprovedError(err error) bool {
@@ -79,11 +114,13 @@ func (t *HyperliquidTrader) OpenLong(symbol string, quantity float64, leverage i
 	logger.Infof("  💰 Price precision handling: %.8f -> %.8f (5 significant figures)", price*aggressiveBuyPriceFactor, aggressivePrice)
 
 	// Handle xyz dex assets differently
+	var result *connector.OrderResult
 	if isXyz {
 		// xyz dex order
 		if err := t.placeXyzOrder(coin, true, quantity, aggressivePrice, false); err != nil {
 			return nil, fmt.Errorf("failed to open long position on xyz dex: %w", err)
 		}
+		result = &connector.OrderResult{Symbol: symbol, Status: "FILLED"}
 	} else {
 		// Standard crypto order
 		roundedQuantity := t.roundToSzDecimals(coin, quantity)
@@ -102,19 +139,16 @@ func (t *HyperliquidTrader) OpenLong(symbol string, quantity float64, leverage i
 			ReduceOnly: false,
 		}
 
-		err = t.placeOrderWithBuilderFee(order)
+		status, err := t.placeOrderWithBuilderFee(order)
 		if err != nil {
+			return nil, fmt.Errorf("failed to open long position: %w", err)
+		}
+		if result, err = confirmedFillResult(&status, symbol, roundedQuantity); err != nil {
 			return nil, fmt.Errorf("failed to open long position: %w", err)
 		}
 	}
 
 	logger.Infof("✓ Long position opened successfully: %s quantity: %.4f", symbol, quantity)
-
-	result := &connector.OrderResult{
-		OrderID: "0",
-		Symbol:  symbol,
-		Status:  "FILLED",
-	}
 
 	return result, nil
 }
@@ -152,11 +186,13 @@ func (t *HyperliquidTrader) OpenShort(symbol string, quantity float64, leverage 
 	logger.Infof("  💰 Price precision handling: %.8f -> %.8f (5 significant figures)", price*aggressiveSellPriceFactor, aggressivePrice)
 
 	// Handle xyz dex assets differently
+	var result *connector.OrderResult
 	if isXyz {
 		// xyz dex order
 		if err := t.placeXyzOrder(coin, false, quantity, aggressivePrice, false); err != nil {
 			return nil, fmt.Errorf("failed to open short position on xyz dex: %w", err)
 		}
+		result = &connector.OrderResult{Symbol: symbol, Status: "FILLED"}
 	} else {
 		// Standard crypto order
 		roundedQuantity := t.roundToSzDecimals(coin, quantity)
@@ -175,19 +211,16 @@ func (t *HyperliquidTrader) OpenShort(symbol string, quantity float64, leverage 
 			ReduceOnly: false,
 		}
 
-		err = t.placeOrderWithBuilderFee(order)
+		status, err := t.placeOrderWithBuilderFee(order)
 		if err != nil {
+			return nil, fmt.Errorf("failed to open short position: %w", err)
+		}
+		if result, err = confirmedFillResult(&status, symbol, roundedQuantity); err != nil {
 			return nil, fmt.Errorf("failed to open short position: %w", err)
 		}
 	}
 
 	logger.Infof("✓ Short position opened successfully: %s quantity: %.4f", symbol, quantity)
-
-	result := &connector.OrderResult{
-		OrderID: "0",
-		Symbol:  symbol,
-		Status:  "FILLED",
-	}
 
 	return result, nil
 }
@@ -235,11 +268,13 @@ func (t *HyperliquidTrader) CloseLong(symbol string, quantity float64) (*connect
 	logger.Infof("  💰 Price precision handling: %.8f -> %.8f (5 significant figures)", price*aggressiveSellPriceFactor, aggressivePrice)
 
 	// Handle xyz dex assets differently
+	var result *connector.OrderResult
 	if isXyz {
 		// xyz dex close order
 		if err := t.placeXyzOrder(coin, false, quantity, aggressivePrice, true); err != nil {
 			return nil, fmt.Errorf("failed to close long position on xyz dex: %w", err)
 		}
+		result = &connector.OrderResult{Symbol: symbol, Status: "FILLED"}
 	} else {
 		// Standard crypto close order
 		roundedQuantity := t.roundToSzDecimals(coin, quantity)
@@ -258,8 +293,11 @@ func (t *HyperliquidTrader) CloseLong(symbol string, quantity float64) (*connect
 			ReduceOnly: true,
 		}
 
-		err = t.placeOrderWithBuilderFee(order)
+		status, err := t.placeOrderWithBuilderFee(order)
 		if err != nil {
+			return nil, fmt.Errorf("failed to close long position: %w", err)
+		}
+		if result, err = confirmedFillResult(&status, symbol, roundedQuantity); err != nil {
 			return nil, fmt.Errorf("failed to close long position: %w", err)
 		}
 	}
@@ -269,12 +307,6 @@ func (t *HyperliquidTrader) CloseLong(symbol string, quantity float64) (*connect
 	// Cancel all pending orders for this coin after closing position
 	if err := t.CancelAllOrders(symbol); err != nil {
 		logger.Infof("  ⚠ Failed to cancel pending orders: %v", err)
-	}
-
-	result := &connector.OrderResult{
-		OrderID: "0",
-		Symbol:  symbol,
-		Status:  "FILLED",
 	}
 
 	return result, nil
@@ -323,11 +355,13 @@ func (t *HyperliquidTrader) CloseShort(symbol string, quantity float64) (*connec
 	logger.Infof("  💰 Price precision handling: %.8f -> %.8f (5 significant figures)", price*aggressiveBuyPriceFactor, aggressivePrice)
 
 	// Handle xyz dex assets differently
+	var result *connector.OrderResult
 	if isXyz {
 		// xyz dex close order
 		if err := t.placeXyzOrder(coin, true, quantity, aggressivePrice, true); err != nil {
 			return nil, fmt.Errorf("failed to close short position on xyz dex: %w", err)
 		}
+		result = &connector.OrderResult{Symbol: symbol, Status: "FILLED"}
 	} else {
 		// Standard crypto close order
 		roundedQuantity := t.roundToSzDecimals(coin, quantity)
@@ -346,8 +380,11 @@ func (t *HyperliquidTrader) CloseShort(symbol string, quantity float64) (*connec
 			ReduceOnly: true,
 		}
 
-		err = t.placeOrderWithBuilderFee(order)
+		status, err := t.placeOrderWithBuilderFee(order)
 		if err != nil {
+			return nil, fmt.Errorf("failed to close short position: %w", err)
+		}
+		if result, err = confirmedFillResult(&status, symbol, roundedQuantity); err != nil {
 			return nil, fmt.Errorf("failed to close short position: %w", err)
 		}
 	}
@@ -357,12 +394,6 @@ func (t *HyperliquidTrader) CloseShort(symbol string, quantity float64) (*connec
 	// Cancel all pending orders for this coin after closing position
 	if err := t.CancelAllOrders(symbol); err != nil {
 		logger.Infof("  ⚠ Failed to cancel pending orders: %v", err)
-	}
-
-	result := &connector.OrderResult{
-		OrderID: "0",
-		Symbol:  symbol,
-		Status:  "FILLED",
 	}
 
 	return result, nil
@@ -759,18 +790,21 @@ func (t *HyperliquidTrader) placeXyzOrder(coin string, isBuy bool, size float64,
 		return fmt.Errorf("xyz dex order failed: status=%s, body=%s", result.Status, string(body))
 	}
 
-	// Check order statuses
-	if len(result.Response.Data.Statuses) > 0 {
-		status := result.Response.Data.Statuses[0]
-		if status.Error != nil {
-			return wrapBuilderFeeNotApproved(fmt.Errorf("xyz dex order error (coin=%s, assetIndex=%d, size=%.4f, price=%.4f): %s", coin, assetIndex, roundedSize, roundedPrice, *status.Error))
-		}
-		if status.Filled != nil {
-			logger.Infof("✅ xyz dex order filled: totalSz=%s avgPx=%s oid=%d",
-				status.Filled.TotalSz, status.Filled.AvgPx, status.Filled.Oid)
-		} else if status.Resting != nil {
-			logger.Infof("✅ xyz dex order resting: oid=%d", status.Resting.Oid)
-		}
+	// Check order statuses. IOC orders must report a fill — a resting or
+	// empty response means nothing traded, and reporting success would leave
+	// the system tracking a position that does not exist.
+	if len(result.Response.Data.Statuses) == 0 {
+		return fmt.Errorf("xyz dex order returned no order status (body=%s)", string(body))
+	}
+	status := result.Response.Data.Statuses[0]
+	if status.Error != nil {
+		return wrapBuilderFeeNotApproved(fmt.Errorf("xyz dex order error (coin=%s, assetIndex=%d, size=%.4f, price=%.4f): %s", coin, assetIndex, roundedSize, roundedPrice, *status.Error))
+	}
+	if status.Filled != nil {
+		logger.Infof("✅ xyz dex order filled: totalSz=%s avgPx=%s oid=%d",
+			status.Filled.TotalSz, status.Filled.AvgPx, status.Filled.Oid)
+	} else {
+		return fmt.Errorf("xyz dex IOC order did not fill for %s (no fill in response)", coin)
 	}
 
 	logger.Infof("✅ xyz dex order placed successfully: %s (response: %s)", coin, string(body))
@@ -971,7 +1005,7 @@ func (t *HyperliquidTrader) SetStopLoss(symbol string, positionSide string, quan
 			ReduceOnly: true,
 		}
 
-		err := t.placeOrderWithBuilderFee(order)
+		_, err := t.placeOrderWithBuilderFee(order)
 		if err != nil {
 			return fmt.Errorf("failed to set stop loss: %w", err)
 		}
@@ -1019,7 +1053,7 @@ func (t *HyperliquidTrader) SetTakeProfit(symbol string, positionSide string, qu
 			ReduceOnly: true,
 		}
 
-		err := t.placeOrderWithBuilderFee(order)
+		_, err := t.placeOrderWithBuilderFee(order)
 		if err != nil {
 			return fmt.Errorf("failed to set take profit: %w", err)
 		}
@@ -1066,15 +1100,20 @@ func (t *HyperliquidTrader) PlaceLimitOrder(req *types.LimitOrderRequest) (*type
 		ReduceOnly: req.ReduceOnly,
 	}
 
-	err := t.placeOrderWithBuilderFee(order)
+	status, err := t.placeOrderWithBuilderFee(order)
 	if err != nil {
 		return nil, fmt.Errorf("failed to place limit order: %w", err)
 	}
 
-	// Note: Hyperliquid's Order response doesn't return the order ID directly
-	// We would need to query open orders to get it, but for grid trading
-	// we can track orders by price level instead
+	// Prefer the venue-assigned oid from the response; fall back to a
+	// timestamp placeholder only when the response carries no id (grid
+	// trading tracks orders by price level as well).
 	orderID := fmt.Sprintf("%d", time.Now().UnixNano())
+	if status.Resting != nil {
+		orderID = strconv.FormatInt(status.Resting.Oid, 10)
+	} else if status.Filled != nil {
+		orderID = strconv.FormatInt(int64(status.Filled.Oid), 10)
+	}
 
 	logger.Infof("✓ [Hyperliquid] Limit order placed: %s %s @ %.4f",
 		coin, req.Side, roundedPrice)

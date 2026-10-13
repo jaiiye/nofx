@@ -326,9 +326,16 @@ func (t *AsterTrader) sign(params map[string]interface{}, nonce uint64) error {
 }
 
 // request Send HTTP request (with retry mechanism)
+//
+// Only idempotent methods (GET/DELETE) are retried. A POST that times out may
+// already have been executed server-side — e.g. an order placement whose
+// response was lost — so blindly retrying it can double the order. POSTs fail
+// fast and let callers decide.
 func (t *AsterTrader) request(method, endpoint string, params map[string]interface{}) ([]byte, error) {
 	const maxRetries = 3
 	var lastErr error
+
+	retryable := strings.EqualFold(method, "GET") || strings.EqualFold(method, "DELETE")
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		// Generate new nonce and signature for each retry
@@ -350,10 +357,11 @@ func (t *AsterTrader) request(method, endpoint string, params map[string]interfa
 
 		lastErr = err
 
-		// Retry if network timeout or temporary error
-		if strings.Contains(err.Error(), "timeout") ||
-			strings.Contains(err.Error(), "connection reset") ||
-			strings.Contains(err.Error(), "EOF") {
+		// Retry idempotent requests on network timeout or temporary error
+		if retryable &&
+			(strings.Contains(err.Error(), "timeout") ||
+				strings.Contains(err.Error(), "connection reset") ||
+				strings.Contains(err.Error(), "EOF")) {
 			if attempt < maxRetries {
 				waitTime := time.Duration(attempt) * time.Second
 				time.Sleep(waitTime)

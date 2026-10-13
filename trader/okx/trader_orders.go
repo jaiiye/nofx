@@ -441,12 +441,16 @@ func (t *OKXTrader) SetStopLoss(symbol string, positionSide string, quantity, st
 		"instId":      instId,
 		"tdMode":      marginMode,
 		"side":        side,
-		"posSide":     posSide,
 		"ordType":     "conditional",
 		"sz":          szStr,
 		"slTriggerPx": fmt.Sprintf("%.8f", stopPrice),
 		"slOrdPx":     "-1", // Market price
 		"tag":         okxTag,
+	}
+	// posSide is only valid in hedge mode; sending it in net mode gets the
+	// conditional order rejected, leaving the position unprotected.
+	if t.positionMode == "long_short_mode" {
+		body["posSide"] = posSide
 	}
 
 	_, err = t.doRequest("POST", okxAlgoOrderPath, body)
@@ -486,12 +490,16 @@ func (t *OKXTrader) SetTakeProfit(symbol string, positionSide string, quantity, 
 		"instId":      instId,
 		"tdMode":      marginMode,
 		"side":        side,
-		"posSide":     posSide,
 		"ordType":     "conditional",
 		"sz":          szStr,
 		"tpTriggerPx": fmt.Sprintf("%.8f", takeProfitPrice),
 		"tpOrdPx":     "-1", // Market price
 		"tag":         okxTag,
+	}
+	// posSide is only valid in hedge mode; sending it in net mode gets the
+	// conditional order rejected, leaving the position unprotected.
+	if t.positionMode == "long_short_mode" {
+		body["posSide"] = posSide
 	}
 
 	_, err = t.doRequest("POST", okxAlgoOrderPath, body)

@@ -95,7 +95,7 @@ func (a *Agent) saveWorkflowSession(userID int64, session WorkflowSession) {
 	}
 	session = normalizeWorkflowSession(session)
 	if len(session.Tasks) == 0 {
-		_ = a.store.SetSystemConfig(workflowSessionConfigKey(userID), "")
+		a.saveAgentState(workflowSessionConfigKey(userID), "")
 		return
 	}
 	session.UserID = userID
@@ -104,14 +104,14 @@ func (a *Agent) saveWorkflowSession(userID int64, session WorkflowSession) {
 	if err != nil {
 		return
 	}
-	_ = a.store.SetSystemConfig(workflowSessionConfigKey(userID), string(data))
+	a.saveAgentState(workflowSessionConfigKey(userID), string(data))
 }
 
 func (a *Agent) clearWorkflowSession(userID int64) {
 	if a.store == nil {
 		return
 	}
-	_ = a.store.SetSystemConfig(workflowSessionConfigKey(userID), "")
+	a.saveAgentState(workflowSessionConfigKey(userID), "")
 }
 
 func hasActiveWorkflowSession(session WorkflowSession) bool {

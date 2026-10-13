@@ -339,20 +339,31 @@ func (s *Server) getEquityHistoryForTraders(traderIDs []string, hours int) map[s
 	// Use a single consistent timestamp for all real-time data points
 	now := time.Now()
 
+	// This endpoint is PUBLIC (competition leaderboard). Like the single-trader
+	// variant, it must only expose traders that opted into the public
+	// competition via show_in_competition=true — otherwise private trader
+	// equity curves leak to anyone holding their IDs. Private/unknown IDs are
+	// skipped silently so their existence is not revealed either.
+	visible := make([]string, 0, len(traderIDs))
+
 	// Pre-fetch initial balances for all traders
 	initialBalances := make(map[string]float64)
 	for _, traderID := range traderIDs {
 		if traderID == "" {
 			continue
 		}
-		// Get trader's initial balance from database (use GetByID which doesn't require userID)
+		// Get trader from database (use GetByID which doesn't require userID)
 		trader, err := s.store.Trader().GetByID(traderID)
-		if err == nil && trader != nil && trader.InitialBalance > 0 {
+		if err != nil || trader == nil || !trader.ShowInCompetition {
+			continue
+		}
+		visible = append(visible, traderID)
+		if trader.InitialBalance > 0 {
 			initialBalances[traderID] = trader.InitialBalance
 		}
 	}
 
-	for _, traderID := range traderIDs {
+	for _, traderID := range visible {
 		if traderID == "" {
 			continue
 		}

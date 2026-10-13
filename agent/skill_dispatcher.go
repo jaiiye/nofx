@@ -142,21 +142,21 @@ func (a *Agent) saveSkillSession(userID int64, session skillSession) {
 	}
 	session = normalizeSkillSession(session)
 	if session.Name == "" {
-		_ = a.store.SetSystemConfig(skillSessionConfigKey(userID), "")
+		a.saveAgentState(skillSessionConfigKey(userID), "")
 		return
 	}
 	data, err := json.Marshal(session)
 	if err != nil {
 		return
 	}
-	_ = a.store.SetSystemConfig(skillSessionConfigKey(userID), string(data))
+	a.saveAgentState(skillSessionConfigKey(userID), string(data))
 }
 
 func (a *Agent) clearSkillSession(userID int64) {
 	if a.store == nil {
 		return
 	}
-	_ = a.store.SetSystemConfig(skillSessionConfigKey(userID), "")
+	a.saveAgentState(skillSessionConfigKey(userID), "")
 }
 
 func isYesReply(text string) bool {

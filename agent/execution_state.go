@@ -297,14 +297,14 @@ func (a *Agent) saveTaskStack(userID int64, stack []SuspendedTask) {
 	}
 	stack = normalizeTaskStack(stack)
 	if len(stack) == 0 {
-		_ = a.store.SetSystemConfig(taskStackConfigKey(userID), "")
+		a.saveAgentState(taskStackConfigKey(userID), "")
 		return
 	}
 	data, err := json.Marshal(stack)
 	if err != nil {
 		return
 	}
-	_ = a.store.SetSystemConfig(taskStackConfigKey(userID), string(data))
+	a.saveAgentState(taskStackConfigKey(userID), string(data))
 }
 
 func (a *Agent) peekTaskStack(userID int64) (SuspendedTask, bool) {
@@ -341,7 +341,7 @@ func (a *Agent) clearTaskStack(userID int64) {
 	if a.store == nil {
 		return
 	}
-	_ = a.store.SetSystemConfig(taskStackConfigKey(userID), "")
+	a.saveAgentState(taskStackConfigKey(userID), "")
 }
 
 func newExecutionState(userID int64, goal string) ExecutionState {

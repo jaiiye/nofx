@@ -2458,7 +2458,9 @@ func (a *Agent) toolCreateTrader(storeUserID string, args manageTraderArgs) stri
 		return fmt.Sprintf(`{"error":"failed to create trader: %s"}`, err)
 	}
 	if a.traderManager != nil {
-		_ = a.traderManager.LoadUserTradersFromStore(a.store, storeUserID)
+		if err := a.traderManager.LoadUserTradersFromStore(a.store, storeUserID); err != nil {
+			a.log().Error("agent tool failed to load created trader", "store_user_id", storeUserID, "error", err)
+		}
 	}
 	result, _ := json.Marshal(map[string]any{
 		"status": "ok",
@@ -2543,7 +2545,9 @@ func (a *Agent) toolUpdateTrader(storeUserID string, args manageTraderArgs) stri
 	}
 	if a.traderManager != nil {
 		a.traderManager.RemoveTrader(record.ID)
-		_ = a.traderManager.LoadUserTradersFromStore(a.store, storeUserID)
+		if err := a.traderManager.LoadUserTradersFromStore(a.store, storeUserID); err != nil {
+			a.log().Error("agent tool failed to reload updated trader", "store_user_id", storeUserID, "trader_id", record.ID, "error", err)
+		}
 	}
 	result, _ := json.Marshal(map[string]any{
 		"status": "ok",
@@ -2623,7 +2627,11 @@ func (a *Agent) toolStartTrader(storeUserID, traderID string) string {
 			a.logger.Error("agent tool trader runtime error", "trader_id", traderID, "error", runErr)
 		}
 	})
-	_ = a.store.Trader().UpdateStatus(storeUserID, traderID, true)
+	if err := a.store.Trader().UpdateStatus(storeUserID, traderID, true); err != nil {
+		// Memory state is already running; a lost DB flag makes the trader
+		// recover into the opposite state after a restart.
+		a.log().Error("agent tool failed to persist trader start", "store_user_id", storeUserID, "trader_id", traderID, "error", err)
+	}
 	result, _ := json.Marshal(map[string]any{
 		"status":    "ok",
 		"action":    "start",
@@ -2651,7 +2659,11 @@ func (a *Agent) toolStopTrader(storeUserID, traderID string) string {
 		return `{"error":"trader is already stopped"}`
 	}
 	trader.Stop()
-	_ = a.store.Trader().UpdateStatus(storeUserID, traderID, false)
+	if err := a.store.Trader().UpdateStatus(storeUserID, traderID, false); err != nil {
+		// Memory state is already stopped; a lost DB flag makes the trader
+		// recover into the opposite state after a restart.
+		a.log().Error("agent tool failed to persist trader stop", "store_user_id", storeUserID, "trader_id", traderID, "error", err)
+	}
 	result, _ := json.Marshal(map[string]any{
 		"status":    "ok",
 		"action":    "stop",
@@ -2897,16 +2909,19 @@ func (a *Agent) toolGetPositions(storeUserID string) string {
 	}
 
 	var positions []map[string]any
+	queryErrors := make(map[string]string)
 	for _, traderCfg := range traderConfigs {
 		if strings.TrimSpace(traderCfg.ID) == "" {
 			continue
 		}
 		t, err := a.traderManager.GetTrader(traderCfg.ID)
 		if err != nil {
+			queryErrors[traderCfg.ID] = fmt.Sprintf("failed to load trader: %v", err)
 			continue
 		}
 		pos, err := t.GetPositions()
 		if err != nil {
+			queryErrors[traderCfg.ID] = fmt.Sprintf("failed to query positions: %v", err)
 			continue
 		}
 		for _, p := range pos {
@@ -2933,10 +2948,26 @@ func (a *Agent) toolGetPositions(storeUserID string) string {
 	}
 
 	if len(positions) == 0 {
+		if len(queryErrors) > 0 {
+			// Failures must be visible to the LLM: an all-queries-failed
+			// response otherwise looks identical to "no open positions" and
+			// invites trading decisions based on a false empty book.
+			result, _ := json.Marshal(map[string]any{
+				"positions":    []map[string]any{},
+				"query_errors": queryErrors,
+				"message":      "positions could not be verified: all trader queries failed — do NOT treat this as confirmed empty",
+			})
+			return string(result)
+		}
 		return `{"positions": [], "message": "no open positions"}`
 	}
 
-	result, _ := json.Marshal(map[string]any{"positions": positions})
+	resultMap := map[string]any{"positions": positions}
+	if len(queryErrors) > 0 {
+		resultMap["query_errors"] = queryErrors
+		resultMap["message"] = "some traders could not be queried (see query_errors) — position data may be incomplete"
+	}
+	result, _ := json.Marshal(resultMap)
 	return string(result)
 }
 
@@ -2953,16 +2984,19 @@ func (a *Agent) toolGetBalance(storeUserID string) string {
 	}
 
 	var balances []map[string]any
+	queryErrors := make(map[string]string)
 	for _, traderCfg := range traderConfigs {
 		if strings.TrimSpace(traderCfg.ID) == "" {
 			continue
 		}
 		t, err := a.traderManager.GetTrader(traderCfg.ID)
 		if err != nil {
+			queryErrors[traderCfg.ID] = fmt.Sprintf("failed to load trader: %v", err)
 			continue
 		}
 		info, err := t.GetAccountInfo()
 		if err != nil {
+			queryErrors[traderCfg.ID] = fmt.Sprintf("failed to query account info: %v", err)
 			continue
 		}
 		tid := traderCfg.ID
@@ -2979,7 +3013,23 @@ func (a *Agent) toolGetBalance(storeUserID string) string {
 		})
 	}
 
-	result, _ := json.Marshal(map[string]any{"balances": balances})
+	if len(balances) == 0 && len(queryErrors) > 0 {
+		// All queries failed: surface it instead of returning an empty list
+		// that the LLM would read as "no balances".
+		result, _ := json.Marshal(map[string]any{
+			"balances":     []map[string]any{},
+			"query_errors": queryErrors,
+			"message":      "balances could not be verified: all trader queries failed — do NOT treat this as confirmed empty",
+		})
+		return string(result)
+	}
+
+	resultMap := map[string]any{"balances": balances}
+	if len(queryErrors) > 0 {
+		resultMap["query_errors"] = queryErrors
+		resultMap["message"] = "some traders could not be queried (see query_errors) — balance data may be incomplete"
+	}
+	result, _ := json.Marshal(resultMap)
 	return string(result)
 }
 

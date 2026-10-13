@@ -40,16 +40,21 @@ func TestSimulatedTraderOpenMarksToMarket(t *testing.T) {
 		t.Fatalf("unexpected open result: %+v", res)
 	}
 
+	// Fees hit the wallet, and the available balance excludes the margin
+	// backing the open position (entry*qty/leverage = 200/10 = 20).
 	bal, _ := st.GetBalance()
-	if bal["totalEquity"].(float64) != 1000 {
-		t.Fatalf("equity before move = %v, want 1000", bal["totalEquity"])
+	if bal["totalEquity"].(float64) != 999.8 {
+		t.Fatalf("equity before move = %v, want 999.8", bal["totalEquity"])
+	}
+	if bal["availableBalance"].(float64) != 979.8 {
+		t.Fatalf("available before move = %v, want 979.8", bal["availableBalance"])
 	}
 
 	// Price rises: long mark-to-market gains (mark-entry)*qty.
 	src.set(110)
 	bal, _ = st.GetBalance()
-	if got := bal["totalEquity"].(float64); got != 1020 {
-		t.Fatalf("equity after move = %v, want 1020", got)
+	if got := bal["totalEquity"].(float64); got != 1019.8 {
+		t.Fatalf("equity after move = %v, want 1019.8", got)
 	}
 }
 
@@ -86,7 +91,7 @@ func TestSimulatedTraderShortMarkToMarket(t *testing.T) {
 	}
 	src.set(90) // price down 10 -> short gains 10
 	bal, _ := st.GetBalance()
-	if got := bal["totalEquity"].(float64); got != 1010 {
-		t.Fatalf("short equity = %v, want 1010", got)
+	if got := bal["totalEquity"].(float64); got != 1009.95 {
+		t.Fatalf("short equity = %v, want 1009.95 (1000 + 10 pnl - 0.05 open fee)", got)
 	}
 }

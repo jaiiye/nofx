@@ -68,14 +68,14 @@ func (a *Agent) saveActiveSkillSession(s ActiveSkillSession) {
 	s.PendingHint = normalizePendingHint(s.PendingHint)
 	s.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	data, _ := json.Marshal(s)
-	_ = a.store.SetSystemConfig(activeSkillSessionKey(s.UserID), string(data))
+	a.saveAgentState(activeSkillSessionKey(s.UserID), string(data))
 }
 
 func (a *Agent) clearActiveSkillSession(userID int64) {
 	if a.store == nil {
 		return
 	}
-	_ = a.store.SetSystemConfig(activeSkillSessionKey(userID), "")
+	a.saveAgentState(activeSkillSessionKey(userID), "")
 }
 
 func (a *Agent) getPendingProposalSession(userID int64) (PendingProposalSession, bool) {
@@ -102,14 +102,14 @@ func (a *Agent) savePendingProposalSession(s PendingProposalSession) {
 	}
 	s.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	data, _ := json.Marshal(s)
-	_ = a.store.SetSystemConfig(pendingProposalSessionKey(s.UserID), string(data))
+	a.saveAgentState(pendingProposalSessionKey(s.UserID), string(data))
 }
 
 func (a *Agent) clearPendingProposalSession(userID int64) {
 	if a.store == nil {
 		return
 	}
-	_ = a.store.SetSystemConfig(pendingProposalSessionKey(userID), "")
+	a.saveAgentState(pendingProposalSessionKey(userID), "")
 }
 
 func newActiveSkillSession(userID int64, skill, action string) ActiveSkillSession {

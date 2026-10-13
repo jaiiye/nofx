@@ -48,21 +48,21 @@ func (a *Agent) saveReferenceMemory(userID int64, refs *CurrentReferences, histo
 		UpdatedAt:         time.Now().UTC().Format(time.RFC3339),
 	}
 	if memory.CurrentReferences == nil && len(memory.ReferenceHistory) == 0 {
-		_ = a.store.SetSystemConfig(referenceMemoryConfigKey(userID), "")
+		a.saveAgentState(referenceMemoryConfigKey(userID), "")
 		return
 	}
 	data, err := json.Marshal(memory)
 	if err != nil {
 		return
 	}
-	_ = a.store.SetSystemConfig(referenceMemoryConfigKey(userID), string(data))
+	a.saveAgentState(referenceMemoryConfigKey(userID), string(data))
 }
 
 func (a *Agent) clearReferenceMemory(userID int64) {
 	if a == nil || a.store == nil {
 		return
 	}
-	_ = a.store.SetSystemConfig(referenceMemoryConfigKey(userID), "")
+	a.saveAgentState(referenceMemoryConfigKey(userID), "")
 }
 
 func (a *Agent) semanticCurrentReferences(userID int64) *CurrentReferences {

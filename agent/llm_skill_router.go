@@ -22,7 +22,7 @@ type unifiedTurnDecision struct {
 }
 
 func (a *Agent) tryLLMIntentRoute(ctx context.Context, storeUserID string, userID int64, lang, text string, onEvent func(event, data string)) (string, bool, error) {
-	if a.aiClient == nil {
+	if a.turnAIClient(ctx) == nil {
 		return "", false, nil
 	}
 
@@ -129,7 +129,11 @@ func (a *Agent) routeTurnUnifiedWithLLM(ctx context.Context, userID int64, lang,
 	stageCtx, cancel := withPlannerStageTimeout(ctx, directReplyTimeout)
 	defer cancel()
 
-	raw, err := a.aiClient.CallWithRequest(&mcp.Request{
+	client := a.turnAIClient(ctx)
+	if client == nil {
+		return unifiedTurnDecision{}, false, nil
+	}
+	raw, err := client.CallWithRequest(&mcp.Request{
 		Messages: []mcp.Message{
 			mcp.NewSystemMessage(systemPrompt),
 			mcp.NewUserMessage(userPrompt),
