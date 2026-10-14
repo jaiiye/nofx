@@ -143,6 +143,36 @@ func GetFullDecisionWithStrategy(ctx *Context, mcpClient mcp.AIClient, engine *S
 // Market Data Fetching
 // ============================================================================
 
+// fetchMicrostructure fetches and analyzes the decision-time book for one
+// symbol. Failures degrade gracefully (nil result, the prompt omits the
+// section); xyz dex assets are skipped outright (no Binance book).
+func fetchMicrostructure(symbol string, primaryKlines []market.KlineBar) *market.MarketMicrostructure {
+	if market.IsXyzDexAsset(symbol) {
+		return nil
+	}
+	book, err := market.GetOrderBookDepth(symbol, 20)
+	if err != nil {
+		logger.Infof("⚠️ Microstructure unavailable for %s: %v", symbol, err)
+		return nil
+	}
+	return market.AnalyzeMicrostructure(book, primaryKlines)
+}
+
+// loadMicrostructure fetches the decision-time book for a symbol and stores
+// the analysis in the context when successful.
+func loadMicrostructure(ctx *Context, symbol string, data *market.Data, primaryTimeframe string) {
+	if ctx.MicrostructureMap == nil {
+		ctx.MicrostructureMap = make(map[string]*market.MarketMicrostructure)
+	}
+	var primaryBars []market.KlineBar
+	if tfData, ok := data.TimeframeData[primaryTimeframe]; ok {
+		primaryBars = tfData.Klines
+	}
+	if m := fetchMicrostructure(symbol, primaryBars); m != nil {
+		ctx.MicrostructureMap[symbol] = m
+	}
+}
+
 // fetchMarketDataWithStrategy fetches market data using strategy config (multiple timeframes)
 func fetchMarketDataWithStrategy(ctx *Context, engine *StrategyEngine) error {
 	config := engine.GetConfig()
@@ -182,6 +212,10 @@ func fetchMarketDataWithStrategy(ctx *Context, engine *StrategyEngine) error {
 		MACDSlow:   config.Indicators.MACDSlowPeriod,
 	}
 
+	// Decision-time order book metrics (nil flag = enabled).
+	microEnabled := config.Indicators.EnableMicrostructure == nil || *config.Indicators.EnableMicrostructure
+	ctx.MicrostructureMap = make(map[string]*market.MarketMicrostructure)
+
 	// 1. First fetch data for position coins (must fetch)
 	for _, pos := range ctx.Positions {
 		data, err := market.GetWithTimeframesIndicators(pos.Symbol, timeframes, primaryTimeframe, klineCount, indicatorParams)
@@ -190,6 +224,9 @@ func fetchMarketDataWithStrategy(ctx *Context, engine *StrategyEngine) error {
 			continue
 		}
 		ctx.MarketDataMap[pos.Symbol] = data
+		if microEnabled {
+			loadMicrostructure(ctx, pos.Symbol, data, primaryTimeframe)
+		}
 	}
 
 	// 2. Fetch data for all candidate coins
@@ -209,6 +246,10 @@ func fetchMarketDataWithStrategy(ctx *Context, engine *StrategyEngine) error {
 		if err != nil {
 			logger.Infof("⚠️  Failed to fetch market data for %s: %v", coin.Symbol, err)
 			continue
+		}
+
+		if microEnabled {
+			loadMicrostructure(ctx, coin.Symbol, data, primaryTimeframe)
 		}
 
 		// Liquidity filter (skip for xyz dex assets - they don't have OI data from Binance)

@@ -91,24 +91,25 @@ type RecentOrder struct {
 
 // Context trading context (complete information passed to AI)
 type Context struct {
-	CurrentTime        string                             `json:"current_time"`
-	RuntimeMinutes     int                                `json:"runtime_minutes"`
-	CallCount          int                                `json:"call_count"`
-	Account            AccountInfo                        `json:"account"`
-	Positions          []PositionInfo                     `json:"positions"`
-	CandidateCoins     []CandidateCoin                    `json:"candidate_coins"`
-	TradingStats       *TradingStats                      `json:"trading_stats,omitempty"`
-	RecentOrders       []RecentOrder                      `json:"recent_orders,omitempty"`
-	MarketDataMap      map[string]*market.Data            `json:"-"`
-	MultiTFMarket      map[string]map[string]*market.Data `json:"-"`
-	OITopDataMap       map[string]*OITopData              `json:"-"`
-	QuantDataMap       map[string]*QuantData              `json:"-"`
-	OIRankingData      *nofxos.OIRankingData              `json:"-"` // Market-wide OI ranking data
-	NetFlowRankingData *nofxos.NetFlowRankingData         `json:"-"` // Market-wide fund flow ranking data
-	PriceRankingData   *nofxos.PriceRankingData           `json:"-"` // Market-wide price gainers/losers
-	BTCETHLeverage     int                                `json:"-"`
-	AltcoinLeverage    int                                `json:"-"`
-	Timeframes         []string                           `json:"-"`
+	CurrentTime        string                                  `json:"current_time"`
+	RuntimeMinutes     int                                     `json:"runtime_minutes"`
+	CallCount          int                                     `json:"call_count"`
+	Account            AccountInfo                             `json:"account"`
+	Positions          []PositionInfo                          `json:"positions"`
+	CandidateCoins     []CandidateCoin                         `json:"candidate_coins"`
+	TradingStats       *TradingStats                           `json:"trading_stats,omitempty"`
+	RecentOrders       []RecentOrder                           `json:"recent_orders,omitempty"`
+	MarketDataMap      map[string]*market.Data                 `json:"-"`
+	MultiTFMarket      map[string]map[string]*market.Data      `json:"-"`
+	MicrostructureMap  map[string]*market.MarketMicrostructure `json:"-"` // Decision-time book metrics per symbol
+	OITopDataMap       map[string]*OITopData                   `json:"-"`
+	QuantDataMap       map[string]*QuantData                   `json:"-"`
+	OIRankingData      *nofxos.OIRankingData                   `json:"-"` // Market-wide OI ranking data
+	NetFlowRankingData *nofxos.NetFlowRankingData              `json:"-"` // Market-wide fund flow ranking data
+	PriceRankingData   *nofxos.PriceRankingData                `json:"-"` // Market-wide price gainers/losers
+	BTCETHLeverage     int                                     `json:"-"`
+	AltcoinLeverage    int                                     `json:"-"`
+	Timeframes         []string                                `json:"-"`
 	// GoCtx is an optional stdlib context used to cancel the LLM call and
 	// its retry backoff. Nil means context.Background().
 	GoCtx context.Context `json:"-"`

@@ -829,6 +829,10 @@ type IndicatorConfig struct {
 	EnableVolume      bool `json:"enable_volume"`
 	EnableOI          bool `json:"enable_oi"`           // open interest
 	EnableFundingRate bool `json:"enable_funding_rate"` // funding rate
+	// Microstructure book metrics (spread/imbalance/depth/liquidity). Nil =
+	// enabled: the pointer avoids old configs silently disabling the feature
+	// on unmarshal (bool zero-value trap).
+	EnableMicrostructure *bool `json:"enable_microstructure,omitempty"`
 	// EMA period configuration
 	EMAPeriods []int `json:"ema_periods,omitempty"` // default [20, 50]
 	// RSI period configuration

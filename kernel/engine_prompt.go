@@ -650,6 +650,7 @@ func (e *StrategyEngine) BuildUserPrompt(ctx *Context) string {
 				sb.WriteString(e.formatQuantData(quantData))
 			}
 		}
+		sb.WriteString(e.formatMicrostructure(ctx, coin.Symbol))
 		sb.WriteString("\n")
 	}
 	sb.WriteString("\n")
@@ -678,6 +679,37 @@ func (e *StrategyEngine) BuildUserPrompt(ctx *Context) string {
 	sb.WriteString("---\n\n")
 	sb.WriteString("Now please analyze and output your decision (Chain of Thought + JSON)\n")
 
+	return sb.String()
+}
+
+// formatMicrostructure writes the decision-time order book metrics for one
+// symbol. Returns an empty string when the symbol has no analysis (fetch
+// failure, disabled, or xyz asset) so the prompt section is simply omitted.
+func (e *StrategyEngine) formatMicrostructure(ctx *Context, symbol string) string {
+	if ctx == nil || ctx.MicrostructureMap == nil {
+		return ""
+	}
+	m, ok := ctx.MicrostructureMap[symbol]
+	if !ok || m == nil {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("**MICROSTRUCTURE (decision-time order book)**\n")
+	sb.WriteString(fmt.Sprintf("- Spread: %.1f bps (%.3f%%)\n", m.SpreadBps, m.SpreadPct))
+	sb.WriteString(fmt.Sprintf("- Book imbalance: %+.2f (%s tilt) | Top-10 depth: bid %.0f / ask %.0f USDT\n",
+		m.Imbalance, m.ImbalanceSide, m.BidDepthUSD, m.AskDepthUSD))
+	if len(m.SupportLevels) > 0 {
+		sb.WriteString(fmt.Sprintf("- Support (largest resting bids): %s\n", formatFloatSlice(m.SupportLevels)))
+	}
+	if len(m.ResistanceLevels) > 0 {
+		sb.WriteString(fmt.Sprintf("- Resistance (largest resting asks): %s\n", formatFloatSlice(m.ResistanceLevels)))
+	}
+	if m.VWAP > 0 {
+		sb.WriteString(fmt.Sprintf("- VWAP: %.4f (price %+.2f%% vs VWAP)\n", m.VWAP, m.VWAPDeviationPct))
+	}
+	sb.WriteString(fmt.Sprintf("- Liquidity score: %d/100 (thin books and wide spreads argue against market chasing)\n", m.LiquidityScore))
+	sb.WriteString("\n")
 	return sb.String()
 }
 
@@ -715,6 +747,7 @@ func (e *StrategyEngine) formatPositionInfo(index int, pos PositionInfo, ctx *Co
 				sb.WriteString(e.formatQuantData(quantData))
 			}
 		}
+		sb.WriteString(e.formatMicrostructure(ctx, pos.Symbol))
 		sb.WriteString("\n")
 	}
 

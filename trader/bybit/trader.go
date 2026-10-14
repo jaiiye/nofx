@@ -89,6 +89,17 @@ func (h *headerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 	return h.base.RoundTrip(req)
 }
 
+// httpGet performs a GET against Bybit's public API using the trader's HTTP
+// client (30s timeout, SDK identity headers) instead of a bare http.Get whose
+// lack of timeout could hang the calling path (e.g. FormatQuantity on the
+// order-placement route) indefinitely.
+func (t *BybitTrader) httpGet(url string) (*http.Response, error) {
+	if t.client != nil && t.client.HTTPClient != nil {
+		return t.client.HTTPClient.Get(url)
+	}
+	return (&http.Client{Timeout: 10 * time.Second}).Get(url)
+}
+
 // getQtyStep retrieves the quantity step for a trading pair
 func (t *BybitTrader) getQtyStep(symbol string) float64 {
 	// Check cache first
@@ -101,7 +112,7 @@ func (t *BybitTrader) getQtyStep(symbol string) float64 {
 
 	// Call public API directly to get contract information
 	url := fmt.Sprintf("https://api.bybit.com/v5/market/instruments-info?category=linear&symbol=%s", symbol)
-	resp, err := http.Get(url)
+	resp, err := t.httpGet(url)
 	if err != nil {
 		logger.Infof("⚠️ [Bybit] Failed to get precision info for %s: %v", symbol, err)
 		return 1 // Default to integer
