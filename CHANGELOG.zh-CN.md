@@ -17,10 +17,32 @@ NOFX 项目的所有重要更改都将记录在此文件中。
 - 架构文档，包含系统设计细节
 - 用户指南，包含 FAQ 和故障排除
 - 社区文档，包含悬赏计划
+- 策略配置的指标周期现在真正进入计算层。此前 `ema_periods`/`rsi_periods`/`atr_periods`
+  只是以文本形式回显到 prompt，实际计算值仍是硬编码（20/50、7/14）；现在 prompt 按真实周期
+  标签输出配置序列（如 `EMA(30)`），MACD 也支持自定义快慢周期
+  （`macd_fast_period`/`macd_slow_period`，默认 12/26）。
+- AI prompt 新增决策时点市场微观结构：盘口价差、买卖失衡、前 10 档深度、最大挂单支撑/阻力、
+  0-100 流动性评分，以及由主时间帧 K 线计算的 VWAP（无额外请求）。加密币读取 Binance 盘口，
+  xyz dex 资产路由到 Hyperliquid L2 快照。通过 `indicators.enable_microstructure` 开关控制
+  （默认开启）。
+- 开仓前代码强制的盘口滑点防护：按本次下单名义值走簿估算，预计成本超过 0.5% 或盘口深度不足
+  （无法成交）时拒绝开仓。取盘口失败时 fail-open —— 数据缺口不会阻塞交易。
+- 代码强制日损停机（`risk_control.max_daily_loss`，默认为初始余额的 10%）：当日净已实现盈亏
+  现在会真正暂停交易（AI prompt 一直宣称该保护，但代码从未执行）。暂停时长复用
+  `StopTradingTime`。
+- 回撤利润保护监控可配置（`drawdown_monitoring_enabled`、`drawdown_check_interval_sec`、
+  `min_profit_threshold_pct`、`drawdown_close_threshold_pct`）；默认值保持此前的
+  60 秒 / 5% / 40% 行为，且设置无需重启即可生效。
+- 模拟盘现在会落库模拟订单/成交/持仓，使 DB 级保护（连亏停手、冷却、回撤停机）与 AI 的
+  交易历史在模拟模式可用；模拟余额计入已实现盈亏、手续费与占用保证金。
+- Telegram bot token 加密存储（`crypto.EncryptedString`），与交易所凭证一致。历史明文
+  token 仍可读取，并在下次保存时自动加密。
 
 ### 变更
 - 重组文档结构为逻辑分类
 - 更新所有 README 文件，添加适当的导航链接
+- 风控 gate 的最大持仓判定改为"预期净持仓数"：同一周期内已平仓位在交易所持仓接口延迟时
+  不会再被误判为"仓位已满"，"先平后开"的调仓得以执行。
 
 ### 变更（破坏性）
 - `mcp.AIClient.CallWithMessages` 新增首个 `context.Context` 参数：
@@ -36,6 +58,22 @@ NOFX 项目的所有重要更改都将记录在此文件中。
   继续使用平铺工具；非管理域工具保持不变。
 
 ### 修复
+- Hyperliquid IOC 订单现在会先核对交易所返回的成交状态再报 `FILLED`（传递真实订单号、
+  成交均价与成交量；未成交返回错误）。此前过期的 IOC 单会被报成已成交并带占位订单号，
+  系统会跟踪一个并不存在的仓位。
+- OKX 止损/止盈条件单在 net 模式下不再携带 `posSide` —— 此前会被交易所拒绝，导致仓位裸奔。
+- Aster 不再对非幂等的 POST 请求（下单）做重试。此前请求超时但交易所已接单时，重试可能
+  造成重复下单。
+- Bybit 两处裸 `http.Get`（下单主路径上的数量步长查询、盘口查询）改用 30 秒超时的 HTTP
+  client；此前连接无响应会无限期挂起调用路径。
+- `AutoTrader.Run()` 在所有退出路径上都会取消 context，grid 初始化失败或 K 线对齐等待被打断
+  时，不再遗留 order-sync 与回撤监控 goroutine 永久轮询。
+- 公开的批量净值历史端点现在与单交易员版本一样校验 `show_in_competition`，私有交易员的
+  净值曲线不再可通过 ID 读取。
+- agent 的 `get_positions`/`get_balance` 工具会返回每个交易员的查询失败信息（`query_errors`），
+  不再返回可能诱导错误交易决策的"空数据"。
+- 写入失败不再静默：交易员启停落库、创建/更新后的重载、以及 15 处会话/工作流状态保存现在
+  都会记录失败日志，而不是直接丢弃。
 - 交易模式现在真正生效。实盘循环此前硬编码传入 `"balanced"`，而 `writeModeVariant`
   并不识别该值，导致**模式段落永远不会输出**，用户配置的交易风格完全不起作用。
   现在模式从 `strategy.trading_mode` 读取，策略编辑器新增风格选择器

@@ -7,7 +7,8 @@ import "math"
 // price-history (k-lines) and flow-history (quant data) views.
 //
 // Deliberately snapshot-only: no cross-cycle state, no large-order detection
-// (resting book orders are not real flow), no per-venue routing.
+// (resting book orders are not real flow). Crypto symbols read the Binance
+// book; xyz dex assets route to the Hyperliquid L2 snapshot (see orderbook.go).
 type MarketMicrostructure struct {
 	SpreadPct        float64
 	SpreadBps        float64

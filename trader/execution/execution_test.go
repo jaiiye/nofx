@@ -83,6 +83,33 @@ func TestSimulatedTraderCloseAndNoPosition(t *testing.T) {
 	}
 }
 
+func TestSimulatedTraderGetOrderBookShape(t *testing.T) {
+	src := &fakeSource{price: 100}
+	st := NewSimulatedTrader(src, 1000, nil)
+
+	bids, asks, err := st.GetOrderBook("BTCUSDT", 20)
+	if err != nil {
+		t.Fatalf("GetOrderBook: %v", err)
+	}
+	if len(bids) != 20 || len(asks) != 20 {
+		t.Fatalf("depth = %d/%d, want 20/20", len(bids), len(asks))
+	}
+	// Bids descend from below the mark, asks ascend from above it.
+	for i := 1; i < len(bids); i++ {
+		if bids[i][0] >= bids[i-1][0] {
+			t.Fatalf("bids not descending at %d: %v >= %v", i, bids[i][0], bids[i-1][0])
+		}
+	}
+	for i := 1; i < len(asks); i++ {
+		if asks[i][0] <= asks[i-1][0] {
+			t.Fatalf("asks not ascending at %d: %v <= %v", i, asks[i][0], asks[i-1][0])
+		}
+	}
+	if bids[0][0] >= 100 || asks[0][0] <= 100 {
+		t.Fatalf("best bid/ask must straddle the mark: %v / %v", bids[0][0], asks[0][0])
+	}
+}
+
 func TestSimulatedTraderShortMarkToMarket(t *testing.T) {
 	src := &fakeSource{price: 100}
 	st := NewSimulatedTrader(src, 1000, nil)

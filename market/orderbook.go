@@ -41,6 +41,17 @@ func (b *OrderBookDepth) Mid() float64 {
 	return (b.Bids[0].Price + b.Asks[0].Price) / 2
 }
 
+// binanceDepthLimit snaps a depth to the values Binance's /fapi/v1/depth
+// accepts (5, 10, 20, 50, 100, 500, 1000) — any other value is a 400.
+func binanceDepthLimit(depth int) int {
+	for _, allowed := range []int{5, 10, 20, 50, 100, 500, 1000} {
+		if depth <= allowed {
+			return allowed
+		}
+	}
+	return 1000
+}
+
 // GetOrderBookDepth fetches the decision-context order book. depth is the
 // number of levels per side, capped at 100. Crypto symbols use the Binance
 // futures public endpoint (no signature); xyz dex assets route to the
@@ -59,7 +70,7 @@ func GetOrderBookDepth(symbol string, depth int) (*OrderBookDepth, error) {
 	}
 
 	client := NewAPIClient()
-	url := fmt.Sprintf("%s/fapi/v1/depth?symbol=%s&limit=%d", baseURL, symbol, depth)
+	url := fmt.Sprintf("%s/fapi/v1/depth?symbol=%s&limit=%d", baseURL, symbol, binanceDepthLimit(depth))
 	resp, err := client.client.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch order book for %s: %w", symbol, err)
@@ -118,6 +129,19 @@ func getHyperliquidOrderBook(symbol string, depth int) (*OrderBookDepth, error) 
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch hyperliquid order book for %s: %w", symbol, err)
 	}
+	bids, asks, err := hyperliquidBookLevels(l2, depth)
+	if err != nil {
+		return nil, fmt.Errorf("hyperliquid order book for %s: %w", symbol, err)
+	}
+	return &OrderBookDepth{Symbol: symbol, Bids: bids, Asks: asks, FetchTime: time.Now()}, nil
+}
+
+// hyperliquidBookLevels adapts an L2 snapshot to OrderBookDepth levels:
+// unparseable levels are dropped, and each side is truncated to depth.
+func hyperliquidBookLevels(l2 *hyperliquid.L2BookResponse, depth int) (bids, asks []OrderBookLevel, err error) {
+	if l2 == nil || len(l2.Levels) != 2 {
+		return nil, nil, fmt.Errorf("malformed l2Book response")
+	}
 
 	convert := func(levels []hyperliquid.BookLevel) []OrderBookLevel {
 		out := make([]OrderBookLevel, 0, len(levels))
@@ -132,16 +156,17 @@ func getHyperliquidOrderBook(symbol string, depth int) (*OrderBookDepth, error) 
 		return out
 	}
 
-	bids := convert(l2.Levels[0])
-	asks := convert(l2.Levels[1])
+	bids, asks = convert(l2.Levels[0]), convert(l2.Levels[1])
 	if len(bids) == 0 || len(asks) == 0 {
-		return nil, fmt.Errorf("hyperliquid order book for %s has no parseable levels", symbol)
+		return nil, nil, fmt.Errorf("no parseable levels")
 	}
-	if depth < len(bids) {
-		bids = bids[:depth]
+	if depth > 0 {
+		if depth < len(bids) {
+			bids = bids[:depth]
+		}
+		if depth < len(asks) {
+			asks = asks[:depth]
+		}
 	}
-	if depth < len(asks) {
-		asks = asks[:depth]
-	}
-	return &OrderBookDepth{Symbol: symbol, Bids: bids, Asks: asks, FetchTime: time.Now()}, nil
+	return bids, asks, nil
 }

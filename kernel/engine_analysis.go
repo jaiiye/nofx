@@ -246,10 +246,6 @@ func fetchMarketDataWithStrategy(ctx *Context, engine *StrategyEngine) error {
 			continue
 		}
 
-		if microEnabled {
-			loadMicrostructure(ctx, coin.Symbol, data, primaryTimeframe)
-		}
-
 		// Liquidity filter (skip for xyz dex assets - they don't have OI data from Binance)
 		isExistingPosition := positionSymbols[coin.Symbol]
 		isXyzAsset := market.IsXyzDexAsset(coin.Symbol)
@@ -261,6 +257,12 @@ func fetchMarketDataWithStrategy(ctx *Context, engine *StrategyEngine) error {
 					coin.Symbol, oiValueInMillions, minOIThresholdMillions)
 				continue
 			}
+		}
+
+		// Fetch the book only for coins that survive the filter, so skipped
+		// candidates don't cost an extra REST call.
+		if microEnabled {
+			loadMicrostructure(ctx, coin.Symbol, data, primaryTimeframe)
 		}
 
 		ctx.MarketDataMap[coin.Symbol] = data

@@ -17,10 +17,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Architecture documentation with system design details
 - User guides with FAQ and troubleshooting
 - Community documentation with bounty programs
+- Strategy-configured indicator periods now actually reach the calculation layer. Previously
+  `ema_periods`/`rsi_periods`/`atr_periods` were only echoed into the prompt as text while the
+  computed values stayed hardcoded (20/50, 7/14); the prompt now prints the configured series
+  with true period labels (e.g. `EMA(30)`), and MACD gains configurable fast/slow periods
+  (`macd_fast_period`/`macd_slow_period`, default 12/26).
+- Decision-time market microstructure in the AI prompt: order book spread, imbalance,
+  top-10 depth, largest resting bid/ask levels, a 0-100 liquidity score, and VWAP derived from
+  the primary-timeframe klines (no extra requests). Crypto symbols read the Binance book; xyz
+  dex assets route to the Hyperliquid L2 snapshot. Toggle via
+  `indicators.enable_microstructure` (default on).
+- Code-enforced pre-trade venue slippage guard on opening orders: the venue book is walked for
+  the sized notional and the order is rejected above a 0.5% projected cost or an unfillable
+  (too thin) book. Book-fetch failures fail open — the guard never blocks on a data gap.
+- Code-enforced daily loss halt (`risk_control.max_daily_loss`, default 10% of the initial
+  balance): the day's net realized PnL now actually pauses trading, as the AI prompt always
+  claimed but the code never enforced. Pause duration reuses `StopTradingTime`.
+- Drawdown profit-protection monitor is configurable (`drawdown_monitoring_enabled`,
+  `drawdown_check_interval_sec`, `min_profit_threshold_pct`, `drawdown_close_threshold_pct`);
+  defaults preserve the previous 60s / 5% / 40% behavior, and settings apply without a restart.
+- Paper trading now persists simulated orders/fills/positions, so DB-backed protections
+  (losing closes, cooldown, drawdown halt) and the AI's trade history work in paper mode; the
+  simulated balance tracks realized PnL, fees and used margin.
+- Telegram bot token is encrypted at rest (`crypto.EncryptedString`), like exchange
+  credentials. Legacy plaintext tokens keep working and re-encrypt on the next save.
 
 ### Changed
 - Reorganized documentation structure into logical categories
 - Updated all README files with proper navigation links
+- The risk gate judges the max-positions rule by the expected net count: positions closed
+  earlier in the same cycle no longer read as "position full" while the exchange position API
+  lags, so close-then-open rebalances execute.
 
 ### Changed (Breaking)
 - `mcp.AIClient.CallWithMessages` now takes a leading `context.Context` parameter:
@@ -39,6 +66,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bot uses the same model selection as the web agent.
 
 ### Fixed
+- Hyperliquid IOC orders are now verified against the venue response before being reported as
+  `FILLED` (real order id, average price and filled quantity are propagated; unfilled orders
+  return an error). Previously an expired IOC order was reported as filled with a placeholder
+  id, leaving the system tracking a position that did not exist.
+- OKX stop-loss / take-profit conditional orders no longer carry `posSide` in net mode — the
+  venue rejected them, which left positions unprotected.
+- Aster no longer retries non-idempotent POST requests (order placement). A request that timed
+  out after the venue accepted it could previously double the order on retry.
+- Bybit's two bare `http.Get` calls (quantity-step lookup on the order-placement path, and the
+  order book) now use the 30s-timeout HTTP client; an unresponsive connection previously hung
+  the calling path indefinitely.
+- `AutoTrader.Run()` cancels its context on every exit path, so a failed grid initialization or
+  an interrupted candle-alignment wait can no longer leave order-sync and drawdown-monitor
+  goroutines polling forever.
+- The public batch equity-history endpoint now honours `show_in_competition` like the
+  single-trader variant, so private traders' curves are no longer readable by id.
+- The agent's `get_positions`/`get_balance` tools surface per-trader query failures
+  (`query_errors`) instead of returning a false empty book that could invite trading decisions.
+- Lost writes are no longer silent: trader start/stop persistence, trader reloads after
+  create/update, and 15 session/workflow state saves now log failures instead of dropping them.
 - Trading mode now actually reaches the system prompt. The live loop previously passed a
   hardcoded `"balanced"` that `writeModeVariant` did not recognise, so **no mode section was
   ever emitted** and the configured trading style had no effect. The mode is now read from
