@@ -1,10 +1,12 @@
 package market
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"nofx/provider/hyperliquid"
 	"strconv"
 	"time"
 )
@@ -19,10 +21,11 @@ type OrderBookLevel struct {
 // book.
 //
 // Data-source convention: the decision context is Binance-based — the same
-// baseline as the k-lines in GetWithTimeframes — so this book is the Binance
-// futures book regardless of the trader's execution venue. xyz dex assets
-// (Hyperliquid) have no L2 fetch in the market layer yet; callers must treat
-// a fetch error as "no microstructure for this symbol" and degrade gracefully.
+// baseline as the k-lines in GetWithTimeframes — so crypto symbols use the
+// Binance futures book regardless of the trader's execution venue. xyz dex
+// assets (stocks, forex, commodities) have no Binance book and route to the
+// Hyperliquid L2 snapshot instead. Callers must treat a fetch error as "no
+// microstructure for this symbol" and degrade gracefully.
 type OrderBookDepth struct {
 	Symbol    string
 	Bids      []OrderBookLevel // best bid first
@@ -38,10 +41,10 @@ func (b *OrderBookDepth) Mid() float64 {
 	return (b.Bids[0].Price + b.Asks[0].Price) / 2
 }
 
-// GetOrderBookDepth fetches the Binance futures order book (public endpoint,
-// no signature). depth is the number of levels per side, capped at 100
-// (Binance limit); the shared hook-aware client with its 30s timeout is
-// reused, matching the other market-layer fetches.
+// GetOrderBookDepth fetches the decision-context order book. depth is the
+// number of levels per side, capped at 100. Crypto symbols use the Binance
+// futures public endpoint (no signature); xyz dex assets route to the
+// Hyperliquid L2 snapshot.
 func GetOrderBookDepth(symbol string, depth int) (*OrderBookDepth, error) {
 	symbol = Normalize(symbol)
 	if depth <= 0 {
@@ -49,6 +52,10 @@ func GetOrderBookDepth(symbol string, depth int) (*OrderBookDepth, error) {
 	}
 	if depth > 100 {
 		depth = 100
+	}
+
+	if IsXyzDexAsset(symbol) {
+		return getHyperliquidOrderBook(symbol, depth)
 	}
 
 	client := NewAPIClient()
@@ -102,4 +109,39 @@ func GetOrderBookDepth(symbol string, depth int) (*OrderBookDepth, error) {
 		return nil, fmt.Errorf("order book for %s has no parseable levels", symbol)
 	}
 	return book, nil
+}
+
+// getHyperliquidOrderBook fetches the Hyperliquid L2 snapshot for an xyz dex
+// asset and adapts it to OrderBookDepth.
+func getHyperliquidOrderBook(symbol string, depth int) (*OrderBookDepth, error) {
+	l2, err := hyperliquid.NewClient().GetL2Book(context.Background(), symbol)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch hyperliquid order book for %s: %w", symbol, err)
+	}
+
+	convert := func(levels []hyperliquid.BookLevel) []OrderBookLevel {
+		out := make([]OrderBookLevel, 0, len(levels))
+		for _, l := range levels {
+			price, priceErr := strconv.ParseFloat(l.Px, 64)
+			size, sizeErr := strconv.ParseFloat(l.Sz, 64)
+			if priceErr != nil || sizeErr != nil {
+				continue
+			}
+			out = append(out, OrderBookLevel{Price: price, Size: size})
+		}
+		return out
+	}
+
+	bids := convert(l2.Levels[0])
+	asks := convert(l2.Levels[1])
+	if len(bids) == 0 || len(asks) == 0 {
+		return nil, fmt.Errorf("hyperliquid order book for %s has no parseable levels", symbol)
+	}
+	if depth < len(bids) {
+		bids = bids[:depth]
+	}
+	if depth < len(asks) {
+		asks = asks[:depth]
+	}
+	return &OrderBookDepth{Symbol: symbol, Bids: bids, Asks: asks, FetchTime: time.Now()}, nil
 }

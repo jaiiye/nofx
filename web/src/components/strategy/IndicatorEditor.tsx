@@ -41,6 +41,7 @@ const marketContextCards = [
   { key: 'enable_volume', label: 'Volume', hint: 'from Hyperliquid candle volume', color: '#c084fc' },
   { key: 'enable_oi', label: 'Open Interest', hint: 'native exchange context when available', color: '#34d399' },
   { key: 'enable_funding_rate', label: 'Funding', hint: 'perp funding context', color: '#fbbf24' },
+  { key: 'enable_microstructure', label: 'Order Book', hint: 'spread / imbalance / depth / liquidity', color: '#38bdf8' },
 ] as const
 
 export function IndicatorEditor({ config, onChange, disabled, language }: IndicatorEditorProps) {
@@ -205,7 +206,10 @@ export function IndicatorEditor({ config, onChange, disabled, language }: Indica
         </div>
         <div className="grid gap-2 sm:grid-cols-3">
           {marketContextCards.map(({ key, label, hint, color }) => {
-            const enabled = Boolean(config[key])
+            // Microstructure defaults to enabled when the key is absent.
+            const enabled = key === 'enable_microstructure'
+              ? config.enable_microstructure !== false
+              : Boolean(config[key])
             return (
               <button
                 key={key}

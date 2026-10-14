@@ -145,11 +145,9 @@ func GetFullDecisionWithStrategy(ctx *Context, mcpClient mcp.AIClient, engine *S
 
 // fetchMicrostructure fetches and analyzes the decision-time book for one
 // symbol. Failures degrade gracefully (nil result, the prompt omits the
-// section); xyz dex assets are skipped outright (no Binance book).
+// section). Crypto symbols read the Binance book; xyz dex assets route to
+// the Hyperliquid L2 snapshot inside the market layer.
 func fetchMicrostructure(symbol string, primaryKlines []market.KlineBar) *market.MarketMicrostructure {
-	if market.IsXyzDexAsset(symbol) {
-		return nil
-	}
 	book, err := market.GetOrderBookDepth(symbol, 20)
 	if err != nil {
 		logger.Infof("⚠️ Microstructure unavailable for %s: %v", symbol, err)

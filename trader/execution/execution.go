@@ -291,6 +291,29 @@ func (s *SimulatedTrader) GetOrderStatus(symbol string, orderID string) (*connec
 	return &connector.OrderResult{OrderID: orderID, Symbol: symbol, Status: "FILLED"}, nil
 }
 
+// GetOrderBook synthesizes a tight, deep book around the current mark price:
+// paper mode passes the venue-slippage guard with negligible projected cost,
+// and book consumers get a well-formed snapshot.
+func (s *SimulatedTrader) GetOrderBook(symbol string, depth int) (bids, asks [][]float64, err error) {
+	if depth <= 0 {
+		depth = 20
+	}
+	if depth > 50 {
+		depth = 50
+	}
+	px, err := s.marketPrice(symbol)
+	if err != nil {
+		return nil, nil, err
+	}
+	bids = make([][]float64, depth)
+	asks = make([][]float64, depth)
+	for i := 0; i < depth; i++ {
+		bids[i] = []float64{px * (1 - 0.0001*float64(i+1)), 1000}
+		asks[i] = []float64{px * (1 + 0.0001*float64(i+1)), 1000}
+	}
+	return bids, asks, nil
+}
+
 func (s *SimulatedTrader) GetClosedPnL(startTime time.Time, limit int) ([]types.ClosedPnLRecord, error) {
 	return nil, nil
 }

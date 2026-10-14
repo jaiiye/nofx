@@ -160,6 +160,9 @@ export interface IndicatorConfig {
   enable_volume: boolean;
   enable_oi: boolean;
   enable_funding_rate: boolean;
+  // Order book microstructure metrics; absent (undefined) = enabled, only
+  // an explicit false disables it (matches the backend *bool nil=on default).
+  enable_microstructure?: boolean;
   ema_periods?: number[];
   rsi_periods?: number[];
   atr_periods?: number[];

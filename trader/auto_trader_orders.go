@@ -99,6 +99,12 @@ func (at *AutoTrader) executeOpenLongWithRecord(decision *kernel.Decision, actio
 	actionRecord.Quantity = quantity
 	actionRecord.Price = marketData.CurrentPrice
 
+	// Code-enforced execution-quality guard: reject when walking the venue
+	// book would cost more than the slippage ceiling.
+	if err := at.checkVenueSlippage(decision.Symbol, decision.Action, quantity*marketData.CurrentPrice); err != nil {
+		return err
+	}
+
 	// Set margin mode
 	if err := at.trader.SetMarginMode(decision.Symbol, at.config.IsCrossMargin); err != nil {
 		logger.Infof("  ⚠️ Failed to set margin mode: %v", err)
@@ -183,6 +189,12 @@ func (at *AutoTrader) executeOpenShortWithRecord(decision *kernel.Decision, acti
 	quantity := decision.PositionSizeUSD / marketData.CurrentPrice
 	actionRecord.Quantity = quantity
 	actionRecord.Price = marketData.CurrentPrice
+
+	// Code-enforced execution-quality guard: reject when walking the venue
+	// book would cost more than the slippage ceiling.
+	if err := at.checkVenueSlippage(decision.Symbol, decision.Action, quantity*marketData.CurrentPrice); err != nil {
+		return err
+	}
 
 	// Set margin mode
 	if err := at.trader.SetMarginMode(decision.Symbol, at.config.IsCrossMargin); err != nil {
