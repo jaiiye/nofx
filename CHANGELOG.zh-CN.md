@@ -110,6 +110,10 @@ NOFX 项目的所有重要更改都将记录在此文件中。
 ### 移除
 - 删除无用的 `kernel.PromptBuilder`（`kernel/prompt_builder.go`）。这是遗留的 prompt
   模板，其动作命名（`OPEN_NEW`/`PARTIAL_CLOSE`）与主流程不一致且无任何引用。
+- 删除无用的 `kernel.FormatContextForAI`/`FormatContextDataOnly`（`kernel/formatter.go`，
+  636 行）。这是第二套中英双语上下文格式化器，全仓库零调用；它与实际使用的 prompt 构建器
+  重复且已经脱节（仍是旧的冗长 K 线表、无指标协同规则、无微观结构），导致每次 prompt 改动
+  都要考虑两处。`engine_prompt.go` 现在是唯一的 prompt 路径。
 
 ---
 

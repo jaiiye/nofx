@@ -137,6 +137,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - Dead `kernel.PromptBuilder` (`kernel/prompt_builder.go`), an unused legacy prompt template
   whose action names (`OPEN_NEW`/`PARTIAL_CLOSE`) did not match the live pipeline.
+- Dead `kernel.FormatContextForAI`/`FormatContextDataOnly` (`kernel/formatter.go`, 636 lines),
+  a second bilingual context formatter with zero callers anywhere in the repo. It duplicated
+  the live prompt builder and had already drifted (old verbose candle tables, no indicator
+  confluence rules, no microstructure), so every prompt change had to be reasoned about
+  twice. `engine_prompt.go` is the single prompt path.
 
 ---
 
