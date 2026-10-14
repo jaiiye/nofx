@@ -634,10 +634,18 @@ func (s *Server) handleStrategyTestRun(c *gin.Context) {
 
 	logger.Infof("📊 Using timeframes: %v, primary: %s, kline count: %d", timeframes, primaryTimeframe, klineCount)
 
+	indicatorParams := &market.IndicatorParams{
+		EMAPeriods: req.Config.Indicators.EMAPeriods,
+		RSIPeriods: req.Config.Indicators.RSIPeriods,
+		ATRPeriods: req.Config.Indicators.ATRPeriods,
+		MACDFast:   req.Config.Indicators.MACDFastPeriod,
+		MACDSlow:   req.Config.Indicators.MACDSlowPeriod,
+	}
+
 	// Get real market data (using multiple timeframes)
 	marketDataMap := make(map[string]*market.Data)
 	for _, coin := range candidates {
-		data, err := market.GetWithTimeframes(coin.Symbol, timeframes, primaryTimeframe, klineCount)
+		data, err := market.GetWithTimeframesIndicators(coin.Symbol, timeframes, primaryTimeframe, klineCount, indicatorParams)
 		if err != nil {
 			// If getting data for a coin fails, log but continue
 			logger.Warnf("Failed to get market data for %s: %v", coin.Symbol, err)

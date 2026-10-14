@@ -172,8 +172,10 @@ func dropUnclosedCandle(klines []Kline, timeframe string) []Kline {
 	return klines
 }
 
-// calculateTimeframeSeries calculates series data for a single timeframe
-func calculateTimeframeSeries(klines []Kline, timeframe string, count int) *TimeframeSeriesData {
+// calculateTimeframeSeries calculates series data for a single timeframe.
+// Optional params compute the strategy-configured indicator series alongside
+// the fixed-period fields; nil keeps the legacy behavior exactly.
+func calculateTimeframeSeries(klines []Kline, timeframe string, count int, params ...*IndicatorParams) *TimeframeSeriesData {
 	if count <= 0 {
 		count = 10 // default
 	}
@@ -257,6 +259,10 @@ func calculateTimeframeSeries(klines []Kline, timeframe string, count int) *Time
 	// Calculate ATR14
 	data.ATR14 = calculateATR(klines, 14)
 
+	if len(params) > 0 && params[0] != nil {
+		data.ConfiguredIndicators = configuredIndicatorSeries(klines, params[0], count)
+	}
+
 	return data
 }
 
@@ -327,8 +333,10 @@ func parseTimeframeToMinutes(tf string) int {
 	}
 }
 
-// calculateIntradaySeries calculates intraday series data
-func calculateIntradaySeries(klines []Kline) *IntradayData {
+// calculateIntradaySeries calculates intraday series data. Optional params
+// compute the strategy-configured indicator series alongside the
+// fixed-period fields.
+func calculateIntradaySeries(klines []Kline, params ...*IndicatorParams) *IntradayData {
 	data := &IntradayData{
 		MidPrices:   make([]float64, 0, 10),
 		EMA20Values: make([]float64, 0, 10),
@@ -374,11 +382,17 @@ func calculateIntradaySeries(klines []Kline) *IntradayData {
 	// Calculate 3m ATR14
 	data.ATR14 = calculateATR(klines, 14)
 
+	if len(params) > 0 && params[0] != nil {
+		data.ConfiguredIndicators = configuredIndicatorSeries(klines, params[0], 10)
+	}
+
 	return data
 }
 
-// calculateLongerTermData calculates longer-term data
-func calculateLongerTermData(klines []Kline) *LongerTermData {
+// calculateLongerTermData calculates longer-term data. Optional params
+// compute the strategy-configured indicator series alongside the
+// fixed-period fields.
+func calculateLongerTermData(klines []Kline, params ...*IndicatorParams) *LongerTermData {
 	data := &LongerTermData{
 		MACDValues:  make([]float64, 0, 10),
 		RSI14Values: make([]float64, 0, 10),
@@ -418,6 +432,34 @@ func calculateLongerTermData(klines []Kline) *LongerTermData {
 			rsi14 := calculateRSI(klines[:i+1], 14)
 			data.RSI14Values = append(data.RSI14Values, rsi14)
 		}
+	}
+
+	if len(params) > 0 && params[0] != nil {
+		p := params[0].normalized()
+		configured := make([]IndicatorSeries, 0, len(p.EMAPeriods)+len(p.RSIPeriods)+len(p.ATRPeriods)+1)
+		for _, period := range p.EMAPeriods {
+			configured = append(configured, IndicatorSeries{
+				Label:  fmt.Sprintf("EMA(%d)", period),
+				Values: []float64{calculateEMA(klines, period)},
+			})
+		}
+		for _, period := range p.RSIPeriods {
+			configured = append(configured, IndicatorSeries{
+				Label:  fmt.Sprintf("RSI(%d)", period),
+				Values: indicatorSeriesOverWindow(klines, start, period, func(kl []Kline) float64 { return calculateRSI(kl, period) }),
+			})
+		}
+		configured = append(configured, IndicatorSeries{
+			Label:  fmt.Sprintf("MACD(%d,%d)", p.MACDFast, p.MACDSlow),
+			Values: indicatorSeriesOverWindow(klines, start, p.MACDSlow, func(kl []Kline) float64 { return calculateMACDWithPeriods(kl, p.MACDFast, p.MACDSlow) }),
+		})
+		for _, period := range p.ATRPeriods {
+			configured = append(configured, IndicatorSeries{
+				Label:  fmt.Sprintf("ATR(%d)", period),
+				Values: []float64{calculateATR(klines, period)},
+			})
+		}
+		data.ConfiguredIndicators = configured
 	}
 
 	return data

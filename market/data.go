@@ -155,6 +155,14 @@ func GetWithExchange(symbol, exchange string) (*Data, error) {
 // primaryTimeframe: primary timeframe (used for calculating current indicators), defaults to timeframes[0]
 // count: number of K-lines for each timeframe
 func GetWithTimeframes(symbol string, timeframes []string, primaryTimeframe string, count int) (*Data, error) {
+	return GetWithTimeframesIndicators(symbol, timeframes, primaryTimeframe, count, nil)
+}
+
+// GetWithTimeframesIndicators is GetWithTimeframes with strategy-configured
+// indicator periods: when params is non-nil, the configured-period series
+// (real labels like "EMA(30)") are computed alongside the fixed-period
+// fields for the AI prompt.
+func GetWithTimeframesIndicators(symbol string, timeframes []string, primaryTimeframe string, count int, params *IndicatorParams) (*Data, error) {
 	symbol = Normalize(symbol)
 
 	if len(timeframes) == 0 {
@@ -219,7 +227,7 @@ func GetWithTimeframes(symbol string, timeframes []string, primaryTimeframe stri
 		}
 
 		// Calculate series data for this timeframe (use count from config)
-		seriesData := calculateTimeframeSeries(klines, tf, count)
+		seriesData := calculateTimeframeSeries(klines, tf, count, params)
 		timeframeData[tf] = seriesData
 	}
 

@@ -6,6 +6,7 @@ import (
 	"nofx/logger"
 	"nofx/market"
 	"nofx/store"
+	"nofx/trader/connector"
 	"strconv"
 	"time"
 )
@@ -23,6 +24,16 @@ const (
 	// trigger an insufficient-margin rejection.
 	positionSizeSafetyFactor = 0.98
 )
+
+// trackSuccessfulClose counts a confirmed close for the current cycle so the
+// risk gate can offset the exchange's lagging position count. A NO_POSITION
+// result (paper mode closing a non-existent position) does not count.
+func (at *AutoTrader) trackSuccessfulClose(order *connector.OrderResult) {
+	if order == nil || order.OrderID == "" || order.Status == "NO_POSITION" {
+		return
+	}
+	at.successfulClosesInCycle++
+}
 
 // executeDecisionWithRecord executes AI decision and records detailed information
 func (at *AutoTrader) executeDecisionWithRecord(decision *kernel.Decision, actionRecord *store.DecisionAction) error {
@@ -267,6 +278,7 @@ func (at *AutoTrader) executeCloseLongWithRecord(decision *kernel.Decision, acti
 	if order == nil {
 		return fmt.Errorf("exchange returned no result for %s close_long", decision.Symbol)
 	}
+	at.trackSuccessfulClose(order)
 
 	// Record order ID
 	if orderID, err := strconv.ParseInt(order.OrderID, 10, 64); err == nil {
@@ -334,6 +346,7 @@ func (at *AutoTrader) executeCloseShortWithRecord(decision *kernel.Decision, act
 	if order == nil {
 		return fmt.Errorf("exchange returned no result for %s close_short", decision.Symbol)
 	}
+	at.trackSuccessfulClose(order)
 
 	// Record order ID
 	if orderID, err := strconv.ParseInt(order.OrderID, 10, 64); err == nil {

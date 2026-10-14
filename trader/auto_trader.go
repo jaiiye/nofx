@@ -158,45 +158,46 @@ type AutoTraderConfig struct {
 
 // AutoTrader automatic trader
 type AutoTrader struct {
-	id                    string // Trader unique identifier
-	name                  string // Trader display name
-	aiModel               string // AI model name
-	exchange              string // Trading platform type (binance/bybit/etc)
-	exchangeID            string // Exchange account UUID
-	showInCompetition     bool   // Whether to show in competition page
-	config                AutoTraderConfig
-	trader                Trader         // Use Trader interface (supports multiple platforms)
-	execMode              execution.Mode // order-placement seam (live or simulated)
-	mcpClient             mcp.AIClient
-	store                 *store.Store           // Data storage (decision records, etc.)
-	strategyEngine        *kernel.StrategyEngine // Strategy engine (uses strategy configuration)
-	candidateSelector     kernel.CandidateSelector
-	decisionMaker         *kernel.DecisionMaker
-	runCtx                context.Context        // Cancelled by Stop(); flows into kernel contexts for LLM cancellation
-	runCancel             context.CancelFunc
-	cycleNumber           int // Current cycle number
-	initialBalance        float64
-	dailyPnL              float64
-	customPrompt          string // Custom trading strategy prompt
-	overrideBasePrompt    bool   // Whether to override base prompt
-	lastResetTime         time.Time
-	stopUntil             time.Time
-	isRunning             bool
-	isRunningMutex        sync.RWMutex       // Mutex to protect isRunning flag
-	startTime             time.Time          // System start time
-	callCount             int                // AI call count
-	positionFirstSeenTime map[string]int64   // Position first seen time (symbol_side -> timestamp in milliseconds)
-	monitorWg             sync.WaitGroup     // Used to wait for monitoring goroutine to finish
-	peakPnLCache          map[string]float64 // Peak profit cache (symbol -> peak P&L percentage)
-	peakPnLCacheMutex     sync.RWMutex       // Cache read-write lock
-	lastBalanceSyncTime   time.Time          // Last balance sync time
-	userID                string             // User ID
-	gridState             *GridState         // Grid trading state (only used when StrategyType == "grid_trading")
-	claw402WalletAddr     string             // Claw402 wallet address (derived from private key at start)
-	consecutiveAIFailures int                // Consecutive AI call failures
-	protectionFailures    int32              // Consecutive failing protection-query passes (fail-closed)
-	safeMode              bool               // Safe mode: no new positions, protect existing ones
-	safeModeReason        string             // Why safe mode was activated
+	id                      string // Trader unique identifier
+	name                    string // Trader display name
+	aiModel                 string // AI model name
+	exchange                string // Trading platform type (binance/bybit/etc)
+	exchangeID              string // Exchange account UUID
+	showInCompetition       bool   // Whether to show in competition page
+	config                  AutoTraderConfig
+	trader                  Trader         // Use Trader interface (supports multiple platforms)
+	execMode                execution.Mode // order-placement seam (live or simulated)
+	mcpClient               mcp.AIClient
+	store                   *store.Store           // Data storage (decision records, etc.)
+	strategyEngine          *kernel.StrategyEngine // Strategy engine (uses strategy configuration)
+	candidateSelector       kernel.CandidateSelector
+	decisionMaker           *kernel.DecisionMaker
+	runCtx                  context.Context // Cancelled by Stop(); flows into kernel contexts for LLM cancellation
+	runCancel               context.CancelFunc
+	cycleNumber             int // Current cycle number
+	initialBalance          float64
+	dailyPnL                float64
+	customPrompt            string // Custom trading strategy prompt
+	overrideBasePrompt      bool   // Whether to override base prompt
+	lastResetTime           time.Time
+	stopUntil               time.Time
+	successfulClosesInCycle int // closes executed in the current decision cycle (reset each runCycle)
+	isRunning               bool
+	isRunningMutex          sync.RWMutex       // Mutex to protect isRunning flag
+	startTime               time.Time          // System start time
+	callCount               int                // AI call count
+	positionFirstSeenTime   map[string]int64   // Position first seen time (symbol_side -> timestamp in milliseconds)
+	monitorWg               sync.WaitGroup     // Used to wait for monitoring goroutine to finish
+	peakPnLCache            map[string]float64 // Peak profit cache (symbol -> peak P&L percentage)
+	peakPnLCacheMutex       sync.RWMutex       // Cache read-write lock
+	lastBalanceSyncTime     time.Time          // Last balance sync time
+	userID                  string             // User ID
+	gridState               *GridState         // Grid trading state (only used when StrategyType == "grid_trading")
+	claw402WalletAddr       string             // Claw402 wallet address (derived from private key at start)
+	consecutiveAIFailures   int                // Consecutive AI call failures
+	protectionFailures      int32              // Consecutive failing protection-query passes (fail-closed)
+	safeMode                bool               // Safe mode: no new positions, protect existing ones
+	safeModeReason          string             // Why safe mode was activated
 }
 
 // NewAutoTrader creates an automatic trader
@@ -652,7 +653,7 @@ func (at *AutoTrader) Stop() {
 		// LLM call / retry backoff.
 		cancel()
 	}
-	at.monitorWg.Wait()     // Wait for monitoring goroutine to finish
+	at.monitorWg.Wait() // Wait for monitoring goroutine to finish
 	logger.Info("⏹ Automatic trading system stopped")
 }
 

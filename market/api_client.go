@@ -124,7 +124,9 @@ func parseKline(kr KlineResponse) (Kline, error) {
 }
 
 func (c *APIClient) GetCurrentPrice(symbol string) (float64, error) {
-	url := fmt.Sprintf("%s/fapi/v1/ticker/price", baseURL)
+	// v2 replaced the retired v1 price ticker; with a symbol filter the
+	// response shape is the same single object v1 returned.
+	url := fmt.Sprintf("%s/fapi/v2/ticker/price", baseURL)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return 0, err

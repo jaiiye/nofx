@@ -172,9 +172,19 @@ func fetchMarketDataWithStrategy(ctx *Context, engine *StrategyEngine) error {
 
 	logger.Infof("📊 Strategy timeframes: %v, Primary: %s, Kline count: %d", timeframes, primaryTimeframe, klineCount)
 
+	// Configured indicator periods reach the calculation layer so prompt
+	// values match what the user configured in the strategy studio.
+	indicatorParams := &market.IndicatorParams{
+		EMAPeriods: config.Indicators.EMAPeriods,
+		RSIPeriods: config.Indicators.RSIPeriods,
+		ATRPeriods: config.Indicators.ATRPeriods,
+		MACDFast:   config.Indicators.MACDFastPeriod,
+		MACDSlow:   config.Indicators.MACDSlowPeriod,
+	}
+
 	// 1. First fetch data for position coins (must fetch)
 	for _, pos := range ctx.Positions {
-		data, err := market.GetWithTimeframes(pos.Symbol, timeframes, primaryTimeframe, klineCount)
+		data, err := market.GetWithTimeframesIndicators(pos.Symbol, timeframes, primaryTimeframe, klineCount, indicatorParams)
 		if err != nil {
 			logger.Infof("⚠️  Failed to fetch market data for position %s: %v", pos.Symbol, err)
 			continue
@@ -195,7 +205,7 @@ func fetchMarketDataWithStrategy(ctx *Context, engine *StrategyEngine) error {
 			continue
 		}
 
-		data, err := market.GetWithTimeframes(coin.Symbol, timeframes, primaryTimeframe, klineCount)
+		data, err := market.GetWithTimeframesIndicators(coin.Symbol, timeframes, primaryTimeframe, klineCount, indicatorParams)
 		if err != nil {
 			logger.Infof("⚠️  Failed to fetch market data for %s: %v", coin.Symbol, err)
 			continue

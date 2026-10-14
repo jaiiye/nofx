@@ -45,6 +45,19 @@ type TimeframeSeriesData struct {
 	BOLLUpper  []float64 `json:"boll_upper"`  // Upper band
 	BOLLMiddle []float64 `json:"boll_middle"` // Middle band (SMA)
 	BOLLLower  []float64 `json:"boll_lower"`  // Lower band
+
+	// ConfiguredIndicators carries the strategy-configured indicator series
+	// with true period labels (e.g. "EMA(30)"). Populated only when the
+	// caller supplies IndicatorParams; the AI prompt prefers these over the
+	// fixed-period fields above.
+	ConfiguredIndicators []IndicatorSeries `json:"configured_indicators,omitempty"`
+}
+
+// IndicatorSeries is one strategy-configured indicator with its real period
+// label (e.g. "EMA(30)", "MACD(8,21)").
+type IndicatorSeries struct {
+	Label  string    `json:"label"`
+	Values []float64 `json:"values"`
 }
 
 // OIData Open Interest data
@@ -62,6 +75,8 @@ type IntradayData struct {
 	RSI14Values []float64
 	Volume      []float64
 	ATR14       float64
+
+	ConfiguredIndicators []IndicatorSeries
 }
 
 // LongerTermData longer-term data (4-hour timeframe)
@@ -74,6 +89,8 @@ type LongerTermData struct {
 	AverageVolume float64
 	MACDValues    []float64
 	RSI14Values   []float64
+
+	ConfiguredIndicators []IndicatorSeries
 }
 
 // Binance API response structure

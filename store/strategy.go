@@ -835,6 +835,9 @@ type IndicatorConfig struct {
 	RSIPeriods []int `json:"rsi_periods,omitempty"` // default [7, 14]
 	// ATR period configuration
 	ATRPeriods []int `json:"atr_periods,omitempty"` // default [14]
+	// MACD period configuration (fast/slow EMA; default 12 / 26, fast must be < slow)
+	MACDFastPeriod int `json:"macd_fast_period,omitempty"`
+	MACDSlowPeriod int `json:"macd_slow_period,omitempty"`
 	// BOLL period configuration (period, standard deviation multiplier is fixed at 2)
 	BOLLPeriods []int `json:"boll_periods,omitempty"` // default [20] - can select multiple timeframes
 	// external data sources
@@ -916,6 +919,14 @@ type RiskControlConfig struct {
 	MinRiskRewardRatio float64 `json:"min_risk_reward_ratio"`
 	// Min AI confidence to open position (AI guided)
 	MinConfidence int `json:"min_confidence"`
+
+	// Drawdown profit-protection monitor (CODE ENFORCED). Nil enabled flag
+	// and zero thresholds mean "keep the historical defaults" so configs
+	// stored before these fields existed keep monitoring active.
+	DrawdownMonitoringEnabled *bool   `json:"drawdown_monitoring_enabled,omitempty"`  // nil = enabled
+	DrawdownCheckIntervalSec  int     `json:"drawdown_check_interval_sec,omitempty"`  // 0 = default 60, clamped to [15, 300]
+	MinProfitThresholdPct     float64 `json:"min_profit_threshold_pct,omitempty"`     // 0 = default 5.0 (%)
+	DrawdownCloseThresholdPct float64 `json:"drawdown_close_threshold_pct,omitempty"` // 0 = default 40.0 (% of peak profit)
 }
 
 // NewStrategyStore creates a new StrategyStore
@@ -979,6 +990,8 @@ func GetDefaultStrategyConfig(lang string) StrategyConfig {
 			EMAPeriods:        []int{20, 50},
 			RSIPeriods:        []int{7, 14},
 			ATRPeriods:        []int{14},
+			MACDFastPeriod:    12,
+			MACDSlowPeriod:    26,
 			BOLLPeriods:       []int{20},
 			// Hyperliquid strategies must use native Hyperliquid market data by default.
 			// NofxOS datasets do not cover all Hyperliquid XYZ assets, so keep them off.
@@ -1006,6 +1019,11 @@ func GetDefaultStrategyConfig(lang string) StrategyConfig {
 			MinPositionSize:              12,  // Min 12 USDT per position (CODE ENFORCED)
 			MinRiskRewardRatio:           3.0, // Min 3:1 profit/loss ratio (AI guided)
 			MinConfidence:                75,  // Min 75% confidence (AI guided)
+
+			DrawdownCheckIntervalSec:  60,
+			MinProfitThresholdPct:     5.0,
+			DrawdownCloseThresholdPct: 40.0,
+			// DrawdownMonitoringEnabled stays nil (= enabled) in defaults.
 		},
 	}
 

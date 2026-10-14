@@ -30,6 +30,11 @@ func (at *AutoTrader) runCycle() error {
 		return nil
 	}
 
+	// Closes executed in this cycle offset the exchange's lagging position
+	// count in the risk gate (close-then-open rebalances must not read as
+	// "position full").
+	at.successfulClosesInCycle = 0
+
 	// Check USDC balance periodically for claw402 users (every 10 cycles)
 	if at.callCount%10 == 0 && store.IsClaw402Config(at.config.AIModel) {
 		at.checkClaw402Balance()

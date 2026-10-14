@@ -21,11 +21,16 @@ type RiskGateInput struct {
 	Price           float64
 
 	PositionCount    int
-	HasSamePosition  bool
-	Equity           float64
-	AvailableBalance float64
-	MarginUsedPct    float64 // current margin usage in percent (0-100)
-	TakerFeeRate     float64 // taker fee as a fraction of notional; 0 = use default
+	// SuccessfulClosesInCycle counts positions successfully closed earlier in
+	// the same decision cycle. Exchange position APIs lag the fills, so the
+	// raw PositionCount still includes just-closed positions — the gate
+	// judges max positions by the expected net count instead.
+	SuccessfulClosesInCycle int
+	HasSamePosition         bool
+	Equity                  float64
+	AvailableBalance        float64
+	MarginUsedPct           float64 // current margin usage in percent (0-100)
+	TakerFeeRate            float64 // taker fee as a fraction of notional; 0 = use default
 
 	Config *store.StrategyConfig
 }
@@ -55,13 +60,21 @@ func EvaluateRiskGate(in RiskGateInput) RiskGateResult {
 	}
 	rc := in.Config.RiskControl
 
-	// 1. Max concurrent positions.
+	// 1. Max concurrent positions, judged by the expected net count: closes
+	// executed earlier in this cycle may not be reflected in PositionCount
+	// yet (exchange API lag), and a close-then-open rebalance must not be
+	// misread as "position full".
 	maxPositions := rc.MaxPositions
 	if maxPositions <= 0 {
 		maxPositions = 3
 	}
-	if in.PositionCount >= maxPositions {
-		return riskReject(fmt.Sprintf("already at max positions (%d/%d)", in.PositionCount, maxPositions))
+	expectedNet := in.PositionCount - in.SuccessfulClosesInCycle
+	if expectedNet < 0 {
+		expectedNet = 0
+	}
+	if expectedNet >= maxPositions {
+		return riskReject(fmt.Sprintf("already at max positions (%d/%d, %d closed this cycle not yet reflected)",
+			in.PositionCount, maxPositions, in.SuccessfulClosesInCycle))
 	}
 
 	// 2. No duplicate position on the same symbol+side.
@@ -159,17 +172,18 @@ func (at *AutoTrader) checkOpenRiskGate(decision *kernel.Decision, positions []m
 		return RiskGateResult{Allowed: false, Reason: "blocked by protection: " + reason}
 	}
 	return EvaluateRiskGate(RiskGateInput{
-		Action:           decision.Action,
-		Symbol:           decision.Symbol,
-		PositionSizeUSD:  decision.PositionSizeUSD,
-		Leverage:         decision.Leverage,
-		PositionCount:    len(positions),
-		HasSamePosition:  hasPosition(positions, decision.Symbol, decision.Action),
-		Equity:           equity,
-		AvailableBalance: availableBalance,
-		MarginUsedPct:    marginUsagePct(positions, equity),
-		TakerFeeRate:     connector.FeeModelFor(at.exchange).TakerRate(),
-		Config:           at.config.StrategyConfig,
+		Action:                  decision.Action,
+		Symbol:                  decision.Symbol,
+		PositionSizeUSD:         decision.PositionSizeUSD,
+		Leverage:                decision.Leverage,
+		PositionCount:           len(positions),
+		SuccessfulClosesInCycle: at.successfulClosesInCycle,
+		HasSamePosition:         hasPosition(positions, decision.Symbol, decision.Action),
+		Equity:                  equity,
+		AvailableBalance:        availableBalance,
+		MarginUsedPct:           marginUsagePct(positions, equity),
+		TakerFeeRate:            connector.FeeModelFor(at.exchange).TakerRate(),
+		Config:                  at.config.StrategyConfig,
 	})
 }
 

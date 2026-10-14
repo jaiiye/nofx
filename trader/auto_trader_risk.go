@@ -63,31 +63,95 @@ func (at *AutoTrader) checkDailyLossHalt(record *store.DecisionRecord) bool {
 	return true
 }
 
-// startDrawdownMonitor starts drawdown monitoring
+// drawdownSettings is the resolved profit-protection monitor configuration.
+type drawdownSettings struct {
+	enabled        bool
+	interval       time.Duration
+	minProfitPct   float64 // start monitoring above this profit (%)
+	closeThreshold float64 // close when profit drops this far from peak (%)
+}
+
+// drawdownMonitorSettings resolves the monitor settings from the strategy
+// config. Nil enabled flag and zero thresholds keep the historical defaults,
+// so configs stored before these fields existed stay active and unchanged.
+func (at *AutoTrader) drawdownMonitorSettings() drawdownSettings {
+	s := drawdownSettings{
+		enabled:        true,
+		interval:       time.Minute,
+		minProfitPct:   5.0,
+		closeThreshold: 40.0,
+	}
+	sc := at.GetStrategyConfig()
+	if sc == nil {
+		return s
+	}
+	rc := sc.RiskControl
+	if rc.DrawdownMonitoringEnabled != nil {
+		s.enabled = *rc.DrawdownMonitoringEnabled
+	}
+	intervalSec := rc.DrawdownCheckIntervalSec
+	if intervalSec <= 0 {
+		intervalSec = 60
+	}
+	if intervalSec < 15 {
+		intervalSec = 15
+	}
+	if intervalSec > 300 {
+		intervalSec = 300
+	}
+	s.interval = time.Duration(intervalSec) * time.Second
+	if rc.MinProfitThresholdPct > 0 {
+		s.minProfitPct = rc.MinProfitThresholdPct
+	}
+	if rc.DrawdownCloseThresholdPct > 0 {
+		s.closeThreshold = rc.DrawdownCloseThresholdPct
+	}
+	return s
+}
+
+// startDrawdownMonitor starts drawdown monitoring. Settings are re-read every
+// iteration so strategy-config changes take effect without a restart.
 func (at *AutoTrader) startDrawdownMonitor() {
 	at.monitorWg.Add(1)
 	go func() {
 		defer at.monitorWg.Done()
 
-		ticker := time.NewTicker(1 * time.Minute) // Check every minute
-		defer ticker.Stop()
+		logger.Info("📊 Started position drawdown monitoring")
 
-		logger.Info("📊 Started position drawdown monitoring (check every minute)")
-
+		wasEnabled := true
 		for {
+			settings := at.drawdownMonitorSettings()
+			if settings.enabled != wasEnabled {
+				if settings.enabled {
+					logger.Info("▶️ Drawdown monitoring enabled by strategy config")
+				} else {
+					logger.Info("⏸ Drawdown monitoring disabled by strategy config")
+				}
+				wasEnabled = settings.enabled
+			}
+
+			var wait time.Duration
+			if settings.enabled {
+				wait = settings.interval
+			} else {
+				// Disabled: poll in short steps so re-enabling applies quickly.
+				wait = time.Minute
+			}
 			select {
-			case <-ticker.C:
-				at.checkPositionDrawdown()
 			case <-at.runCtx.Done():
 				logger.Info("⏹ Stopped position drawdown monitoring")
 				return
+			case <-time.After(wait):
+			}
+			if settings.enabled {
+				at.checkPositionDrawdown(settings)
 			}
 		}
 	}()
 }
 
 // checkPositionDrawdown checks position drawdown situation
-func (at *AutoTrader) checkPositionDrawdown() {
+func (at *AutoTrader) checkPositionDrawdown(settings drawdownSettings) {
 	// Get current positions
 	positions, err := at.trader.GetPositions()
 	if err != nil {
@@ -150,10 +214,10 @@ func (at *AutoTrader) checkPositionDrawdown() {
 			drawdownPct = ((peakPnLPct - currentPnLPct) / peakPnLPct) * 100
 		}
 
-		// Check close position condition: profit > 5% and drawdown >= 40%
-		if currentPnLPct > 5.0 && drawdownPct >= 40.0 {
-			logger.Infof("🚨 Drawdown close position condition triggered: %s %s | Current profit: %.2f%% | Peak profit: %.2f%% | Drawdown: %.2f%%",
-				symbol, side, currentPnLPct, peakPnLPct, drawdownPct)
+		// Check close position condition: profit above threshold and drawdown from peak breaches the configured limit
+		if currentPnLPct > settings.minProfitPct && drawdownPct >= settings.closeThreshold {
+			logger.Infof("🚨 Drawdown close position condition triggered: %s %s | Current profit: %.2f%% | Peak profit: %.2f%% | Drawdown: %.2f%% (thresholds: min profit %.1f%%, close drawdown %.1f%%)",
+				symbol, side, currentPnLPct, peakPnLPct, drawdownPct, settings.minProfitPct, settings.closeThreshold)
 
 			// Execute close position
 			if err := at.emergencyClosePosition(symbol, side); err != nil {
@@ -163,7 +227,7 @@ func (at *AutoTrader) checkPositionDrawdown() {
 				// Clear cache for this position after closing
 				at.ClearPeakPnLCache(symbol, side)
 			}
-		} else if currentPnLPct > 5.0 {
+		} else if currentPnLPct > settings.minProfitPct {
 			// Record situations close to close position condition (for debugging)
 			logger.Infof("📊 Drawdown monitoring: %s %s | Profit: %.2f%% | Peak: %.2f%% | Drawdown: %.2f%%",
 				symbol, side, currentPnLPct, peakPnLPct, drawdownPct)
