@@ -35,6 +35,8 @@ const indicatorCards = [
   { key: 'enable_rsi', label: 'RSI', hint: 'overbought/oversold', color: '#F6465D' },
   { key: 'enable_atr', label: 'ATR', hint: 'volatility risk', color: '#60a5fa' },
   { key: 'enable_boll', label: 'BOLL', hint: 'range / breakout', color: '#ec4899' },
+  { key: 'enable_adx', label: 'ADX', hint: 'trend strength (+DI/-DI)', color: '#22d3ee' },
+  { key: 'enable_supertrend', label: 'Supertrend', hint: 'trailing trend direction', color: '#4ade80' },
 ] as const
 
 const marketContextCards = [

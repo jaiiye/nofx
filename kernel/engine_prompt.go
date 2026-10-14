@@ -1018,10 +1018,28 @@ func (e *StrategyEngine) formatTimeframeSeriesData(sb *strings.Builder, data *ma
 		}
 	}
 
-	if indicators.EnableBOLL && len(data.BOLLUpper) > 0 {
-		sb.WriteString(fmt.Sprintf("BOLL Upper: %s\n", formatFloatSlice(data.BOLLUpper)))
-		sb.WriteString(fmt.Sprintf("BOLL Middle: %s\n", formatFloatSlice(data.BOLLMiddle)))
-		sb.WriteString(fmt.Sprintf("BOLL Lower: %s\n", formatFloatSlice(data.BOLLLower)))
+	if indicators.EnableBOLL {
+		if !writeConfiguredIndicators(sb, data.ConfiguredIndicators, "BOLL", "", "\n") {
+			if len(data.BOLLUpper) > 0 {
+				sb.WriteString(fmt.Sprintf("BOLL Upper: %s\n", formatFloatSlice(data.BOLLUpper)))
+				sb.WriteString(fmt.Sprintf("BOLL Middle: %s\n", formatFloatSlice(data.BOLLMiddle)))
+				sb.WriteString(fmt.Sprintf("BOLL Lower: %s\n", formatFloatSlice(data.BOLLLower)))
+			}
+		}
+	}
+
+	// ADX / Supertrend are regime gauges: printed for the primary timeframe
+	// only, to keep the prompt budget in check.
+	if data.Timeframe == "" || indicators.Klines.PrimaryTimeframe == "" || data.Timeframe == indicators.Klines.PrimaryTimeframe {
+		if indicators.EnableADX {
+			writeConfiguredIndicators(sb, data.ConfiguredIndicators, "ADX", "%.1f", "\n")
+			writeConfiguredIndicators(sb, data.ConfiguredIndicators, "DI+", "%.1f", "\n")
+			writeConfiguredIndicators(sb, data.ConfiguredIndicators, "DI-", "%.1f", "\n")
+		}
+		if indicators.EnableSupertrend {
+			writeConfiguredIndicators(sb, data.ConfiguredIndicators, "SUPERTREND(", "%.4f", "\n")
+			writeConfiguredIndicators(sb, data.ConfiguredIndicators, "SUPERTREND_DIR", "%.0f", "\n")
+		}
 	}
 
 	sb.WriteString("\n")

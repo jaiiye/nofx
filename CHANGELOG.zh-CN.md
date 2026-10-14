@@ -37,6 +37,11 @@ NOFX 项目的所有重要更改都将记录在此文件中。
   交易历史在模拟模式可用；模拟余额计入已实现盈亏、手续费与占用保证金。
 - Telegram bot token 加密存储（`crypto.EncryptedString`），与交易所凭证一致。历史明文
   token 仍可读取，并在下次保存时自动加密。
+- 新增两个趋势/状态类指标：**ADX**（含方向指标 `ADX(14)`、`DI+(14)`、`DI-(14)`）与
+  **Supertrend**（拖尾带 + `SUPERTREND_DIR` = +1 上行 / -1 下行）。为控制 prompt 体积，
+  ADX/Supertrend 仅输出主时间帧。通过 `adx_periods`（默认 [14]）、
+  `supertrend_period` / `supertrend_multiplier`（默认 10 / 3.0）配置，用
+  `enable_adx` / `enable_supertrend` 开启。
 
 ### 变更
 - 重组文档结构为逻辑分类
@@ -58,6 +63,9 @@ NOFX 项目的所有重要更改都将记录在此文件中。
   继续使用平铺工具；非管理域工具保持不变。
 
 ### 修复
+- 布林带现在真正使用配置的 `boll_periods` 与新增的 `boll_multiplier`（默认 2.0）。此前周期
+  只以文本形式回显到 prompt，实际计算固定为 20 / 2.0 —— 与 EMA/RSI/ATR 之前踩过的是同一个
+  "死配置"陷阱。现在 prompt 按真实参数标签输出（`BOLL_UPPER(30,2.5)` …）。
 - Hyperliquid IOC 订单现在会先核对交易所返回的成交状态再报 `FILLED`（传递真实订单号、
   成交均价与成交量；未成交返回错误）。此前过期的 IOC 单会被报成已成交并带占位订单号，
   系统会跟踪一个并不存在的仓位。

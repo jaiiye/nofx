@@ -208,6 +208,12 @@ func fetchMarketDataWithStrategy(ctx *Context, engine *StrategyEngine) error {
 		ATRPeriods: config.Indicators.ATRPeriods,
 		MACDFast:   config.Indicators.MACDFastPeriod,
 		MACDSlow:   config.Indicators.MACDSlowPeriod,
+
+		ADXPeriods:           config.Indicators.ADXPeriods,
+		BOLLPeriods:          config.Indicators.BOLLPeriods,
+		BOLLMultiplier:       config.Indicators.BOLLMultiplier,
+		SupertrendPeriod:     config.Indicators.SupertrendPeriod,
+		SupertrendMultiplier: config.Indicators.SupertrendMultiplier,
 	}
 
 	// Decision-time order book metrics (nil flag = enabled).

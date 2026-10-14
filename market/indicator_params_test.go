@@ -55,6 +55,9 @@ func TestConfiguredIndicatorSeriesLabelsAndValues(t *testing.T) {
 	want := map[string]bool{
 		"EMA(30)": false, "EMA(100)": false, "RSI(10)": false,
 		"MACD(8,21)": false, "ATR(7)": false,
+		"ADX(14)": false, "DI+(14)": false, "DI-(14)": false,
+		"BOLL_UPPER(20,2.0)": false, "BOLL_MIDDLE(20,2.0)": false, "BOLL_LOWER(20,2.0)": false,
+		"SUPERTREND(10,3.0)": false, "SUPERTREND_DIR(10,3.0)": false,
 	}
 	for _, s := range series {
 		if _, ok := want[s.Label]; !ok {
@@ -125,5 +128,124 @@ func TestConfiguredSeriesMatchesFixedFieldsAtDefaults(t *testing.T) {
 	}
 	if a, b := find("RSI(14)"), series.RSI14Values; len(a) != len(b) {
 		t.Fatalf("RSI(14) length %d != fixed %d", len(a), len(b))
+	}
+}
+
+// trendingKlines builds a clean uptrend then a clean downtrend leg.
+func trendingKlines(up, down int) []Kline {
+	klines := make([]Kline, 0, up+down)
+	price := 100.0
+	for i := 0; i < up; i++ {
+		price += 1
+		klines = append(klines, Kline{OpenTime: int64(i) * 60_000, Open: price - 1, High: price + 0.2, Low: price - 1.2, Close: price, Volume: 10})
+	}
+	for i := 0; i < down; i++ {
+		price -= 1
+		klines = append(klines, Kline{OpenTime: int64(up+i) * 60_000, Open: price + 1, High: price + 1.2, Low: price - 0.2, Close: price, Volume: 10})
+	}
+	return klines
+}
+
+// choppyKlines oscillates tightly around a level.
+func choppyKlines(n int) []Kline {
+	klines := make([]Kline, n)
+	for i := 0; i < n; i++ {
+		price := 100.0
+		if i%2 == 0 {
+			price = 100.2
+		}
+		klines[i] = Kline{OpenTime: int64(i) * 60_000, Open: 100, High: price + 0.05, Low: price - 0.05, Close: price, Volume: 10}
+	}
+	return klines
+}
+
+func TestCalculateADXTrendVsChop(t *testing.T) {
+	trending := trendingKlines(60, 0) // pure uptrend
+	adx, plusDI, minusDI := calculateADX(trending, 14)
+	if adx < 40 {
+		t.Fatalf("uptrend ADX = %.1f, want a strong trend reading (>=40)", adx)
+	}
+	if plusDI <= minusDI {
+		t.Fatalf("uptrend DI: +DI %.1f must exceed -DI %.1f", plusDI, minusDI)
+	}
+
+	chop := choppyKlines(80)
+	chopADX, _, _ := calculateADX(chop, 14)
+	if chopADX >= adx {
+		t.Fatalf("chop ADX %.1f should be below trend ADX %.1f", chopADX, adx)
+	}
+
+	// Insufficient history degrades to zeros rather than garbage.
+	if a, p, m := calculateADX(trendingKlines(10, 0), 14); a != 0 || p != 0 || m != 0 {
+		t.Fatalf("short series must return zeros, got %.2f %.2f %.2f", a, p, m)
+	}
+}
+
+func TestCalculateSupertrendDirection(t *testing.T) {
+	up := trendingKlines(60, 0)
+	band, dir := calculateSupertrend(up, 10, 3.0)
+	if dir != 1 {
+		t.Fatalf("uptrend direction = %d, want +1", dir)
+	}
+	if band <= 0 || band >= up[len(up)-1].Close {
+		t.Fatalf("uptrend band = %.2f, want below the last close %.2f", band, up[len(up)-1].Close)
+	}
+
+	down := trendingKlines(20, 40) // trend flips down
+	band, dir = calculateSupertrend(down, 10, 3.0)
+	if dir != -1 {
+		t.Fatalf("downtrend direction = %d, want -1", dir)
+	}
+	if band <= down[len(down)-1].Close {
+		t.Fatalf("downtrend band = %.2f, want above the last close %.2f", band, down[len(down)-1].Close)
+	}
+}
+
+func TestConfiguredBOLLUsesConfiguredPeriodAndMultiplier(t *testing.T) {
+	klines := makeKlines(120)
+	series := configuredIndicatorSeries(klines, &IndicatorParams{
+		BOLLPeriods:    []int{30},
+		BOLLMultiplier: 2.5,
+	}, 30)
+
+	var upper, middle, lower []float64
+	for _, s := range series {
+		switch s.Label {
+		case "BOLL_UPPER(30,2.5)":
+			upper = s.Values
+		case "BOLL_MIDDLE(30,2.5)":
+			middle = s.Values
+		case "BOLL_LOWER(30,2.5)":
+			lower = s.Values
+		}
+	}
+	if upper == nil || middle == nil || lower == nil {
+		t.Fatalf("missing configured BOLL series: %v", series)
+	}
+
+	wantU, wantM, wantL := calculateBOLL(klines, 30, 2.5)
+	if got := middle[len(middle)-1]; math.Abs(got-wantM) > 1e-9 {
+		t.Fatalf("BOLL middle = %v, want %v", got, wantM)
+	}
+	if got := upper[len(upper)-1]; math.Abs(got-wantU) > 1e-9 {
+		t.Fatalf("BOLL upper = %v, want %v", got, wantU)
+	}
+	if got := lower[len(lower)-1]; math.Abs(got-wantL) > 1e-9 {
+		t.Fatalf("BOLL lower = %v, want %v", got, wantL)
+	}
+}
+
+func TestConfiguredADXAndSupertrendSeriesEmitted(t *testing.T) {
+	klines := trendingKlines(80, 0)
+	series := configuredIndicatorSeries(klines, DefaultIndicatorParams(), 20)
+
+	labels := map[string]bool{}
+	for _, s := range series {
+		labels[s.Label] = true
+	}
+	for _, want := range []string{"ADX(14)", "DI+(14)", "DI-(14)", "SUPERTREND(10,3.0)", "SUPERTREND_DIR(10,3.0)"} {
+		if !labels[want] {
+			t.Fatalf("missing series %s (have %v)", want, labels)
+		}
 	}
 }

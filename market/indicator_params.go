@@ -12,6 +12,12 @@ type IndicatorParams struct {
 	ATRPeriods []int // default [14]
 	MACDFast   int   // default 12
 	MACDSlow   int   // default 26
+
+	ADXPeriods           []int   // default [14]; emits ADX(p) plus DI+(p)/DI-(p)
+	BOLLPeriods          []int   // default [20]
+	BOLLMultiplier       float64 // default 2.0
+	SupertrendPeriod     int     // default 10
+	SupertrendMultiplier float64 // default 3.0; emits SUPERTREND(p,m) plus _DIR
 }
 
 // DefaultIndicatorParams returns the canonical periods, matching the
@@ -23,6 +29,12 @@ func DefaultIndicatorParams() *IndicatorParams {
 		ATRPeriods: []int{14},
 		MACDFast:   12,
 		MACDSlow:   26,
+
+		ADXPeriods:           []int{14},
+		BOLLPeriods:          []int{20},
+		BOLLMultiplier:       2.0,
+		SupertrendPeriod:     10,
+		SupertrendMultiplier: 3.0,
 	}
 }
 
@@ -51,6 +63,21 @@ func (p *IndicatorParams) normalized() *IndicatorParams {
 	}
 	if n.MACDFast >= n.MACDSlow {
 		n.MACDFast, n.MACDSlow = 12, 26
+	}
+	if periods := positivePeriods(p.ADXPeriods); len(periods) > 0 {
+		n.ADXPeriods = periods
+	}
+	if periods := positivePeriods(p.BOLLPeriods); len(periods) > 0 {
+		n.BOLLPeriods = periods
+	}
+	if p.BOLLMultiplier > 0 {
+		n.BOLLMultiplier = p.BOLLMultiplier
+	}
+	if p.SupertrendPeriod > 0 {
+		n.SupertrendPeriod = p.SupertrendPeriod
+	}
+	if p.SupertrendMultiplier > 0 {
+		n.SupertrendMultiplier = p.SupertrendMultiplier
 	}
 	return n
 }
@@ -113,6 +140,55 @@ func configuredIndicatorSeries(klines []Kline, p *IndicatorParams, count int) []
 			Label:  fmt.Sprintf("ATR(%d)", period),
 			Values: []float64{calculateATR(klines, period)},
 		})
+	}
+
+	// ADX with its directional indicators: strength and direction together,
+	// as single latest values (regime gauges, not plotted series).
+	for _, period := range p.ADXPeriods {
+		adx, plusDI, minusDI := calculateADX(klines, period)
+		out = append(out,
+			IndicatorSeries{Label: fmt.Sprintf("ADX(%d)", period), Values: []float64{adx}},
+			IndicatorSeries{Label: fmt.Sprintf("DI+(%d)", period), Values: []float64{plusDI}},
+			IndicatorSeries{Label: fmt.Sprintf("DI-(%d)", period), Values: []float64{minusDI}},
+		)
+	}
+
+	// Bollinger Bands with the configured period and standard-deviation
+	// multiplier (three series per period: upper/middle/lower).
+	for _, period := range p.BOLLPeriods {
+		mult := p.BOLLMultiplier
+		upper := indicatorSeriesOverWindow(klines, start, period, func(kl []Kline) float64 {
+			u, _, _ := calculateBOLL(kl, period, mult)
+			return u
+		})
+		middle := indicatorSeriesOverWindow(klines, start, period, func(kl []Kline) float64 {
+			_, m, _ := calculateBOLL(kl, period, mult)
+			return m
+		})
+		lower := indicatorSeriesOverWindow(klines, start, period, func(kl []Kline) float64 {
+			_, _, l := calculateBOLL(kl, period, mult)
+			return l
+		})
+		out = append(out,
+			IndicatorSeries{Label: fmt.Sprintf("BOLL_UPPER(%d,%.1f)", period, mult), Values: upper},
+			IndicatorSeries{Label: fmt.Sprintf("BOLL_MIDDLE(%d,%.1f)", period, mult), Values: middle},
+			IndicatorSeries{Label: fmt.Sprintf("BOLL_LOWER(%d,%.1f)", period, mult), Values: lower},
+		)
+	}
+
+	// Supertrend: trailing band plus its direction (+1 up / -1 down).
+	if p.SupertrendPeriod > 0 {
+		band, direction := calculateSupertrend(klines, p.SupertrendPeriod, p.SupertrendMultiplier)
+		out = append(out,
+			IndicatorSeries{
+				Label:  fmt.Sprintf("SUPERTREND(%d,%.1f)", p.SupertrendPeriod, p.SupertrendMultiplier),
+				Values: []float64{band},
+			},
+			IndicatorSeries{
+				Label:  fmt.Sprintf("SUPERTREND_DIR(%d,%.1f)", p.SupertrendPeriod, p.SupertrendMultiplier),
+				Values: []float64{float64(direction)},
+			},
+		)
 	}
 	return out
 }

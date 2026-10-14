@@ -829,6 +829,8 @@ type IndicatorConfig struct {
 	EnableVolume      bool `json:"enable_volume"`
 	EnableOI          bool `json:"enable_oi"`           // open interest
 	EnableFundingRate bool `json:"enable_funding_rate"` // funding rate
+	EnableADX         bool `json:"enable_adx"`          // ADX trend strength (+DI/-DI)
+	EnableSupertrend  bool `json:"enable_supertrend"`   // Supertrend band + direction
 	// Microstructure book metrics (spread/imbalance/depth/liquidity). Nil =
 	// enabled: the pointer avoids old configs silently disabling the feature
 	// on unmarshal (bool zero-value trap).
@@ -842,8 +844,16 @@ type IndicatorConfig struct {
 	// MACD period configuration (fast/slow EMA; default 12 / 26, fast must be < slow)
 	MACDFastPeriod int `json:"macd_fast_period,omitempty"`
 	MACDSlowPeriod int `json:"macd_slow_period,omitempty"`
-	// BOLL period configuration (period, standard deviation multiplier is fixed at 2)
-	BOLLPeriods []int `json:"boll_periods,omitempty"` // default [20] - can select multiple timeframes
+	// ADX period configuration (default [14]); emits ADX plus DI+/DI-.
+	ADXPeriods []int `json:"adx_periods,omitempty"`
+	// Supertrend configuration (default period 10, multiplier 3.0); emits the
+	// trailing band plus its direction (+1 up / -1 down).
+	SupertrendPeriod     int     `json:"supertrend_period,omitempty"`
+	SupertrendMultiplier float64 `json:"supertrend_multiplier,omitempty"`
+	// BOLL period configuration (period, standard deviation multiplier)
+	BOLLPeriods []int `json:"boll_periods,omitempty"` // default [20]
+	// BOLL standard-deviation multiplier (default 2.0; 2.5 widens the bands)
+	BOLLMultiplier float64 `json:"boll_multiplier,omitempty"`
 	// external data sources
 	ExternalDataSources []ExternalDataSource `json:"external_data_sources,omitempty"`
 
@@ -982,21 +992,25 @@ func GetDefaultStrategyConfig(lang string) StrategyConfig {
 				EnableMultiTimeframe: true,
 				SelectedTimeframes:   []string{"5m", "15m", "1h"},
 			},
-			EnableRawKlines:   true, // Required - raw OHLCV data for AI analysis
-			EnableEMA:         false,
-			EnableMACD:        false,
-			EnableRSI:         false,
-			EnableATR:         false,
-			EnableBOLL:        false,
-			EnableVolume:      true,
-			EnableOI:          true,
-			EnableFundingRate: true,
-			EMAPeriods:        []int{20, 50},
-			RSIPeriods:        []int{7, 14},
-			ATRPeriods:        []int{14},
-			MACDFastPeriod:    12,
-			MACDSlowPeriod:    26,
-			BOLLPeriods:       []int{20},
+			EnableRawKlines:      true, // Required - raw OHLCV data for AI analysis
+			EnableEMA:            false,
+			EnableMACD:           false,
+			EnableRSI:            false,
+			EnableATR:            false,
+			EnableBOLL:           false,
+			EnableVolume:         true,
+			EnableOI:             true,
+			EnableFundingRate:    true,
+			EMAPeriods:           []int{20, 50},
+			RSIPeriods:           []int{7, 14},
+			ATRPeriods:           []int{14},
+			MACDFastPeriod:       12,
+			MACDSlowPeriod:       26,
+			ADXPeriods:           []int{14},
+			SupertrendPeriod:     10,
+			SupertrendMultiplier: 3.0,
+			BOLLPeriods:          []int{20},
+			BOLLMultiplier:       2.0,
 			// Hyperliquid strategies must use native Hyperliquid market data by default.
 			// NofxOS datasets do not cover all Hyperliquid XYZ assets, so keep them off.
 			NofxOSAPIKey:           "",

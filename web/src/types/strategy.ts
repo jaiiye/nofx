@@ -157,6 +157,8 @@ export interface IndicatorConfig {
   enable_rsi: boolean;
   enable_atr: boolean;
   enable_boll: boolean;
+  enable_adx: boolean;
+  enable_supertrend: boolean;
   enable_volume: boolean;
   enable_oi: boolean;
   enable_funding_rate: boolean;
@@ -166,7 +168,11 @@ export interface IndicatorConfig {
   ema_periods?: number[];
   rsi_periods?: number[];
   atr_periods?: number[];
+  adx_periods?: number[];
+  supertrend_period?: number;
+  supertrend_multiplier?: number;
   boll_periods?: number[];
+  boll_multiplier?: number;
   external_data_sources?: ExternalDataSource[];
 
   // ========== NofxOS 数据源统一配置 ==========

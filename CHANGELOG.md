@@ -41,6 +41,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   simulated balance tracks realized PnL, fees and used margin.
 - Telegram bot token is encrypted at rest (`crypto.EncryptedString`), like exchange
   credentials. Legacy plaintext tokens keep working and re-encrypt on the next save.
+- Two new indicators for trend/regime work: **ADX** with its directional indicators
+  (`ADX(14)`, `DI+(14)`, `DI-(14)`) and **Supertrend** (trailing band plus
+  `SUPERTREND_DIR` = +1 up / -1 down). ADX/Supertrend are emitted for the primary timeframe
+  only to keep the prompt budget in check. Configure via `adx_periods` (default [14]),
+  `supertrend_period` / `supertrend_multiplier` (default 10 / 3.0), and enable with
+  `enable_adx` / `enable_supertrend`.
 
 ### Changed
 - Reorganized documentation structure into logical categories
@@ -66,6 +72,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bot uses the same model selection as the web agent.
 
 ### Fixed
+- Bollinger Bands now actually use the configured `boll_periods` and the new
+  `boll_multiplier` (default 2.0). Previously the period was only echoed into the prompt as
+  text while the computed bands stayed hardcoded at 20 / 2.0 — the same dead-configuration
+  trap that previously affected EMA/RSI/ATR. The prompt now prints the configured bands with
+  true labels (`BOLL_UPPER(30,2.5)` …).
 - Hyperliquid IOC orders are now verified against the venue response before being reported as
   `FILLED` (real order id, average price and filled quantity are propagated; unfilled orders
   return an error). Previously an expired IOC order was reported as filled with a placeholder
