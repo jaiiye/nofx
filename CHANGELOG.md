@@ -56,6 +56,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   available inputs.
 
 ### Changed
+- Prompt optimization (~38% smaller per decision: 37KB → 23KB on the reference
+  context). Candle tables use compact CSV rows with significant digits that no longer
+  round low-priced coins to `0.0000`; candidate coins keep the full table for the primary
+  timeframe only (positions keep every timeframe); microstructure folds from 7 lines to 3;
+  the schema dictionary drops formula lines; the confidence threshold is stated once
+  instead of three times.
+- Prompt consistency fixes: the aggressive mode no longer hardcodes a confidence of 70
+  (it now quotes the configured threshold, which the hard constraints use); scalping mode
+  gets frequency guidance that matches its fast-exit design instead of the day-trade
+  "hold ≥ 30-60 minutes" text; the fixed-period `current_ema20`/`current_macd`/`current_rsi7`
+  readouts (which contradicted the configured-period series) are gone; the candidate-count
+  header reports the actually displayed number; the single-symbol JSON example quotes the
+  same position cap as the hard constraints; MACD fast/slow and the BOLL multiplier are
+  listed with their periods.
 - Reorganized documentation structure into logical categories
 - Updated all README files with proper navigation links
 - The risk gate judges the max-positions rule by the expected net count: positions closed

@@ -528,12 +528,11 @@ func getSchemaPromptEN() string {
 	return prompt
 }
 
-// formatFieldDefZH formats a field definition in Chinese
+// formatFieldDefZH formats a field definition in Chinese. Formulas are
+// deliberately omitted: they are fixed overhead on every prompt and the model
+// only needs the field's meaning and unit to read the data.
 func formatFieldDefZH(key string, field BilingualFieldDef) string {
 	result := "- **" + key + "**（" + field.NameZH + "）: " + field.DescZH
-	if field.FormulaZH != "" {
-		result += " | 公式: `" + field.FormulaZH + "`"
-	}
 	if field.Unit != "" {
 		result += " | 单位: " + field.Unit
 	}
@@ -541,12 +540,9 @@ func formatFieldDefZH(key string, field BilingualFieldDef) string {
 	return result
 }
 
-// formatFieldDefEN formats a field definition in English
+// formatFieldDefEN formats a field definition in English.
 func formatFieldDefEN(key string, field BilingualFieldDef) string {
 	result := "- **" + key + "** (" + field.NameEN + "): " + field.DescEN
-	if field.FormulaEN != "" {
-		result += " | Formula: `" + field.FormulaEN + "`"
-	}
 	if field.Unit != "" {
 		result += " | Unit: " + field.Unit
 	}

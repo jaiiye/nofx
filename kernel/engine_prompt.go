@@ -2,9 +2,11 @@ package kernel
 
 import (
 	"fmt"
+	"math"
 	"nofx/market"
 	"nofx/provider/nofxos"
 	"nofx/store"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -53,7 +55,7 @@ func (e *StrategyEngine) BuildSystemPrompt(accountEquity float64, variant string
 	}
 
 	// 2. Trading mode variant
-	writeModeVariant(&sb, variant, zh)
+	writeModeVariant(&sb, variant, zh, riskControl.MinConfidence)
 
 	// 3. Hard constraints (risk control).
 	//
@@ -72,25 +74,12 @@ func (e *StrategyEngine) BuildSystemPrompt(accountEquity float64, variant string
 
 	writeHardConstraints(&sb, accountEquity, riskControl, btcEthPosValueRatio, altcoinPosValueRatio, singleSymbol, primarySymbol, zh)
 
-	// 4. Trading frequency (editable)
-	if promptSections.TradingFrequency != "" {
-		sb.WriteString(promptSections.TradingFrequency)
-		sb.WriteString("\n\n")
-	} else if zh {
-		sb.WriteString("# ⏱️ 交易频率提醒\n\n")
-		sb.WriteString("- 优秀交易员: 每日 2-4 单 ≈ 每小时 0.1-0.2 单\n")
-		sb.WriteString("- 每小时 > 2 单 = 过度交易\n")
-		sb.WriteString("- 单笔持仓时长 ≥ 30-60 分钟\n")
-		sb.WriteString("如果你发现自己每个周期都在交易 → 入场标准过低; 如果不到 30 分钟就平仓 → 太冲动。\n\n")
-	} else {
-		sb.WriteString("# ⏱️ Trading Frequency Awareness\n\n")
-		sb.WriteString("- Excellent traders: 2-4 trades/day ≈ 0.1-0.2 trades/hour\n")
-		sb.WriteString("- >2 trades/hour = overtrading\n")
-		sb.WriteString("- Single position hold time ≥ 30-60 minutes\n")
-		sb.WriteString("If you find yourself trading every cycle → standards too low; if closing positions < 30 minutes → too impulsive.\n\n")
-	}
+	// 4. Trading frequency (editable; the default text is mode-aware so the
+	//    scalping variant is not contradicted by the day-trade guidance).
+	writeTradingFrequency(&sb, variant, zh, promptSections.TradingFrequency)
 
-	// 5. Entry standards (editable)
+	// 5. Entry standards (editable). The confidence threshold itself lives in
+	//    the hard constraints; repeating the number here only risks drift.
 	if promptSections.EntryStandards != "" {
 		sb.WriteString(promptSections.EntryStandards)
 		if zh {
@@ -100,23 +89,19 @@ func (e *StrategyEngine) BuildSystemPrompt(accountEquity float64, variant string
 		}
 		e.writeAvailableIndicators(&sb, zh)
 		e.writeIndicatorPlaybook(&sb, zh)
-		if zh {
-			sb.WriteString(fmt.Sprintf("\n**置信度 ≥ %d** 才能开仓。\n\n", riskControl.MinConfidence))
-		} else {
-			sb.WriteString(fmt.Sprintf("\n**Confidence ≥ %d** required to open positions.\n\n", riskControl.MinConfidence))
-		}
+		sb.WriteString("\n")
 	} else if zh {
 		sb.WriteString("# 🎯 入场标准 (严格)\n\n")
 		sb.WriteString("只有当多重信号共振时才开仓。你拥有:\n")
 		e.writeAvailableIndicators(&sb, zh)
 		e.writeIndicatorPlaybook(&sb, zh)
-		sb.WriteString(fmt.Sprintf("\n请自由使用任何有效的分析方法, 但**置信度 ≥ %d** 才能开仓; 避免低质量行为, 如单一指标、信号矛盾、横盘震荡、平仓后立刻再开等。\n\n", riskControl.MinConfidence))
+		sb.WriteString("\n请自由使用任何有效的分析方法, 但需达到上方硬约束中的置信度门槛; 避免低质量行为, 如单一指标、信号矛盾、横盘震荡、平仓后立刻再开等。\n\n")
 	} else {
 		sb.WriteString("# 🎯 Entry Standards (Strict)\n\n")
 		sb.WriteString("Only open positions when multiple signals resonate. You have:\n")
 		e.writeAvailableIndicators(&sb, zh)
 		e.writeIndicatorPlaybook(&sb, zh)
-		sb.WriteString(fmt.Sprintf("\nFeel free to use any effective analysis method, but **confidence ≥ %d** is required to open positions; avoid low-quality behaviors such as single-indicator entries, contradictory signals, sideways chop, or re-entering immediately after a close.\n\n", riskControl.MinConfidence))
+		sb.WriteString("\nFeel free to use any effective analysis method, but the confidence threshold in the hard constraints applies; avoid low-quality behaviors such as single-indicator entries, contradictory signals, sideways chop, or re-entering immediately after a close.\n\n")
 	}
 
 	// 6. Decision process (editable)
@@ -137,7 +122,7 @@ func (e *StrategyEngine) BuildSystemPrompt(accountEquity float64, variant string
 
 	// 7. Output format — schema spec stays in English (this is a parser
 	//    contract; reasoning copy is localized below).
-	writeOutputFormat(&sb, accountEquity, btcEthPosValueRatio, riskControl, singleSymbol, primarySymbol, zh)
+	writeOutputFormat(&sb, accountEquity, riskControl, btcEthPosValueRatio, altcoinPosValueRatio, singleSymbol, primarySymbol, zh)
 
 	// 8. Custom Prompt.
 	//
@@ -240,15 +225,69 @@ func NormalizeModeVariant(v string) string {
 	}
 }
 
-func writeModeVariant(sb *strings.Builder, variant string, zh bool) {
+// writeTradingFrequency emits the frequency guidance. A user-supplied custom
+// section always wins; otherwise the default text is mode-aware — the
+// day-trade cadence ("hold ≥ 30-60 min", ">2 trades/hour = overtrading")
+// directly contradicts scalping mode, which is built around fast exits.
+func writeTradingFrequency(sb *strings.Builder, variant string, zh bool, custom string) {
+	if custom != "" {
+		sb.WriteString(custom)
+		sb.WriteString("\n\n")
+		return
+	}
+	if NormalizeModeVariant(variant) == "scalping" {
+		if zh {
+			sb.WriteString("# ⏱️ 交易频率提醒 (短线模式)\n\n")
+			sb.WriteString("- 短线模式以快进快出为设计目标: 单笔持仓通常数分钟到数十分钟\n")
+			sb.WriteString("- 频率可以更高, 但每一单都必须有新信号支撑; 没有信号就不交易\n")
+			sb.WriteString("- 动量失效立即离场, 不要对亏损的短线单加仓\n\n")
+		} else {
+			sb.WriteString("# ⏱️ Trading Frequency Awareness (Scalping)\n\n")
+			sb.WriteString("- Scalping is built for quick round trips: positions typically last minutes to tens of minutes\n")
+			sb.WriteString("- Higher trade frequency is expected, but every entry needs a fresh signal — no signal, no trade\n")
+			sb.WriteString("- Exit as soon as the momentum fails; never add to a losing scalp\n\n")
+		}
+		return
+	}
+	if zh {
+		sb.WriteString("# ⏱️ 交易频率提醒\n\n")
+		sb.WriteString("- 优秀交易员: 每日 2-4 单 ≈ 每小时 0.1-0.2 单\n")
+		sb.WriteString("- 每小时 > 2 单 = 过度交易\n")
+		sb.WriteString("- 单笔持仓时长 ≥ 30-60 分钟\n")
+		sb.WriteString("如果你发现自己每个周期都在交易 → 入场标准过低; 如果不到 30 分钟就平仓 → 太冲动。\n\n")
+	} else {
+		sb.WriteString("# ⏱️ Trading Frequency Awareness\n\n")
+		sb.WriteString("- Excellent traders: 2-4 trades/day ≈ 0.1-0.2 trades/hour\n")
+		sb.WriteString("- >2 trades/hour = overtrading\n")
+		sb.WriteString("- Single position hold time ≥ 30-60 minutes\n")
+		sb.WriteString("If you find yourself trading every cycle → standards too low; if closing positions < 30 minutes → too impulsive.\n\n")
+	}
+}
+
+// singleSymbolPositionRatio returns the position-value ratio that applies
+// when the strategy trades exactly one instrument: the larger of the two
+// configured ratios, so the limit is not accidentally clamped to the
+// altcoin cap for a stock. Shared by the hard constraints and the output
+// example so both quote the same number.
+func singleSymbolPositionRatio(btcEthPosValueRatio, altcoinPosValueRatio float64) float64 {
+	if btcEthPosValueRatio > altcoinPosValueRatio {
+		return btcEthPosValueRatio
+	}
+	return altcoinPosValueRatio
+}
+
+// writeModeVariant writes the mode section. Confidence figures always come
+// from the configured MinConfidence — a hardcoded value here previously
+// contradicted the hard-constraints section.
+func writeModeVariant(sb *strings.Builder, variant string, zh bool, minConfidence int) {
 	// Balanced ("") intentionally has no case: the baseline prompt omits the
 	// mode section entirely.
 	switch NormalizeModeVariant(variant) {
 	case "aggressive":
 		if zh {
-			sb.WriteString("## 模式: 激进\n- 优先捕捉趋势突破, 置信度 ≥ 70 时可分批建仓\n- 允许更高仓位, 但必须严格止损并说明风险回报比\n\n")
+			sb.WriteString(fmt.Sprintf("## 模式: 激进\n- 优先捕捉趋势突破, 达到置信度门槛 (≥ %d) 后可分批建仓\n- 允许更高仓位, 但必须严格止损并说明风险回报比\n\n", minConfidence))
 		} else {
-			sb.WriteString("## Mode: Aggressive\n- Prioritize capturing trend breakouts; may scale in when confidence ≥ 70\n- Allow larger positions, but must strictly set stop-loss and explain the risk-reward ratio\n\n")
+			sb.WriteString(fmt.Sprintf("## Mode: Aggressive\n- Prioritize capturing trend breakouts; may scale into a position once it clears the confidence threshold (≥ %d)\n- Allow larger positions, but must strictly set stop-loss and explain the risk-reward ratio\n\n", minConfidence))
 		}
 	case "conservative":
 		if zh {
@@ -277,12 +316,9 @@ func writeHardConstraints(sb *strings.Builder, accountEquity float64, riskContro
 	}
 
 	if singleSymbol {
-		// One symbol — pick the higher of the two configured ratios so the
-		// limit isn't accidentally clamped to the altcoin cap for a stock.
-		ratio := altcoinPosValueRatio
-		if btcEthPosValueRatio > ratio {
-			ratio = btcEthPosValueRatio
-		}
+		// One symbol — use the same combined ratio the hard-constraints
+		// section quotes, so the example can never contradict the limit.
+		ratio := singleSymbolPositionRatio(btcEthPosValueRatio, altcoinPosValueRatio)
 		maxVal := accountEquity * ratio
 		symLabel := primarySymbol
 		if zh {
@@ -338,10 +374,7 @@ func writeHardConstraints(sb *strings.Builder, accountEquity float64, riskContro
 	// Position sizing guidance
 	exampleRatio := btcEthPosValueRatio
 	if singleSymbol {
-		exampleRatio = altcoinPosValueRatio
-		if btcEthPosValueRatio > exampleRatio {
-			exampleRatio = btcEthPosValueRatio
-		}
+		exampleRatio = singleSymbolPositionRatio(btcEthPosValueRatio, altcoinPosValueRatio)
 	}
 	if zh {
 		sb.WriteString("## 仓位大小指引\n")
@@ -362,7 +395,7 @@ func writeHardConstraints(sb *strings.Builder, accountEquity float64, riskContro
 	}
 }
 
-func writeOutputFormat(sb *strings.Builder, accountEquity, btcEthPosValueRatio float64, riskControl store.RiskControlConfig, singleSymbol bool, primarySymbol string, zh bool) {
+func writeOutputFormat(sb *strings.Builder, accountEquity float64, riskControl store.RiskControlConfig, btcEthPosValueRatio, altcoinPosValueRatio float64, singleSymbol bool, primarySymbol string, zh bool) {
 	// Output format schema MUST stay English/structural; parser depends on it.
 	sb.WriteString("# Output Format (Strictly Follow)\n\n")
 	if zh {
@@ -394,7 +427,7 @@ func writeOutputFormat(sb *strings.Builder, accountEquity, btcEthPosValueRatio f
 		if riskControl.BTCETHMaxLeverage > lev {
 			lev = riskControl.BTCETHMaxLeverage
 		}
-		ratio := btcEthPosValueRatio // already chosen as the larger above when single-symbol
+		ratio := singleSymbolPositionRatio(btcEthPosValueRatio, altcoinPosValueRatio) // same combined cap as the hard constraints
 		size := accountEquity * ratio
 		sb.WriteString(fmt.Sprintf("  {\"symbol\": \"%s\", \"action\": \"open_long\", \"leverage\": %d, \"position_size_usd\": %.0f, \"stop_loss\": 0, \"take_profit\": 0, \"confidence\": 85, \"risk_usd\": 0},\n", primarySymbol, lev, size))
 		sb.WriteString(fmt.Sprintf("  {\"symbol\": \"%s\", \"action\": \"wait\"}\n", primarySymbol))
@@ -465,7 +498,12 @@ func (e *StrategyEngine) writeAvailableIndicators(sb *strings.Builder, zh bool) 
 		sb.WriteString("\n")
 	}
 	if indicators.EnableMACD {
-		sb.WriteString("- " + label("MACD indicators", "MACD 指标") + "\n")
+		sb.WriteString("- " + label("MACD indicators", "MACD 指标"))
+		fast, slow := indicators.MACDFastPeriod, indicators.MACDSlowPeriod
+		if fast > 0 || slow > 0 {
+			sb.WriteString(fmt.Sprintf(" (%s: %d/%d)", label("fast/slow", "快/慢"), fast, slow))
+		}
+		sb.WriteString("\n")
 	}
 	if indicators.EnableRSI {
 		sb.WriteString("- " + label("RSI indicators", "RSI 指标"))
@@ -485,6 +523,9 @@ func (e *StrategyEngine) writeAvailableIndicators(sb *strings.Builder, zh bool) 
 		sb.WriteString("- " + label("Bollinger Bands (BOLL) - Upper/Middle/Lower bands", "布林带 (BOLL) - 上/中/下轨"))
 		if len(indicators.BOLLPeriods) > 0 {
 			sb.WriteString(fmt.Sprintf(" (%s: %v)", label("periods", "周期"), indicators.BOLLPeriods))
+		}
+		if indicators.BOLLMultiplier > 0 {
+			sb.WriteString(fmt.Sprintf(" (%s: %.1f)", label("std-dev multiplier", "标准差倍数"), indicators.BOLLMultiplier))
 		}
 		sb.WriteString("\n")
 	}
@@ -654,9 +695,11 @@ func (e *StrategyEngine) BuildUserPrompt(ctx *Context) string {
 
 	// BTC market
 	if btcData, hasBTC := ctx.MarketDataMap["BTCUSDT"]; hasBTC {
-		sb.WriteString(fmt.Sprintf("BTC: %.2f (1h: %+.2f%%, 4h: %+.2f%%) | MACD: %.4f | RSI: %.2f\n\n",
-			btcData.CurrentPrice, btcData.PriceChange1h, btcData.PriceChange4h,
-			btcData.CurrentMACD, btcData.CurrentRSI7))
+		// Deliberately price/change only: the fixed-period MACD/RSI readouts
+		// that used to sit here contradicted the configured-period series the
+		// model receives in the symbol's own data block.
+		sb.WriteString(fmt.Sprintf("BTC: %.2f (1h: %+.2f%%, 4h: %+.2f%%)\n\n",
+			btcData.CurrentPrice, btcData.PriceChange1h, btcData.PriceChange4h))
 	}
 
 	// Account information
@@ -764,7 +807,10 @@ func (e *StrategyEngine) BuildUserPrompt(ctx *Context) string {
 		positionSymbols[normalizedSymbol] = true
 	}
 
-	sb.WriteString(fmt.Sprintf("## Candidate Coins (%d coins)\n\n", len(ctx.MarketDataMap)))
+	// Build the body first so the header can carry the ACTUAL displayed count
+	// (the old header used len(MarketDataMap), which counts position symbols
+	// and coins skipped here).
+	var candidateBody strings.Builder
 	displayedCount := 0
 	for _, coin := range ctx.CandidateCoins {
 		// Skip if this coin is already a position (data already shown in positions section)
@@ -780,17 +826,19 @@ func (e *StrategyEngine) BuildUserPrompt(ctx *Context) string {
 		displayedCount++
 
 		sourceTags := e.formatCoinSourceTag(coin.Sources)
-		sb.WriteString(fmt.Sprintf("### %d. %s%s\n\n", displayedCount, coin.Symbol, sourceTags))
-		sb.WriteString(e.formatMarketData(marketData))
+		candidateBody.WriteString(fmt.Sprintf("### %d. %s%s\n\n", displayedCount, coin.Symbol, sourceTags))
+		candidateBody.WriteString(e.formatMarketData(marketData, false))
 
 		if ctx.QuantDataMap != nil {
 			if quantData, hasQuant := ctx.QuantDataMap[coin.Symbol]; hasQuant {
-				sb.WriteString(e.formatQuantData(quantData))
+				candidateBody.WriteString(e.formatQuantData(quantData))
 			}
 		}
-		sb.WriteString(e.formatMicrostructure(ctx, coin.Symbol))
-		sb.WriteString("\n")
+		candidateBody.WriteString(e.formatMicrostructure(ctx, coin.Symbol))
+		candidateBody.WriteString("\n")
 	}
+	sb.WriteString(fmt.Sprintf("## Candidate Coins (%d coins)\n\n", displayedCount))
+	sb.WriteString(candidateBody.String())
 	sb.WriteString("\n")
 
 	// Get language for market data formatting
@@ -834,19 +882,15 @@ func (e *StrategyEngine) formatMicrostructure(ctx *Context, symbol string) strin
 
 	var sb strings.Builder
 	sb.WriteString("**MICROSTRUCTURE (decision-time order book)**\n")
-	sb.WriteString(fmt.Sprintf("- Spread: %.1f bps (%.3f%%)\n", m.SpreadBps, m.SpreadPct))
-	sb.WriteString(fmt.Sprintf("- Book imbalance: %+.2f (%s tilt) | Top-10 depth: bid %.0f / ask %.0f USDT\n",
-		m.Imbalance, m.ImbalanceSide, m.BidDepthUSD, m.AskDepthUSD))
-	if len(m.SupportLevels) > 0 {
-		sb.WriteString(fmt.Sprintf("- Support (largest resting bids): %s\n", formatFloatSlice(m.SupportLevels)))
-	}
-	if len(m.ResistanceLevels) > 0 {
-		sb.WriteString(fmt.Sprintf("- Resistance (largest resting asks): %s\n", formatFloatSlice(m.ResistanceLevels)))
+	sb.WriteString(fmt.Sprintf("- Spread %.1f bps | Imbalance %+.2f (%s) | Top-10 depth: bid %.0f / ask %.0f USDT | Liquidity %d/100 (thin books and wide spreads argue against market chasing)\n",
+		m.SpreadBps, m.Imbalance, m.ImbalanceSide, m.BidDepthUSD, m.AskDepthUSD, m.LiquidityScore))
+	if len(m.SupportLevels) > 0 || len(m.ResistanceLevels) > 0 {
+		sb.WriteString("- Largest resting bids (support): " + formatFloatSlice(m.SupportLevels) +
+			" | largest resting asks (resistance): " + formatFloatSlice(m.ResistanceLevels) + "\n")
 	}
 	if m.VWAP > 0 {
-		sb.WriteString(fmt.Sprintf("- VWAP: %.4f (price %+.2f%% vs VWAP)\n", m.VWAP, m.VWAPDeviationPct))
+		sb.WriteString(fmt.Sprintf("- VWAP %.4f (price %+.2f%% vs VWAP)\n", m.VWAP, m.VWAPDeviationPct))
 	}
-	sb.WriteString(fmt.Sprintf("- Liquidity score: %d/100 (thin books and wide spreads argue against market chasing)\n", m.LiquidityScore))
 	sb.WriteString("\n")
 	return sb.String()
 }
@@ -878,7 +922,7 @@ func (e *StrategyEngine) formatPositionInfo(index int, pos PositionInfo, ctx *Co
 		pos.Leverage, pos.MarginUsed, pos.LiquidationPrice, holdingDuration))
 
 	if marketData, ok := ctx.MarketDataMap[pos.Symbol]; ok {
-		sb.WriteString(e.formatMarketData(marketData))
+		sb.WriteString(e.formatMarketData(marketData, true))
 
 		if ctx.QuantDataMap != nil {
 			if quantData, hasQuant := ctx.QuantDataMap[pos.Symbol]; hasQuant {
@@ -953,27 +997,23 @@ func (e *StrategyEngine) formatCoinSourceTag(sources []string) string {
 // Market Data Formatting
 // ============================================================================
 
-func (e *StrategyEngine) formatMarketData(data *market.Data) string {
+// formatMarketData renders one symbol's data block. fullKlines controls
+// whether every timeframe carries its full candle table: positions get the
+// full picture, while candidates trim secondary timeframes to their
+// indicator series (the primary timeframe keeps its table) to keep the prompt
+// from growing linearly with candidate count.
+func (e *StrategyEngine) formatMarketData(data *market.Data, fullKlines bool) string {
 	var sb strings.Builder
 	indicators := e.config.Indicators
 
 	// Clearly label the coin symbol
 	sb.WriteString(fmt.Sprintf("=== %s Market Data ===\n\n", data.Symbol))
-	sb.WriteString(fmt.Sprintf("current_price = %.4f", data.CurrentPrice))
-
-	if indicators.EnableEMA {
-		sb.WriteString(fmt.Sprintf(", current_ema20 = %.3f", data.CurrentEMA20))
-	}
-
-	if indicators.EnableMACD {
-		sb.WriteString(fmt.Sprintf(", current_macd = %.3f", data.CurrentMACD))
-	}
-
-	if indicators.EnableRSI {
-		sb.WriteString(fmt.Sprintf(", current_rsi7 = %.3f", data.CurrentRSI7))
-	}
-
-	sb.WriteString("\n\n")
+	// current_price only: the fixed-period current_ema20/current_macd/
+	// current_rsi7 readouts that used to follow contradicted the
+	// configured-period series printed below (e.g. EMA(30) when the strategy
+	// set ema_periods=[30, 100]), so the model saw two different values for
+	// the "same" indicator.
+	sb.WriteString(fmt.Sprintf("current_price = %.4f\n\n", data.CurrentPrice))
 
 	if indicators.EnableOI || indicators.EnableFundingRate {
 		sb.WriteString(fmt.Sprintf("Additional data for %s:\n\n", data.Symbol))
@@ -989,11 +1029,17 @@ func (e *StrategyEngine) formatMarketData(data *market.Data) string {
 	}
 
 	if len(data.TimeframeData) > 0 {
+		primaryTimeframe := strings.TrimSpace(indicators.Klines.PrimaryTimeframe)
 		timeframeOrder := []string{"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "3d", "1w"}
 		for _, tf := range timeframeOrder {
 			if tfData, ok := data.TimeframeData[tf]; ok {
-				sb.WriteString(fmt.Sprintf("=== %s Timeframe (oldest → latest) ===\n\n", strings.ToUpper(tf)))
-				e.formatTimeframeSeriesData(&sb, tfData, indicators)
+				includeKlines := fullKlines || primaryTimeframe == "" || tf == primaryTimeframe
+				if includeKlines {
+					sb.WriteString(fmt.Sprintf("=== %s Timeframe (oldest → latest) ===\n\n", strings.ToUpper(tf)))
+				} else {
+					sb.WriteString(fmt.Sprintf("=== %s Timeframe (indicator series, oldest → latest) ===\n\n", strings.ToUpper(tf)))
+				}
+				e.formatTimeframeSeriesData(&sb, tfData, indicators, includeKlines)
 			}
 		}
 	} else {
@@ -1101,20 +1147,26 @@ func writeConfiguredIndicators(sb *strings.Builder, series []market.IndicatorSer
 	return wrote
 }
 
-func (e *StrategyEngine) formatTimeframeSeriesData(sb *strings.Builder, data *market.TimeframeSeriesData, indicators store.IndicatorConfig) {
+func (e *StrategyEngine) formatTimeframeSeriesData(sb *strings.Builder, data *market.TimeframeSeriesData, indicators store.IndicatorConfig, includeKlines bool) {
 	if len(data.Klines) > 0 {
-		sb.WriteString("Time(UTC)      Open      High      Low       Close     Volume\n")
-		for i, k := range data.Klines {
-			t := time.Unix(k.Time/1000, 0).UTC()
-			timeStr := t.Format("01-02 15:04")
-			marker := ""
-			if i == len(data.Klines)-1 {
-				marker = "  <- current"
+		// Compact CSV rows instead of fixed-width columns: same data, roughly
+		// 40% fewer characters, and enough significant digits for low-priced
+		// coins (the old %-9.4f printed 0.0000 below 0.0001).
+		if includeKlines {
+			sb.WriteString("Time(UTC),Open,High,Low,Close,Volume\n")
+			for i, k := range data.Klines {
+				marker := ""
+				if i == len(data.Klines)-1 {
+					marker = ",<- current"
+				}
+				sb.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s,%.2f%s\n",
+					time.Unix(k.Time/1000, 0).UTC().Format("01-02 15:04"),
+					formatCompactPrice(k.Open), formatCompactPrice(k.High),
+					formatCompactPrice(k.Low), formatCompactPrice(k.Close),
+					k.Volume, marker))
 			}
-			sb.WriteString(fmt.Sprintf("%-14s %-9.4f %-9.4f %-9.4f %-9.4f %-12.2f%s\n",
-				timeStr, k.Open, k.High, k.Low, k.Close, k.Volume, marker))
+			sb.WriteString("\n")
 		}
-		sb.WriteString("\n")
 	} else if len(data.MidPrices) > 0 {
 		sb.WriteString(fmt.Sprintf("Mid prices: %s\n\n", formatFloatSlice(data.MidPrices)))
 		if indicators.EnableVolume && len(data.Volume) > 0 {
@@ -1181,6 +1233,21 @@ func (e *StrategyEngine) formatTimeframeSeriesData(sb *strings.Builder, data *ma
 	}
 
 	sb.WriteString("\n")
+}
+
+// formatCompactPrice renders a price without padding, with enough
+// significant digits for low-priced coins.
+func formatCompactPrice(v float64) string {
+	switch {
+	case v == 0:
+		return "0"
+	case math.Abs(v) >= 1:
+		return strconv.FormatFloat(v, 'f', 4, 64)
+	case math.Abs(v) >= 0.01:
+		return strconv.FormatFloat(v, 'f', 5, 64)
+	default:
+		return strconv.FormatFloat(v, 'f', 8, 64)
+	}
 }
 
 func (e *StrategyEngine) formatQuantData(data *QuantData) string {
