@@ -47,6 +47,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only to keep the prompt budget in check. Configure via `adx_periods` (default [14]),
   `supertrend_period` / `supertrend_multiplier` (default 10 / 3.0), and enable with
   `enable_adx` / `enable_supertrend`.
+- The system prompt now carries an **indicator confluence playbook** generated for the
+  ENABLED indicators only, so the model is never told to confirm with data it does not
+  receive. Rules are role-based — trend gate (ADX/DI, Supertrend, EMA) → momentum (MACD,
+  RSI) → entry timing (Bollinger Bands) → risk/sizing (ATR) → confirmation (volume, OI,
+  funding) → execution quality (microstructure) — and end with the principle that a single
+  indicator is never a reason to enter. ADX and Supertrend are also listed among the
+  available inputs.
 
 ### Changed
 - Reorganized documentation structure into logical categories

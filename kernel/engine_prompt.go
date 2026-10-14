@@ -99,6 +99,7 @@ func (e *StrategyEngine) BuildSystemPrompt(accountEquity float64, variant string
 			sb.WriteString("\n\nYou have the following indicator data:\n")
 		}
 		e.writeAvailableIndicators(&sb, zh)
+		e.writeIndicatorPlaybook(&sb, zh)
 		if zh {
 			sb.WriteString(fmt.Sprintf("\n**置信度 ≥ %d** 才能开仓。\n\n", riskControl.MinConfidence))
 		} else {
@@ -108,11 +109,13 @@ func (e *StrategyEngine) BuildSystemPrompt(accountEquity float64, variant string
 		sb.WriteString("# 🎯 入场标准 (严格)\n\n")
 		sb.WriteString("只有当多重信号共振时才开仓。你拥有:\n")
 		e.writeAvailableIndicators(&sb, zh)
+		e.writeIndicatorPlaybook(&sb, zh)
 		sb.WriteString(fmt.Sprintf("\n请自由使用任何有效的分析方法, 但**置信度 ≥ %d** 才能开仓; 避免低质量行为, 如单一指标、信号矛盾、横盘震荡、平仓后立刻再开等。\n\n", riskControl.MinConfidence))
 	} else {
 		sb.WriteString("# 🎯 Entry Standards (Strict)\n\n")
 		sb.WriteString("Only open positions when multiple signals resonate. You have:\n")
 		e.writeAvailableIndicators(&sb, zh)
+		e.writeIndicatorPlaybook(&sb, zh)
 		sb.WriteString(fmt.Sprintf("\nFeel free to use any effective analysis method, but **confidence ≥ %d** is required to open positions; avoid low-quality behaviors such as single-indicator entries, contradictory signals, sideways chop, or re-entering immediately after a close.\n\n", riskControl.MinConfidence))
 	}
 
@@ -485,6 +488,22 @@ func (e *StrategyEngine) writeAvailableIndicators(sb *strings.Builder, zh bool) 
 		}
 		sb.WriteString("\n")
 	}
+	if indicators.EnableADX {
+		sb.WriteString("- " + label("ADX (trend strength) with DI+ / DI- (direction)", "ADX (趋势强度) 含 DI+ / DI- (方向)"))
+		if len(indicators.ADXPeriods) > 0 {
+			sb.WriteString(fmt.Sprintf(" (%s: %v)", label("periods", "周期"), indicators.ADXPeriods))
+		}
+		sb.WriteString("\n")
+	}
+	if indicators.EnableSupertrend {
+		sb.WriteString("- " + label("Supertrend (trailing band + direction)", "Supertrend 趋势带 (含方向)"))
+		if indicators.SupertrendPeriod > 0 {
+			sb.WriteString(fmt.Sprintf(" (%s: %d, %s: %.1f)",
+				label("period", "周期"), indicators.SupertrendPeriod,
+				label("multiplier", "倍数"), indicators.SupertrendMultiplier))
+		}
+		sb.WriteString("\n")
+	}
 	if indicators.EnableVolume {
 		sb.WriteString("- " + label("Volume data", "成交量数据") + "\n")
 	}
@@ -500,6 +519,125 @@ func (e *StrategyEngine) writeAvailableIndicators(sb *strings.Builder, zh bool) 
 	if indicators.EnableQuantData {
 		sb.WriteString("- " + label("Quantitative data (institutional/retail fund flow, position changes, multi-period price changes)", "量化数据 (机构/散户资金流, 持仓变化, 多周期价格变动)") + "\n")
 	}
+}
+
+// writeIndicatorPlaybook emits role-based combination rules for the ENABLED
+// indicators only. Rules must never reference data the model does not
+// receive: a prompt that tells the model to "confirm with ADX" while ADX is
+// disabled produces hallucinated confirmation. Roles are fixed (trend gate →
+// momentum → timing → risk → confirmation → execution quality) so the model
+// weighs a signal instead of acting on one indicator alone.
+func (e *StrategyEngine) writeIndicatorPlaybook(sb *strings.Builder, zh bool) {
+	ind := e.config.Indicators
+	microEnabled := ind.EnableMicrostructure == nil || *ind.EnableMicrostructure
+	l := func(en, zhStr string) string {
+		if zh {
+			return zhStr
+		}
+		return en
+	}
+
+	type group struct {
+		title string
+		lines []string
+	}
+	var groups []group
+	addGroup := func(title string, lines []string) {
+		if len(lines) > 0 {
+			groups = append(groups, group{title: title, lines: lines})
+		}
+	}
+
+	var gate []string
+	if ind.EnableADX {
+		gate = append(gate, l(
+			"ADX gauges regime: > 25 = trending, < 20 = range/chop where breakout entries are low quality. DI+ above DI- = bullish side, below = bearish.",
+			"ADX 判断市场状态：> 25 为趋势市，< 20 为震荡市（此时突破入场质量差）。DI+ 高于 DI- 为多头方向，反之空头。"))
+	}
+	if ind.EnableSupertrend {
+		gate = append(gate, l(
+			"Supertrend direction (+1 up / -1 down) sets the allowed side; a fresh flip is an entry/exit reference and the band trails as a stop.",
+			"Supertrend 方向（+1 上行 / -1 下行）决定允许的持仓方向；刚翻转可作为入场/离场参考，带值可当移动止损。"))
+	}
+	if ind.EnableEMA {
+		gate = append(gate, l(
+			"Price above the EMA set = bullish structure, below = bearish; a cross against your position argues for reducing.",
+			"价格位于 EMA 组之上为多头结构，之下为空头结构；EMA 反向交叉应减仓。"))
+	}
+	addGroup(l("Trend gate — decides side / stand-aside", "趋势判断 — 决定方向 / 观望"), gate)
+
+	var momentum []string
+	if ind.EnableMACD {
+		momentum = append(momentum, l(
+			"MACD crossing its signal/zero line in your direction with an expanding histogram confirms momentum; a shrinking histogram or price/MACD divergence against you argues for restraint.",
+			"MACD 同向穿越信号线/零轴且柱体放大，确认动能；柱体收缩或价格与 MACD 背离时应克制。"))
+	}
+	if ind.EnableRSI {
+		momentum = append(momentum, l(
+			"RSI extremes persist in strong trends — never fade a trend on RSI alone; RSI divergence against your position is a warning, not a reversal signal.",
+			"强趋势中 RSI 可长期处于极值：不要仅凭 RSI 逆势；RSI 与价格背离是警告，不是反转信号。"))
+	}
+	addGroup(l("Momentum confirmation", "动能确认"), momentum)
+
+	var timing []string
+	if ind.EnableBOLL {
+		timing = append(timing, l(
+			"Bollinger Bands time entries: in an uptrend a pullback toward the middle/lower band is an entry zone (mirror for shorts); a squeeze (narrowing bands) precedes expansion — only trade the breakout in the trend gate's direction.",
+			"布林带用于择时：上升趋势中回调至中轨/下轨是入场区（做空镜像）；带宽收窄（挤压）预示变盘——只顺势交易突破方向。"))
+	}
+	addGroup(l("Entry timing", "入场时机"), timing)
+
+	var risk []string
+	if ind.EnableATR {
+		risk = append(risk, l(
+			"Size stops from ATR (roughly 1.5-2x ATR beyond entry) and cut size when ATR expands sharply.",
+			"以 ATR 设置止损距离（约入场价外 1.5-2 倍 ATR）；ATR 急剧放大时降低仓位。"))
+	}
+	addGroup(l("Risk / sizing", "风险与仓位"), risk)
+
+	var confirmation []string
+	if ind.EnableVolume {
+		confirmation = append(confirmation, l(
+			"Breakouts need volume expansion; low-volume moves fade.",
+			"突破需要成交量放大确认；缩量突破易失败。"))
+	}
+	if ind.EnableOI {
+		confirmation = append(confirmation, l(
+			"Rising OI with rising price = new money supporting the trend; OI spiking while price stalls = crowded, reduce.",
+			"持仓量随价格同涨为增量资金入场；价格滞涨而持仓量骤增说明拥挤，应减仓。"))
+	}
+	if ind.EnableFundingRate {
+		confirmation = append(confirmation, l(
+			"Extreme funding marks crowded positioning — avoid chasing in that direction.",
+			"资金费率极端代表持仓拥挤——避免在该方向追单。"))
+	}
+	addGroup(l("Confirmation", "信号确认"), confirmation)
+
+	var execution []string
+	if microEnabled {
+		execution = append(execution, l(
+			"Microstructure: a wide spread or low liquidity score argues against market chasing; book imbalance is short-term pressure only, never the trend reason.",
+			"微观结构：价差过宽或流动性评分过低时不要市价追单；盘口失衡只代表短期压力，不构成趋势理由。"))
+	}
+	addGroup(l("Execution quality", "执行质量"), execution)
+
+	if len(groups) == 0 {
+		return
+	}
+
+	sb.WriteString(l("# 🔗 Indicator Confluence Rules (enabled indicators only)", "# 🔗 指标协同规则（仅针对已启用指标）") + "\n\n")
+	for gi, g := range groups {
+		if gi > 0 {
+			sb.WriteString("\n")
+		}
+		sb.WriteString("**" + g.title + "**\n")
+		for _, line := range g.lines {
+			sb.WriteString("- " + line + "\n")
+		}
+	}
+	sb.WriteString(l(
+		"\nPrinciple: a single indicator is never a reason to enter. When the enabled indicators conflict, stand aside or take the smallest position; enter when they align with the trend gate.\n\n",
+		"\n原则：单一指标不构成入场理由。已启用指标相互矛盾时观望或取最小仓位；与趋势判断同向共振时才入场。\n\n"))
 }
 
 // ============================================================================

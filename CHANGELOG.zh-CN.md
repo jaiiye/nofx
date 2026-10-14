@@ -42,6 +42,11 @@ NOFX 项目的所有重要更改都将记录在此文件中。
   ADX/Supertrend 仅输出主时间帧。通过 `adx_periods`（默认 [14]）、
   `supertrend_period` / `supertrend_multiplier`（默认 10 / 3.0）配置，用
   `enable_adx` / `enable_supertrend` 开启。
+- 系统 prompt 新增**指标协同规则**，且仅针对**已启用**的指标生成——模型绝不会被要求用
+  它收不到的数据做确认。规则按角色组织：趋势判断（ADX/DI、Supertrend、EMA）→ 动能确认
+  （MACD、RSI）→ 入场时机（布林带）→ 风险与仓位（ATR）→ 信号确认（成交量、持仓量、
+  资金费）→ 执行质量（微观结构），并以"单一指标不构成入场理由"作结。ADX 与 Supertrend
+  也已加入可用指标清单。
 
 ### 变更
 - 重组文档结构为逻辑分类
