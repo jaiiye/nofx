@@ -93,6 +93,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bot uses the same model selection as the web agent.
 
 ### Fixed
+- Hyperliquid xyz dex (HIP-3) orders are now judged against the pool they actually settle
+  against. The xyz dex keeps its own USDC margin account, separate from the main perp
+  account, so sizing an `xyz:*` order off the combined equity could approve an order the
+  venue then rejects with `Insufficient margin to place order` (observed live on
+  `xyz:SILVER`). Available/equity for xyz symbols now come from the dex's own free margin and
+  equity; other symbols are unchanged. The dex's free margin is also exposed as
+  `xyzDexAvailable` (the `withdrawable` field was parsed but never surfaced), an opening order
+  on an empty dex fails early with an actionable message ("transfer USDC into the xyz dex"),
+  and the raw venue rejection is wrapped with the same guidance. Leverage for xyz assets is
+  now attempted via a hand-signed HIP-3 `updateLeverage` (failure logs and proceeds on the
+  venue default — HIP-3 leverage support is not documented and this path is pending live
+  verification).
 - Bollinger Bands now actually use the configured `boll_periods` and the new
   `boll_multiplier` (default 2.0). Previously the period was only echoed into the prompt as
   text while the computed bands stayed hardcoded at 20 / 2.0 — the same dead-configuration

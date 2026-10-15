@@ -112,17 +112,19 @@ func (t *HyperliquidTrader) GetBalance() (map[string]interface{}, error) {
 	}
 
 	// Step 5: Query xyz dex balance (stock perps, forex, commodities)
-	var xyzAccountValue, xyzUnrealizedPnl float64
-	var xyzPositions []xyzAssetPosition
-	xyzAccountValue, xyzUnrealizedPnl, xyzPositions, err = t.getXYZDexBalance()
+	// The xyz dex (HIP-3) keeps its own USDC margin pool: perp/spot/xyz funds
+	// are separate accounts and require manual transfers between them.
+	var xyzBal *xyzDexBalance
+	xyzBal, err = t.getXYZDexBalance()
 	if err != nil {
 		// xyz dex query failed - log warning but don't fail the entire balance query
 		logger.Infof("⚠️ Failed to query xyz dex balance: %v", err)
+		xyzBal = &xyzDexBalance{}
 	}
 	// Always log xyz dex state for debugging
-	logger.Infof("🔍 xyz dex state: accountValue=%.4f, unrealizedPnl=%.4f, positions=%d",
-		xyzAccountValue, xyzUnrealizedPnl, len(xyzPositions))
-	for _, pos := range xyzPositions {
+	logger.Infof("🔍 xyz dex state: accountValue=%.4f, withdrawable=%.4f, unrealizedPnl=%.4f, positions=%d",
+		xyzBal.AccountValue, xyzBal.Withdrawable, xyzBal.UnrealizedPnL, len(xyzBal.Positions))
+	for _, pos := range xyzBal.Positions {
 		entryPx := "nil"
 		if pos.Position.EntryPx != nil {
 			entryPx = *pos.Position.EntryPx
@@ -130,16 +132,16 @@ func (t *HyperliquidTrader) GetBalance() (map[string]interface{}, error) {
 		logger.Infof("   └─ %s: size=%s, entryPx=%s, posValue=%s, pnl=%s",
 			pos.Position.Coin, pos.Position.Szi, entryPx, pos.Position.PositionValue, pos.Position.UnrealizedPnl)
 	}
-	xyzWalletBalance := xyzAccountValue - xyzUnrealizedPnl
+	xyzWalletBalance := xyzBal.AccountValue - xyzBal.UnrealizedPnL
 
 	// Step 6: Correctly handle Spot + Perpetuals + xyz dex balance
 	// Important: Each account is independent, manual transfers required
 	totalWalletBalance := walletBalanceWithoutUnrealized + spotUSDCBalance + xyzWalletBalance
-	totalUnrealizedPnlAll := totalUnrealizedPnl + xyzUnrealizedPnl
+	totalUnrealizedPnlAll := totalUnrealizedPnl + xyzBal.UnrealizedPnL
 
 	// Calculate total equity properly: perpAccountValue + spotUSDCBalance + xyzAccountValue
 	// Note: totalWalletBalance + totalUnrealizedPnlAll should equal this
-	totalEquityCalculated := accountValue + spotUSDCBalance + xyzAccountValue
+	totalEquityCalculated := accountValue + spotUSDCBalance + xyzBal.AccountValue
 
 	// Step 7: Unified Account mode - Spot USDC is used as collateral for Perps
 	// In this mode, available balance includes Spot USDC since it can be used for Perp margin
@@ -158,8 +160,9 @@ func (t *HyperliquidTrader) GetBalance() (map[string]interface{}, error) {
 	result["availableBalance"] = availableBalance           // Available balance (Perp + Spot if unified)
 	result["totalUnrealizedProfit"] = totalUnrealizedPnlAll // Unrealized PnL (Perpetuals + xyz)
 	result["spotBalance"] = spotUSDCBalance                 // Spot balance
-	result["xyzDexBalance"] = xyzAccountValue               // xyz dex equity (stock perps, forex, commodities)
-	result["xyzDexUnrealizedPnl"] = xyzUnrealizedPnl        // xyz dex unrealized PnL
+	result["xyzDexBalance"] = xyzBal.AccountValue           // xyz dex equity (stock perps, forex, commodities)
+	result["xyzDexAvailable"] = xyzBal.Withdrawable         // xyz dex FREE margin — the pool that xyz orders settle against
+	result["xyzDexUnrealizedPnl"] = xyzBal.UnrealizedPnL    // xyz dex unrealized PnL
 	result["perpAccountValue"] = accountValue               // Perp account value for debugging
 
 	logger.Infof("✓ Hyperliquid complete account:")
@@ -170,13 +173,14 @@ func (t *HyperliquidTrader) GetBalance() (map[string]interface{}, error) {
 		totalUnrealizedPnl)
 	logger.Infof("  • Perpetuals available balance: %.2f USDC", availableBalance)
 	logger.Infof("  • Margin used: %.2f USDC", totalMarginUsed)
-	logger.Infof("  • xyz dex equity: %.2f USDC (wallet %.2f + unrealized %.2f)",
-		xyzAccountValue,
+	logger.Infof("  • xyz dex equity: %.2f USDC (wallet %.2f + unrealized %.2f), available %.2f",
+		xyzBal.AccountValue,
 		xyzWalletBalance,
-		xyzUnrealizedPnl)
+		xyzBal.UnrealizedPnL,
+		xyzBal.Withdrawable)
 	logger.Infof("  • Total assets (Perp+Spot+xyz): %.2f USDC", totalWalletBalance)
-	logger.Infof("  ⭐ Total: %.2f USDC | Perp: %.2f | Spot: %.2f | xyz: %.2f",
-		totalWalletBalance, availableBalance, spotUSDCBalance, xyzAccountValue)
+	logger.Infof("  ⭐ Total: %.2f USDC | Perp avail: %.2f | Spot: %.2f | xyz: %.2f (avail %.2f)",
+		totalWalletBalance, availableBalance, spotUSDCBalance, xyzBal.AccountValue, xyzBal.Withdrawable)
 
 	return result, nil
 }
@@ -187,6 +191,17 @@ type xyzDexState struct {
 	CrossMarginSummary *xyzMarginSummary  `json:"crossMarginSummary,omitempty"`
 	Withdrawable       string             `json:"withdrawable,omitempty"`
 	AssetPositions     []xyzAssetPosition `json:"assetPositions,omitempty"`
+}
+
+// xyzDexBalance is the parsed margin state of the xyz (HIP-3) perp dex. Its
+// USDC pool is independent of the main perp account, which is why orders on
+// xyz assets are judged against Withdrawable here rather than against the
+// account's combined equity.
+type xyzDexBalance struct {
+	AccountValue  float64 // equity, including unrealized PnL
+	Withdrawable  float64 // free USDC available to open new xyz orders
+	UnrealizedPnL float64
+	Positions     []xyzAssetPosition
 }
 
 type xyzMarginSummary struct {
@@ -210,7 +225,7 @@ type xyzAssetPosition struct {
 }
 
 // getXYZDexBalance queries the xyz dex balance (stock perps, forex, commodities)
-func (t *HyperliquidTrader) getXYZDexBalance() (accountValue float64, unrealizedPnl float64, positions []xyzAssetPosition, err error) {
+func (t *HyperliquidTrader) getXYZDexBalance() (*xyzDexBalance, error) {
 	// Build request for xyz dex clearinghouse state
 	reqBody := map[string]interface{}{
 		"type": "clearinghouseState",
@@ -220,7 +235,7 @@ func (t *HyperliquidTrader) getXYZDexBalance() (accountValue float64, unrealized
 
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
-		return 0, 0, nil, fmt.Errorf("failed to marshal request: %w", err)
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
 	// Determine API URL
@@ -229,51 +244,66 @@ func (t *HyperliquidTrader) getXYZDexBalance() (accountValue float64, unrealized
 
 	req, err := http.NewRequestWithContext(t.ctx, "POST", apiURL, bytes.NewBuffer(jsonBody))
 	if err != nil {
-		return 0, 0, nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, 0, nil, fmt.Errorf("failed to execute request: %w", err)
+		return nil, fmt.Errorf("failed to execute request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return 0, 0, nil, fmt.Errorf("failed to read response: %w", err)
+		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return 0, 0, nil, fmt.Errorf("xyz dex API error (status %d): %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("xyz dex API error (status %d): %s", resp.StatusCode, string(body))
 	}
 
 	var state xyzDexState
 	if err := json.Unmarshal(body, &state); err != nil {
-		return 0, 0, nil, fmt.Errorf("failed to parse response: %w", err)
+		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
+
+	bal := &xyzDexBalance{Positions: state.AssetPositions}
 
 	// Parse account value - xyz dex uses MarginSummary for isolated margin mode
 	// CrossMarginSummary may exist but with 0 values, so check MarginSummary first
 	if state.MarginSummary != nil && state.MarginSummary.AccountValue != "" {
 		av, _ := strconv.ParseFloat(state.MarginSummary.AccountValue, 64)
 		if av > 0 {
-			accountValue = av
+			bal.AccountValue = av
 		}
 	}
 	// Fallback to CrossMarginSummary if MarginSummary is 0
-	if accountValue == 0 && state.CrossMarginSummary != nil && state.CrossMarginSummary.AccountValue != "" {
-		accountValue, _ = strconv.ParseFloat(state.CrossMarginSummary.AccountValue, 64)
+	if bal.AccountValue == 0 && state.CrossMarginSummary != nil && state.CrossMarginSummary.AccountValue != "" {
+		bal.AccountValue, _ = strconv.ParseFloat(state.CrossMarginSummary.AccountValue, 64)
+	}
+
+	// Free margin: the venue's own withdrawable figure, falling back to
+	// equity minus used margin when the field is absent.
+	if state.Withdrawable != "" {
+		bal.Withdrawable, _ = strconv.ParseFloat(state.Withdrawable, 64)
+	} else if state.MarginSummary != nil && state.MarginSummary.TotalMarginUsed != "" {
+		if used, usedErr := strconv.ParseFloat(state.MarginSummary.TotalMarginUsed, 64); usedErr == nil {
+			bal.Withdrawable = bal.AccountValue - used
+			if bal.Withdrawable < 0 {
+				bal.Withdrawable = 0
+			}
+		}
 	}
 
 	// Calculate total unrealized PnL from positions
 	for _, pos := range state.AssetPositions {
 		pnl, _ := strconv.ParseFloat(pos.Position.UnrealizedPnl, 64)
-		unrealizedPnl += pnl
+		bal.UnrealizedPnL += pnl
 	}
 
-	return accountValue, unrealizedPnl, state.AssetPositions, nil
+	return bal, nil
 }
 
 // GetMarketPrice gets market price (supports both crypto and xyz dex assets)

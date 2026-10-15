@@ -75,7 +75,7 @@ func (at *AutoTrader) executeOpenLongWithRecord(decision *kernel.Decision, actio
 	if err != nil {
 		return fmt.Errorf("failed to get account balance: %w", err)
 	}
-	equity, availableBalance := accountEquityAndAvailable(balance)
+	equity, availableBalance := accountEquityAndAvailableFor(balance, decision.Symbol)
 
 	// [CODE ENFORCED] Unified pre-trade risk gate: protections, max positions,
 	// position-value cap, balance sufficiency, min size, max margin usage and
@@ -166,7 +166,7 @@ func (at *AutoTrader) executeOpenShortWithRecord(decision *kernel.Decision, acti
 	if err != nil {
 		return fmt.Errorf("failed to get account balance: %w", err)
 	}
-	equity, availableBalance := accountEquityAndAvailable(balance)
+	equity, availableBalance := accountEquityAndAvailableFor(balance, decision.Symbol)
 
 	// [CODE ENFORCED] Unified pre-trade risk gate: protections, max positions,
 	// position-value cap, balance sufficiency, min size, max margin usage and

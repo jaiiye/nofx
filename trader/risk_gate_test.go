@@ -176,3 +176,41 @@ func TestNormalizePosKey(t *testing.T) {
 		t.Fatalf("pos key should be case-insensitive on side")
 	}
 }
+
+// The xyz dex (HIP-3) settles against its own USDC pool: sizing an xyz order
+// off the combined account equity is what let funded-account orders reach the
+// venue and get rejected for insufficient margin in the dex's own pool.
+func TestAccountEquityAndAvailableForPools(t *testing.T) {
+	balance := map[string]interface{}{
+		"totalEquity":      1500.0, // perp + spot + xyz combined
+		"availableBalance": 900.0,  // main perp pool only
+		"xyzDexBalance":    500.0,  // xyz dex equity
+		"xyzDexAvailable":  40.0,   // xyz dex free margin
+	}
+
+	// Non-xyz symbols keep the main-pool numbers.
+	eq, avail := accountEquityAndAvailableFor(balance, "BTCUSDT")
+	if eq != 1500.0 || avail != 900.0 {
+		t.Fatalf("crypto pool = %.2f/%.2f, want 1500/900", eq, avail)
+	}
+
+	// xyz symbols switch to the dex pool for BOTH equity and available.
+	eq, avail = accountEquityAndAvailableFor(balance, "xyz:SILVER")
+	if eq != 500.0 || avail != 40.0 {
+		t.Fatalf("xyz pool = %.2f/%.2f, want 500/40", eq, avail)
+	}
+}
+
+// Missing xyz fields must not zero the numbers out (older venues/endpoints
+// simply do not return them), and in that case the gate falls back to the
+// main-pool figures rather than denying funding.
+func TestAccountEquityAndAvailableForMissingXyzFields(t *testing.T) {
+	balance := map[string]interface{}{
+		"totalEquity":      1000.0,
+		"availableBalance": 600.0,
+	}
+	eq, avail := accountEquityAndAvailableFor(balance, "xyz:GOLD")
+	if eq != 1000.0 || avail != 600.0 {
+		t.Fatalf("fallback = %.2f/%.2f, want 1000/600", eq, avail)
+	}
+}

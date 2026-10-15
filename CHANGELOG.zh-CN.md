@@ -76,6 +76,14 @@ NOFX 项目的所有重要更改都将记录在此文件中。
   继续使用平铺工具；非管理域工具保持不变。
 
 ### 修复
+- Hyperliquid xyz dex（HIP-3）订单现在按它实际结算的保证金池来判定。xyz dex 拥有独立的 USDC
+  保证金账户（与主永续账户分离），此前的下单额度按"合并权益"计算，会放行交易所随后以
+  `Insufficient margin to place order` 拒绝的订单（实盘在 `xyz:SILVER` 上出现）。现在 xyz 标的
+  的可用额与权益改用该 dex 自身的可用保证金与权益；其它标的逻辑不变。同时暴露了 xyz dex 的
+  可用额 `xyzDexAvailable`（`withdrawable` 字段此前只解析、从未使用）；空池时提前给出可执行
+  报错（"请向 xyz dex 转入 USDC"），交易所的原始拒绝信息也会附带同样的指引。xyz 资产的杠杆
+  改为尝试用手工签名的 HIP-3 `updateLeverage` 下发（失败仅告警并沿用交易所默认杠杆——HIP-3
+  的杠杆支持无公开文档，该路径待实盘验证）。
 - 布林带现在真正使用配置的 `boll_periods` 与新增的 `boll_multiplier`（默认 2.0）。此前周期
   只以文本形式回显到 prompt，实际计算固定为 20 / 2.0 —— 与 EMA/RSI/ATR 之前踩过的是同一个
   "死配置"陷阱。现在 prompt 按真实参数标签输出（`BOLL_UPPER(30,2.5)` …）。

@@ -20,7 +20,7 @@ type RiskGateInput struct {
 	Leverage        int
 	Price           float64
 
-	PositionCount    int
+	PositionCount int
 	// SuccessfulClosesInCycle counts positions successfully closed earlier in
 	// the same decision cycle. Exchange position APIs lag the fills, so the
 	// raw PositionCount still includes just-closed positions — the gate
@@ -185,6 +185,28 @@ func (at *AutoTrader) checkOpenRiskGate(decision *kernel.Decision, positions []m
 		TakerFeeRate:            connector.FeeModelFor(at.exchange).TakerRate(),
 		Config:                  at.config.StrategyConfig,
 	})
+}
+
+// accountEquityAndAvailableFor returns the equity and available balance for
+// the margin pool that the given symbol settles against. xyz dex (HIP-3)
+// assets have their own USDC pool: the venue checks that pool's free margin,
+// so sizing them off the account's combined equity (which includes the main
+// perp pool) would approve orders the venue then rejects for insufficient
+// margin. Everything else keeps the main-pool numbers.
+func accountEquityAndAvailableFor(balance map[string]interface{}, symbol string) (equity, available float64) {
+	equity, available = accountEquityAndAvailable(balance)
+	if !market.IsXyzDexAsset(symbol) {
+		return equity, available
+	}
+	if xyzAvailable, ok := balance["xyzDexAvailable"].(float64); ok {
+		available = xyzAvailable
+	}
+	if xyzEquity, ok := balance["xyzDexBalance"].(float64); ok && xyzEquity > 0 {
+		// Position-value caps derive from equity: for an xyz order that has to
+		// be the dex's own collateral, not the combined account.
+		equity = xyzEquity
+	}
+	return equity, available
 }
 
 // accountEquityAndAvailable extracts equity (with the same fallbacks the

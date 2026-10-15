@@ -94,13 +94,16 @@ func (t *HyperliquidTrader) OpenLong(symbol string, quantity float64, leverage i
 	// Check if this is an xyz dex asset
 	isXyz := strings.HasPrefix(coin, "xyz:")
 
-	// Set leverage (skip for xyz dex as it may not support leverage adjustment)
+	// Set leverage. xyz dex assets take the hand-signed HIP-3 updateLeverage
+	// path; the SDK's name-based lookup predates it. HIP-3 leverage support is
+	// not guaranteed, so a failure only logs and the order proceeds on the
+	// dex's default leverage.
 	if !isXyz {
 		if err := t.SetLeverage(symbol, leverage); err != nil {
 			return nil, err
 		}
-	} else {
-		logger.Infof("  ℹ xyz dex asset %s - using default leverage", coin)
+	} else if err := t.setXyzLeverage(coin, leverage, t.isCrossMargin); err != nil {
+		logger.Infof("  ⚠️ xyz dex %s leverage not applied (%v) - proceeding on the dex's default leverage", coin, err)
 	}
 
 	// Get current price (for market order)
@@ -166,13 +169,14 @@ func (t *HyperliquidTrader) OpenShort(symbol string, quantity float64, leverage 
 	// Check if this is an xyz dex asset
 	isXyz := strings.HasPrefix(coin, "xyz:")
 
-	// Set leverage (skip for xyz dex)
+	// Set leverage. xyz dex assets take the hand-signed HIP-3 updateLeverage
+	// path; a failure only logs and the order proceeds on the dex default.
 	if !isXyz {
 		if err := t.SetLeverage(symbol, leverage); err != nil {
 			return nil, err
 		}
-	} else {
-		logger.Infof("  ℹ xyz dex asset %s - using default leverage", coin)
+	} else if err := t.setXyzLeverage(coin, leverage, t.isCrossMargin); err != nil {
+		logger.Infof("  ⚠️ xyz dex %s leverage not applied (%v) - proceeding on the dex's default leverage", coin, err)
 	}
 
 	// Get current price
@@ -660,16 +664,21 @@ func (t *HyperliquidTrader) placeXyzOrder(coin string, isBuy bool, size float64,
 	}
 
 	// Get asset index from xyz meta (returns 0-based index)
-	metaIndex := t.getXyzAssetIndex(coin)
-	if metaIndex < 0 {
-		return fmt.Errorf("xyz asset %s not found in meta", coin)
+	assetIndex, err := t.xyzAssetIndexFor(coin)
+	if err != nil {
+		return err
 	}
 
-	// HIP-3 perp dex asset index formula: 100000 + perp_dex_index * 10000 + index_in_meta
-	// xyz dex is at perp_dex_index = 1 (verified from perpDexs API: [null, {name:"xyz",...}])
-	// So xyz asset index = 100000 + 1 * 10000 + metaIndex = 110000 + metaIndex
-	const xyzPerpDexIndex = 1
-	assetIndex := 100000 + xyzPerpDexIndex*10000 + metaIndex
+	// Pre-flight (opens only): the xyz dex (HIP-3) settles against its own
+	// USDC pool, so a funded main perp account can still be rejected here.
+	// Catch the empty-pool case with an actionable message instead of sending
+	// a doomed order — and never block a reduce/close, which frees margin.
+	if !reduceOnly {
+		if xyzBal, balErr := t.getXYZDexBalance(); balErr == nil && xyzBal.Withdrawable <= 0 {
+			return fmt.Errorf("xyz dex has no free margin (available %.2f USDC, equity %.2f USDC): the xyz perp dex keeps its own USDC pool, separate from the main perp account — transfer USDC into the xyz dex before opening %s",
+				xyzBal.Withdrawable, xyzBal.AccountValue, coin)
+		}
+	}
 
 	// Round size to correct precision
 	szDecimals := t.getXyzSzDecimals(coin)
@@ -682,9 +691,9 @@ func (t *HyperliquidTrader) placeXyzOrder(coin string, isBuy bool, size float64,
 	// Round price to 5 significant figures
 	roundedPrice := t.roundPriceToSigfigs(price)
 
-	logger.Infof("📝 Placing xyz dex order (direct): %s %s size=%.4f price=%.4f metaIndex=%d assetIndex=%d (formula: 100000 + 1*10000 + %d) reduceOnly=%v",
+	logger.Infof("📝 Placing xyz dex order (direct): %s %s size=%.4f price=%.4f assetIndex=%d reduceOnly=%v",
 		map[bool]string{true: "BUY", false: "SELL"}[isBuy],
-		coin, roundedSize, roundedPrice, metaIndex, assetIndex, metaIndex, reduceOnly)
+		coin, roundedSize, roundedPrice, assetIndex, reduceOnly)
 
 	// Construct OrderWire directly with correct asset index (bypassing SDK's NameToAsset)
 	orderWire := hyperliquid.OrderWire{
@@ -709,53 +718,9 @@ func (t *HyperliquidTrader) placeXyzOrder(coin string, isBuy bool, size float64,
 		Builder:  defaultBuilder,
 	}
 
-	// Sign the action
-	nonce := time.Now().UnixMilli()
-	isMainnet := !t.isTestnet
-	vaultAddress := "" // No vault for personal account
-
-	sig, err := hyperliquid.SignL1Action(t.privateKey, action, vaultAddress, nonce, nil, isMainnet)
+	body, err := t.postXyzExchangeAction(action)
 	if err != nil {
-		return fmt.Errorf("failed to sign xyz dex order: %w", err)
-	}
-
-	// Construct payload for /exchange endpoint
-	payload := map[string]any{
-		"action":    action,
-		"nonce":     nonce,
-		"signature": sig,
-	}
-
-	// Determine API URL
-	apiURL := hyperliquid.MainnetAPIURL
-	if t.isTestnet {
-		apiURL = hyperliquid.TestnetAPIURL
-	}
-
-	// POST to /exchange
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("failed to marshal payload: %w", err)
-	}
-
-	logger.Infof("📤 Sending xyz dex order to %s/exchange", apiURL)
-
-	req, err := http.NewRequestWithContext(t.ctx, http.MethodPost, apiURL+"/exchange", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("failed to read response body: %w", err)
+		return wrapXyzInsufficientMargin(err, coin)
 	}
 
 	// Parse response
@@ -782,12 +747,12 @@ func (t *HyperliquidTrader) placeXyzOrder(coin string, isBuy bool, size float64,
 	if err := json.Unmarshal(body, &result); err != nil {
 		// Try to parse as error response
 		logger.Infof("⚠️  Failed to parse response as success, raw body: %s", string(body))
-		return fmt.Errorf("xyz dex order failed, status=%d, body=%s", resp.StatusCode, string(body))
+		return wrapXyzInsufficientMargin(fmt.Errorf("xyz dex order failed, body=%s", string(body)), coin)
 	}
 
 	// Check for errors in response
 	if result.Status != "ok" {
-		return fmt.Errorf("xyz dex order failed: status=%s, body=%s", result.Status, string(body))
+		return wrapXyzInsufficientMargin(fmt.Errorf("xyz dex order failed: status=%s, body=%s", result.Status, string(body)), coin)
 	}
 
 	// Check order statuses. IOC orders must report a fill — a resting or
@@ -798,7 +763,9 @@ func (t *HyperliquidTrader) placeXyzOrder(coin string, isBuy bool, size float64,
 	}
 	status := result.Response.Data.Statuses[0]
 	if status.Error != nil {
-		return wrapBuilderFeeNotApproved(fmt.Errorf("xyz dex order error (coin=%s, assetIndex=%d, size=%.4f, price=%.4f): %s", coin, assetIndex, roundedSize, roundedPrice, *status.Error))
+		return wrapXyzInsufficientMargin(
+			wrapBuilderFeeNotApproved(fmt.Errorf("xyz dex order error (coin=%s, assetIndex=%d, size=%.4f, price=%.4f): %s", coin, assetIndex, roundedSize, roundedPrice, *status.Error)),
+			coin)
 	}
 	if status.Filled != nil {
 		logger.Infof("✅ xyz dex order filled: totalSz=%s avgPx=%s oid=%d",
@@ -808,6 +775,119 @@ func (t *HyperliquidTrader) placeXyzOrder(coin string, isBuy bool, size float64,
 	}
 
 	logger.Infof("✅ xyz dex order placed successfully: %s (response: %s)", coin, string(body))
+	return nil
+}
+
+// xyzAssetIndexFor resolves the HIP-3 encoded asset index for an xyz dex
+// coin, fetching the dex meta on first use.
+//
+// Formula: 100000 + perp_dex_index * 10000 + index_in_meta. The xyz dex is at
+// perp_dex_index = 1 (verified from the perpDexs API), so xyz assets live at
+// 110000 + metaIndex (e.g. SILVER -> 110026).
+func (t *HyperliquidTrader) xyzAssetIndexFor(coin string) (int, error) {
+	t.xyzMetaMutex.RLock()
+	hasMeta := t.xyzMeta != nil
+	t.xyzMetaMutex.RUnlock()
+
+	if !hasMeta {
+		if err := t.fetchXyzMeta(); err != nil {
+			return 0, fmt.Errorf("failed to fetch xyz meta: %w", err)
+		}
+	}
+
+	metaIndex := t.getXyzAssetIndex(coin)
+	if metaIndex < 0 {
+		return 0, fmt.Errorf("xyz asset %s not found in meta", coin)
+	}
+	const xyzPerpDexIndex = 1
+	return 100000 + xyzPerpDexIndex*10000 + metaIndex, nil
+}
+
+// postXyzExchangeAction signs an action with the L1 signer and POSTs it to the
+// venue's /exchange endpoint, returning the raw response body. It is the
+// shared transport for the hand-rolled xyz dex actions (orders, leverage),
+// which bypass the SDK because its name->asset lookup predates HIP-3.
+func (t *HyperliquidTrader) postXyzExchangeAction(action any) ([]byte, error) {
+	nonce := time.Now().UnixMilli()
+	isMainnet := !t.isTestnet
+	vaultAddress := "" // No vault for personal account
+
+	sig, err := hyperliquid.SignL1Action(t.privateKey, action, vaultAddress, nonce, nil, isMainnet)
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign action: %w", err)
+	}
+
+	jsonData, err := json.Marshal(map[string]any{
+		"action":    action,
+		"nonce":     nonce,
+		"signature": sig,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	apiURL := hyperliquid.MainnetAPIURL
+	if t.isTestnet {
+		apiURL = hyperliquid.TestnetAPIURL
+	}
+
+	req, err := http.NewRequestWithContext(t.ctx, http.MethodPost, apiURL+"/exchange", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("exchange endpoint returned HTTP %d: %s", resp.StatusCode, string(body))
+	}
+	return body, nil
+}
+
+// wrapXyzInsufficientMargin turns the venue's raw "insufficient margin"
+// rejection into guidance: on the xyz dex that message almost always means the
+// dex's own USDC pool needs a deposit, not that the account is empty.
+func wrapXyzInsufficientMargin(err error, coin string) error {
+	if err == nil {
+		return nil
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "insufficient margin") {
+		return fmt.Errorf("%w — the xyz dex (HIP-3) keeps its own USDC margin pool, separate from the main perp account; transfer USDC into the xyz dex or reduce the order size for %s", err, coin)
+	}
+	return err
+}
+
+// setXyzLeverage attempts to set leverage for an xyz dex asset via a
+// hand-signed updateLeverage action carrying the HIP-3 encoded asset index
+// (the SDK's name-based lookup predates HIP-3).
+//
+// HIP-3 leverage updates are not documented as supported for every dex, so
+// callers treat a failure as non-fatal: the order proceeds on the dex's
+// default leverage. The log line tells us whether the venue accepts it.
+func (t *HyperliquidTrader) setXyzLeverage(coin string, leverage int, isCross bool) error {
+	assetIndex, err := t.xyzAssetIndexFor(coin)
+	if err != nil {
+		return err
+	}
+	action := hyperliquid.UpdateLeverageAction{
+		Type:     "updateLeverage",
+		Asset:    assetIndex,
+		IsCross:  isCross,
+		Leverage: leverage,
+	}
+	if _, err := t.postXyzExchangeAction(action); err != nil {
+		return fmt.Errorf("xyz dex updateLeverage failed: %w", err)
+	}
+	logger.Infof("  ✓ xyz dex %s leverage set to %dx (assetIndex=%d)", coin, leverage, assetIndex)
 	return nil
 }
 

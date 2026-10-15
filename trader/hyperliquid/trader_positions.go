@@ -71,12 +71,12 @@ func (t *HyperliquidTrader) GetPositions() ([]map[string]interface{}, error) {
 	}
 
 	// Also get xyz dex positions (stocks, forex, commodities)
-	_, _, xyzPositions, err := t.getXYZDexBalance()
+	xyzBal, err := t.getXYZDexBalance()
 	if err != nil {
 		// xyz dex query failed - log warning but don't fail
 		logger.Infof("⚠️  Failed to get xyz dex positions: %v", err)
 	} else {
-		for _, pos := range xyzPositions {
+		for _, pos := range xyzBal.Positions {
 			posAmt, _ := strconv.ParseFloat(pos.Position.Szi, 64)
 			if posAmt == 0 {
 				continue
