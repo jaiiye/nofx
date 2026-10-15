@@ -26,11 +26,33 @@ const (
 	MaxRiskReward     = 10.0
 	MinMarginUsage    = 0.1
 	MaxMarginUsage    = 1.0
-	MinPositionSize   = 10.0
-	MaxPositionSize   = 1000.0
-	MinConfidence     = 50
-	MaxConfidence     = 100
+	// DefaultMarginUsage is the product default for max margin usage. An unset
+	// or invalid value maps to it, so a missing field can never silently
+	// tighten the cap to MinMarginUsage nor disable the check.
+	DefaultMarginUsage = 0.9
+	MinPositionSize    = 10.0
+	MaxPositionSize    = 1000.0
+	MinConfidence      = 50
+	MaxConfidence      = 100
 )
+
+// NormalizeMarginUsageLimit clamps a max-margin-usage fraction (0.9 = 90%)
+// into the product bounds. Unset or invalid values (<= 0) map to
+// DefaultMarginUsage rather than the minimum: omitting the field must mean
+// "use the default", not "silently cap margin at 10%", and the pre-trade gate
+// uses this same function so no write path can disable the cap with a zero.
+func NormalizeMarginUsageLimit(v float64) float64 {
+	if v <= 0 {
+		return DefaultMarginUsage
+	}
+	if v < MinMarginUsage {
+		return MinMarginUsage
+	}
+	if v > MaxMarginUsage {
+		return MaxMarginUsage
+	}
+	return v
+}
 
 // ClampLimits enforces product-level limits on strategy config to prevent token overflow.
 func (c *StrategyConfig) ClampLimits() {
@@ -114,12 +136,7 @@ func (c *StrategyConfig) ClampLimits() {
 	if c.RiskControl.MinRiskRewardRatio > MaxRiskReward {
 		c.RiskControl.MinRiskRewardRatio = MaxRiskReward
 	}
-	if c.RiskControl.MaxMarginUsage < MinMarginUsage {
-		c.RiskControl.MaxMarginUsage = MinMarginUsage
-	}
-	if c.RiskControl.MaxMarginUsage > MaxMarginUsage {
-		c.RiskControl.MaxMarginUsage = MaxMarginUsage
-	}
+	c.RiskControl.MaxMarginUsage = NormalizeMarginUsageLimit(c.RiskControl.MaxMarginUsage)
 	if c.RiskControl.MinPositionSize < MinPositionSize {
 		c.RiskControl.MinPositionSize = MinPositionSize
 	}

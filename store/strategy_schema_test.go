@@ -189,3 +189,35 @@ func TestStrategyConfigNormalizeProductSchemaForLLMLabels(t *testing.T) {
 		}
 	}
 }
+
+// A missing/invalid margin-usage value must mean "use the product default",
+// not "silently cap at 10%" and never "skip the cap". The pre-trade gate calls
+// the same function, so a zero written by any path cannot disable the check.
+func TestNormalizeMarginUsageLimit(t *testing.T) {
+	cases := []struct {
+		in   float64
+		want float64
+	}{
+		{0, DefaultMarginUsage},
+		{-0.5, DefaultMarginUsage},
+		{0.05, MinMarginUsage},
+		{0.1, 0.1},
+		{0.45, 0.45},
+		{0.9, 0.9},
+		{1.0, 1.0},
+		{1.5, MaxMarginUsage},
+	}
+	for _, tc := range cases {
+		if got := NormalizeMarginUsageLimit(tc.in); got != tc.want {
+			t.Errorf("NormalizeMarginUsageLimit(%v) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+
+	// ClampLimits (the save-path normalizer) applies the same mapping.
+	cfg := GetDefaultStrategyConfig("en")
+	cfg.RiskControl.MaxMarginUsage = 0
+	cfg.ClampLimits()
+	if cfg.RiskControl.MaxMarginUsage != DefaultMarginUsage {
+		t.Errorf("ClampLimits(0) = %v, want %v", cfg.RiskControl.MaxMarginUsage, DefaultMarginUsage)
+	}
+}

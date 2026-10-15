@@ -214,3 +214,36 @@ func TestAccountEquityAndAvailableForMissingXyzFields(t *testing.T) {
 		t.Fatalf("fallback = %.2f/%.2f, want 1000/600", eq, avail)
 	}
 }
+
+// A zero max-margin-usage must NOT disable the cap: the gate normalizes it to
+// the product default, so configs written by a path that skipped ClampLimits
+// still cannot trade past the default limit.
+func TestEvaluateRiskGateMarginUsageZeroValueStillEnforced(t *testing.T) {
+	cfg := baseRiskConfig()
+	cfg.RiskControl.MaxMarginUsage = 0 // previously skipped the whole check
+
+	allowed := RiskGateInput{Action: "open_long", Symbol: "SOLUSDT", PositionSizeUSD: 800, Leverage: 1,
+		Equity: 1000, AvailableBalance: 100000, Config: cfg}
+	if res := EvaluateRiskGate(allowed); !res.Allowed {
+		t.Fatalf("80%% projected margin should be allowed under the 90%% default, got: %s", res.Reason)
+	}
+
+	rejected := RiskGateInput{Action: "open_long", Symbol: "SOLUSDT", PositionSizeUSD: 950, Leverage: 1,
+		Equity: 1000, AvailableBalance: 100000, Config: cfg}
+	if res := EvaluateRiskGate(rejected); res.Allowed {
+		t.Fatal("95% projected margin must be rejected under the 90% default")
+	}
+}
+
+// An explicit user value is respected (and clamped) between 10% and 100%.
+func TestEvaluateRiskGateMarginUsageEditableValue(t *testing.T) {
+	cfg := baseRiskConfig()
+	cfg.RiskControl.MaxMarginUsage = 0.3 // user set 30%
+
+	in := RiskGateInput{Action: "open_long", Symbol: "SOLUSDT", PositionSizeUSD: 400, Leverage: 1,
+		Equity: 1000, AvailableBalance: 100000, Config: cfg}
+	res := EvaluateRiskGate(in)
+	if res.Allowed {
+		t.Fatal("40% projected margin must be rejected under an explicit 30% cap")
+	}
+}

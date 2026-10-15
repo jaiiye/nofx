@@ -168,7 +168,7 @@ export const riskControl = {
   minRiskReward: { zh: '最小风险回报比', en: 'Min Risk/Reward Ratio', es: 'Ratio Riesgo/Recompensa Mínimo' },
   minRiskRewardDesc: { zh: '开仓要求的最低盈亏比', en: 'Minimum profit ratio for entry', es: 'Ratio mínimo para entrada' },
   maxMarginUsage: { zh: '最大保证金使用率（代码强制）', en: 'Max Margin Usage (CODE ENFORCED)', es: 'Uso Máximo de Margen (CÓDIGO)' },
-  maxMarginUsageDesc: { zh: '保证金使用率上限，由代码强制执行', en: 'Maximum margin utilization, enforced by code', es: 'Límite de margen' },
+  maxMarginUsageDesc: { zh: '保证金使用率上限，可输入 10-100%；超出范围由代码自动收敛', en: 'Margin utilization cap, enter 10-100%; out-of-range values are clamped by code', es: 'Límite de margen, 10-100%; el código ajusta valores fuera de rango' },
   entryRequirements: { zh: '开仓要求', en: 'Entry Requirements', es: 'Requisitos de Entrada' },
   minPositionSize: { zh: '最小开仓金额', en: 'Min Position Size', es: 'Tamaño Mínimo' },
   minPositionSizeDesc: { zh: 'USDT 最小名义价值', en: 'Minimum notional value in USDT', es: 'Valor mínimo en USDT' },

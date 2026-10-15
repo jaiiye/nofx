@@ -56,6 +56,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   available inputs.
 
 ### Changed
+- Max margin usage is now editable in the strategy studio (10–100%, previously a read-only
+  display), while the code stays authoritative: `ClampLimits` normalizes every saved config,
+  and the pre-trade risk gate applies the same `store.NormalizeMarginUsageLimit` before
+  rejecting — so no write path can disable the cap. Unset/invalid values now mean the product
+  default (90%) instead of being silently clamped to the 10% minimum, which also fixes a
+  latent tightening for clients that omitted the field.
 - Prompt optimization (~38% smaller per decision: 37KB → 23KB on the reference
   context). Candle tables use compact CSV rows with significant digits that no longer
   round low-priced coins to `0.0000`; candidate coins keep the full table for the primary

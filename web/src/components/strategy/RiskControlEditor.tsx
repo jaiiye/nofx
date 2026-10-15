@@ -238,8 +238,26 @@ export function RiskControlEditor({
               {ts(riskControl.maxMarginUsageDesc, language)}
             </p>
             <div className="flex items-center gap-2">
-              <span className="w-12 text-center font-mono" style={{ color: '#0ECB81' }}>
-                {Math.round((config.max_margin_usage ?? 0.9) * 100)}%
+              <input
+                type="number"
+                value={Math.round((config.max_margin_usage ?? 0.9) * 100)}
+                onChange={(e) => {
+                  const percent = Number(e.target.value)
+                  updateField('max_margin_usage', Number.isFinite(percent) ? percent / 100 : 0.9)
+                }}
+                disabled={disabled}
+                min={10}
+                max={100}
+                step={5}
+                className="w-20 px-3 py-2 rounded"
+                style={{
+                  background: '#1E2329',
+                  border: '1px solid #2B3139',
+                  color: '#EAECEF',
+                }}
+              />
+              <span className="font-mono" style={{ color: '#0ECB81' }}>
+                %
               </span>
               <span className="text-xs" style={{ color: '#848E9C' }}>
                 System enforced

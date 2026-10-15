@@ -120,8 +120,11 @@ func EvaluateRiskGate(in RiskGateInput) RiskGateResult {
 	}
 
 	// 7. Max margin usage: projected margin must stay within the configured
-	// fraction of equity.
-	if limit := rc.MaxMarginUsage; limit > 0 && in.Equity > 0 {
+	// fraction of equity. The limit is normalized here too — the gate has to
+	// stay authoritative even for configs written by a path that skipped
+	// ClampLimits, where a zero would otherwise skip this check entirely.
+	if in.Equity > 0 {
+		limit := store.NormalizeMarginUsageLimit(rc.MaxMarginUsage)
 		marginNeeded := res.AdjustedSizeUSD / float64(res.AdjustedLeverage)
 		currentMargin := in.MarginUsedPct / 100 * in.Equity
 		projectedPct := (currentMargin + marginNeeded) / in.Equity * 100
