@@ -212,6 +212,20 @@ func (s *TraderStore) ApplyCashFlow(userID, id string, cashFlow, wallet float64,
 		}).Error
 }
 
+// ResetPnLBaseline sets the cash-flow neutral baseline outright and advances the
+// reconciliation point. Used once per trader, when the stored baseline predates
+// this ledger and a deposit made before it would otherwise stay booked as
+// profit forever.
+func (s *TraderStore) ResetPnLBaseline(userID, id string, baseline, wallet float64, atMs int64) error {
+	return s.db.Model(&Trader{}).
+		Where("id = ? AND user_id = ?", id, userID).
+		Updates(map[string]interface{}{
+			"initial_balance":     baseline,
+			"pnl_baseline_wallet": wallet,
+			"pnl_baseline_at_ms":  atMs,
+		}).Error
+}
+
 // AdvancePnLBaseline moves the reconciliation point without adjusting the
 // baseline (no cash flow detected this cycle).
 func (s *TraderStore) AdvancePnLBaseline(userID, id string, wallet float64, atMs int64) error {

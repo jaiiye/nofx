@@ -119,6 +119,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bot uses the same model selection as the web agent.
 
 ### Fixed
+- A deposit made before the cash-flow ledger existed is no longer booked as profit forever. The
+  first reconciliation used to only record the current wallet as the starting point without
+  touching `initial_balance`, so capital added before the ledger stayed inside the baseline: a live
+  account with 75.39 of capital, an 85.97 deposit and a real result of −8.36 kept showing **+99.71%**
+  on the dashboard and in the prompt. The first reconciliation now re-derives the baseline once as
+  wallet − net realized PnL on record (75.39 → 161.36 for that account), logs
+  `💰 PnL baseline repaired` so it can be confirmed, and the incremental reconciliation resumes
+  from there.
+- Equity-curve snapshots written before the baseline was stored per row are reconstructed point by
+  point (that point's wallet − net realized PnL by then) instead of inheriting the current baseline.
+  Applying one baseline to the whole curve showed a deposit as fake profit after it and as a fake
+  loss before it; each segment now reports its own trading result.
 - Indicator values the analysis window cannot produce are omitted from the prompt instead of being
   printed as `0`. A period longer than the available bars used to reach the model as a fabricated
   zero (`ATR(300): 0.0000`, `ADX(14): 0.0`, `SUPERTREND_DIR: 0`), which reads as "zero volatility /

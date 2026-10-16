@@ -152,10 +152,11 @@ func (s *Server) equityHistoryForTrader(traderID string, limit int, configuredBa
 	if fallbackBaseline <= 0 {
 		fallbackBaseline = snapshots[0].Balance
 	}
+	baselines := s.snapshotBaselines(traderID, snapshots, fallbackBaseline)
 
 	history := make([]equityHistoryPoint, 0, len(snapshots))
-	for _, snap := range snapshots {
-		baseline := resolveSnapshotBaseline(snap.InitialBalance, fallbackBaseline)
+	for i, snap := range snapshots {
+		baseline := baselines[i]
 		totalPnL, totalPnLPct := equityPointPnL(snap.TotalEquity, baseline)
 
 		history = append(history, equityHistoryPoint{
@@ -420,19 +421,21 @@ func (s *Server) getEquityHistoryForTraders(traderIDs []string, hours int) map[s
 			continue
 		}
 
-		// Each snapshot is measured against the baseline it was taken with; the
-		// fallback (configured balance, else the first snapshot's equity) covers
-		// rows written before the baseline was stored.
+		// Each snapshot is measured against the baseline it was taken with; rows
+		// written before the baseline was stored are reconstructed from the
+		// realized PnL series (fallback: configured balance, else the first
+		// snapshot's equity).
 		fallbackBaseline := initialBalances[traderID]
 		if fallbackBaseline <= 0 && len(snapshots) > 0 {
 			fallbackBaseline = snapshots[0].TotalEquity
 		}
+		baselines := s.snapshotBaselines(traderID, snapshots, fallbackBaseline)
 
 		// Build return rate historical data with PnL percentage
 		history := make([]map[string]interface{}, 0, len(snapshots)+1)
 		var lastSnapshotTime time.Time
-		for _, snap := range snapshots {
-			baseline := resolveSnapshotBaseline(snap.InitialBalance, fallbackBaseline)
+		for i, snap := range snapshots {
+			baseline := baselines[i]
 			totalPnL, pnlPct := equityPointPnL(snap.TotalEquity, baseline)
 
 			history = append(history, map[string]interface{}{

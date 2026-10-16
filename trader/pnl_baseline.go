@@ -38,6 +38,23 @@ func detectCashFlow(previousWallet, currentWallet, realizedSince float64) (float
 	return drift, true
 }
 
+// deriveBaseline re-derives the cash-flow neutral baseline of a trader whose
+// stored one predates this ledger: money in is the wallet minus the realized PnL
+// on record, so a deposit made before the ledger existed lands in the baseline
+// instead of being reported as profit. It returns ok = false when the stored
+// baseline already matches the wallet (nothing to repair) or when the derived
+// value is not usable as a capital base.
+func deriveBaseline(wallet, netRealizedAll, storedBaseline float64) (float64, bool) {
+	derived := wallet - netRealizedAll
+	if derived <= 0 {
+		return 0, false
+	}
+	if math.Abs(derived-storedBaseline) < cashFlowMateriality(wallet) {
+		return 0, false
+	}
+	return derived, true
+}
+
 // cashFlowLedger is implemented by venue adapters that can report external cash
 // flows exactly (a ledger of deposits/withdrawals/transfers).
 type cashFlowLedger interface {
@@ -77,6 +94,27 @@ func (at *AutoTrader) reconcilePnLBaseline(wallet float64) {
 		}
 	}
 	if at.pnlBaselineAtMs <= 0 {
+		// No reconciliation point was ever stored, so the initial_balance on
+		// record predates this ledger — and a deposit made before it stayed
+		// booked as profit: adopting the wallet below records the starting point
+		// but cannot undo the capital that is already inside it. Re-derive money
+		// in from the wallet and the realized PnL on record instead.
+		if netAll, err := at.store.Position().GetNetRealizedPnLSince(at.id, 0); err != nil {
+			at.logWarnf("⚠ Failed to read realized PnL for the baseline repair: %v", err)
+		} else if derived, ok := deriveBaseline(wallet, netAll, at.initialBalance); ok {
+			nowMs := time.Now().UTC().UnixMilli()
+			if err := at.store.Trader().ResetPnLBaseline(at.userID, at.id, derived, wallet, nowMs); err != nil {
+				at.logWarnf("⚠ Failed to repair the PnL baseline: %v", err)
+			} else {
+				logger.Infof("💰 PnL baseline repaired: %.2f → %.2f (wallet %.2f, realized on record %+.2f) — capital added before the cash-flow ledger is no longer reported as profit",
+					at.initialBalance, derived, wallet, netAll)
+				at.logInfof("💰 PnL baseline repaired from %.2f to %.2f", at.initialBalance, derived)
+				at.initialBalance = derived
+				at.pnlBaselineWallet, at.pnlBaselineAtMs = wallet, nowMs
+				return
+			}
+		}
+
 		// First reconciliation: adopt the current wallet as the starting point.
 		at.pnlBaselineWallet = wallet
 		at.pnlBaselineAtMs = time.Now().UTC().UnixMilli()

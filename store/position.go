@@ -445,6 +445,30 @@ func (s *PositionStore) GetNetRealizedPnLSince(traderID string, sinceMs int64) (
 	return net, nil
 }
 
+// ClosedPnLPt is one closed position's net PnL at its exit time. A chronological
+// series of these lets a caller reconstruct how much realized PnL had
+// accumulated by any moment, which is what reconstructs the PnL baseline of
+// equity points recorded before the baseline was stored per row.
+type ClosedPnLPt struct {
+	ExitTimeMs int64
+	Net        float64
+}
+
+// GetClosedPnLPoints returns the trader's closed positions ordered by exit time
+// (ascending), each carrying its net PnL (realized_pnl - fee - funding_fee).
+func (s *PositionStore) GetClosedPnLPoints(traderID string) ([]ClosedPnLPt, error) {
+	var points []ClosedPnLPt
+	err := s.db.Model(&TraderPosition{}).
+		Select("exit_time AS exit_time_ms, realized_pnl - fee - funding_fee AS net").
+		Where("trader_id = ? AND status = ? AND exit_time > 0", traderID, "CLOSED").
+		Order("exit_time ASC").
+		Scan(&points).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to query closed pnl points: %w", err)
+	}
+	return points, nil
+}
+
 // UpdateLeverage corrects the recorded leverage of an open position.
 // Positions created from an exchange fill stream (OrderSync) carry no leverage,
 // so PositionBuilder writes a placeholder; the trading loop reconciles the real
