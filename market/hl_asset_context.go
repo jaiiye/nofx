@@ -34,20 +34,19 @@ var hlAssetCtxCache struct {
 }
 
 // hyperliquidXYZUniverse returns the HIP-3 asset set learned from the venue,
-// or nil when it has not been populated yet. It never performs I/O: the set is
-// refreshed as a side effect of the asset-context fetch, so hot paths (the
-// risk gate, symbol checks) stay network-free and fall back to the static list.
+// or nil when it has not been populated yet.
+//
+// It never performs I/O (the set is refreshed as a side effect of the
+// asset-context fetch, so hot paths such as symbol checks stay network-free),
+// and it returns the map directly: refreshes replace the whole map instead of
+// mutating it, so a returned reference is an immutable snapshot.
 func hyperliquidXYZUniverse() map[string]bool {
 	hlAssetCtxCache.mu.RLock()
 	defer hlAssetCtxCache.mu.RUnlock()
 	if len(hlAssetCtxCache.xyzUniverse) == 0 {
 		return nil
 	}
-	out := make(map[string]bool, len(hlAssetCtxCache.xyzUniverse))
-	for k := range hlAssetCtxCache.xyzUniverse {
-		out[k] = true
-	}
-	return out
+	return hlAssetCtxCache.xyzUniverse
 }
 
 // hyperliquidAssetCtx returns the venue context for a symbol (normalized), or
@@ -63,9 +62,9 @@ func hyperliquidAssetCtx(symbol string) (hyperliquid.AssetCtx, bool) {
 
 func refreshHyperliquidAssetContexts() {
 	hlAssetCtxCache.mu.RLock()
-	fresh := len(hlAssetCtxCache.bySymbol) > 0 && time.Since(hlAssetCtxCache.fetchedAt) < hlAssetCtxTTL
+	lastAttempt := hlAssetCtxCache.fetchedAt
 	hlAssetCtxCache.mu.RUnlock()
-	if fresh {
+	if !lastAttempt.IsZero() && time.Since(lastAttempt) < hlAssetCtxTTL {
 		return
 	}
 
@@ -94,17 +93,17 @@ func refreshHyperliquidAssetContexts() {
 			}
 		}
 	}
-	if len(merged) == 0 {
-		// Keep the previous snapshot on a total failure rather than blanking
-		// the AI's context.
-		return
-	}
 
 	hlAssetCtxCache.mu.Lock()
-	hlAssetCtxCache.bySymbol = merged
-	if len(xyzUniverse) > 0 {
-		hlAssetCtxCache.xyzUniverse = xyzUniverse
+	if len(merged) > 0 {
+		hlAssetCtxCache.bySymbol = merged
+		if len(xyzUniverse) > 0 {
+			hlAssetCtxCache.xyzUniverse = xyzUniverse
+		}
 	}
+	// Mark the attempt even on failure: otherwise every symbol of every cycle
+	// would pay the request timeout again while the venue is unreachable. The
+	// previous snapshot is kept so the AI's context does not blank out.
 	hlAssetCtxCache.fetchedAt = time.Now()
 	hlAssetCtxCache.mu.Unlock()
 }
