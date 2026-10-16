@@ -38,6 +38,23 @@ func detectCashFlow(previousWallet, currentWallet, realizedSince float64) (float
 	return drift, true
 }
 
+// cashFlowLedger is implemented by venue adapters that can report external cash
+// flows exactly (a ledger of deposits/withdrawals/transfers).
+type cashFlowLedger interface {
+	CashFlowSince(sinceMs int64) (float64, bool)
+}
+
+// externalCashFlowSince resolves the external cash flow for the current window:
+// the venue ledger when available, otherwise the wallet-move heuristic.
+func (at *AutoTrader) externalCashFlowSince(realizedSince, wallet float64) (float64, bool) {
+	if ledger, ok := at.trader.(cashFlowLedger); ok {
+		if flow, exact := ledger.CashFlowSince(at.pnlBaselineAtMs); exact {
+			return flow, math.Abs(flow) >= cashFlowMateriality(wallet)
+		}
+	}
+	return detectCashFlow(at.pnlBaselineWallet, wallet, realizedSince)
+}
+
 // reconcilePnLBaseline detects and applies deposits/withdrawals for this cycle.
 // It must run before the PnL math so the prompt and the UI use the corrected
 // baseline. Paper traders are skipped (no external funding), and the first run
@@ -75,8 +92,13 @@ func (at *AutoTrader) reconcilePnLBaseline(wallet float64) {
 		return
 	}
 
+	// Prefer the venue's own ledger: it reports deposits/withdrawals/transfers
+	// exactly, unlike the wallet-move heuristic which has to tolerate
+	// unrecorded funding and rounding. Venues without a ledger use the
+	// heuristic.
+	cashFlow, detected := at.externalCashFlowSince(realizedSince, wallet)
+
 	nowMs := time.Now().UTC().UnixMilli()
-	cashFlow, detected := detectCashFlow(at.pnlBaselineWallet, wallet, realizedSince)
 	if !detected {
 		at.pnlBaselineWallet = wallet
 		at.pnlBaselineAtMs = nowMs

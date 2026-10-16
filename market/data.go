@@ -581,6 +581,10 @@ var xyzDexAssets = map[string]bool{
 
 // IsXyzDexAsset checks if a symbol is an xyz dex asset
 func IsXyzDexAsset(symbol string) bool {
+	if isXyzDexAssetDynamic(symbol) {
+		return true
+	}
+
 	base := strings.ToUpper(symbol)
 	if strings.HasSuffix(base, "-USDC") || strings.HasPrefix(strings.ToLower(base), "xyz:") {
 		return hyperliquid.IsXYZAsset(base)
@@ -594,6 +598,29 @@ func IsXyzDexAsset(symbol string) bool {
 		}
 	}
 	return xyzDexAssets[base] || hyperliquid.IsXYZAsset(base)
+}
+
+// isXyzDexAssetDynamic consults the asset set learned from the venue, which is
+// authoritative and needs no code change when new HIP-3 assets list. It falls
+// back to the static list when the venue has not been queried yet (or is
+// unreachable), and never performs I/O itself.
+//
+// It deliberately does NOT call Normalize: Normalize consults IsXyzDexAsset,
+// so that would recurse. The key is rebuilt directly instead.
+func isXyzDexAssetDynamic(symbol string) bool {
+	universe := hyperliquidXYZUniverse()
+	if universe == nil {
+		return false
+	}
+	base := strings.ToUpper(strings.TrimSpace(symbol))
+	base = strings.TrimPrefix(base, "XYZ:")
+	for _, suffix := range []string{"USDT", "USD", "-USDC"} {
+		base = strings.TrimSuffix(base, suffix)
+	}
+	if base == "" {
+		return false
+	}
+	return universe["xyz:"+base] || universe[base]
 }
 
 // Normalize normalizes symbol

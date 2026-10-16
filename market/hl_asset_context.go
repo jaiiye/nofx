@@ -2,6 +2,7 @@ package market
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,9 +27,27 @@ import (
 const hlAssetCtxTTL = 60 * time.Second
 
 var hlAssetCtxCache struct {
-	mu        sync.RWMutex
-	bySymbol  map[string]hyperliquid.AssetCtx
-	fetchedAt time.Time
+	mu          sync.RWMutex
+	bySymbol    map[string]hyperliquid.AssetCtx
+	xyzUniverse map[string]bool // symbols the HIP-3 dex lists, normalized
+	fetchedAt   time.Time
+}
+
+// hyperliquidXYZUniverse returns the HIP-3 asset set learned from the venue,
+// or nil when it has not been populated yet. It never performs I/O: the set is
+// refreshed as a side effect of the asset-context fetch, so hot paths (the
+// risk gate, symbol checks) stay network-free and fall back to the static list.
+func hyperliquidXYZUniverse() map[string]bool {
+	hlAssetCtxCache.mu.RLock()
+	defer hlAssetCtxCache.mu.RUnlock()
+	if len(hlAssetCtxCache.xyzUniverse) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(hlAssetCtxCache.xyzUniverse))
+	for k := range hlAssetCtxCache.xyzUniverse {
+		out[k] = true
+	}
+	return out
 }
 
 // hyperliquidAssetCtx returns the venue context for a symbol (normalized), or
@@ -52,6 +71,7 @@ func refreshHyperliquidAssetContexts() {
 
 	client := hyperliquid.NewClient()
 	merged := make(map[string]hyperliquid.AssetCtx)
+	xyzUniverse := make(map[string]bool)
 	for _, dex := range []string{"", "xyz"} {
 		contexts, err := client.GetAssetContexts(context.Background(), dex)
 		if err != nil {
@@ -65,7 +85,13 @@ func refreshHyperliquidAssetContexts() {
 		for name, ctx := range contexts {
 			// Normalize both forms into our symbol space: "BTC" -> "BTCUSDT"
 			// and "xyz:SILVER" -> "xyz:SILVER".
-			merged[Normalize(name)] = ctx
+			normalized := Normalize(name)
+			merged[normalized] = ctx
+			// The venue is the authority on which assets the HIP-3 dex lists,
+			// so newly listed stocks/commodities need no code change.
+			if dex == "xyz" || strings.HasPrefix(strings.ToLower(name), "xyz:") {
+				xyzUniverse[normalized] = true
+			}
 		}
 	}
 	if len(merged) == 0 {
@@ -76,6 +102,9 @@ func refreshHyperliquidAssetContexts() {
 
 	hlAssetCtxCache.mu.Lock()
 	hlAssetCtxCache.bySymbol = merged
+	if len(xyzUniverse) > 0 {
+		hlAssetCtxCache.xyzUniverse = xyzUniverse
+	}
 	hlAssetCtxCache.fetchedAt = time.Now()
 	hlAssetCtxCache.mu.Unlock()
 }

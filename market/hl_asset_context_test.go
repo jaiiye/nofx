@@ -57,3 +57,38 @@ func TestMarketContextNormalizesFundingPerDay(t *testing.T) {
 		t.Fatalf("xyz:SILVER 24h notional = %v", dayNotional)
 	}
 }
+
+// The HIP-3 asset list came from a hardcoded map, so a newly listed stock
+// needed a code change. The venue's own universe now takes precedence (learned
+// as a side effect of the context refresh), with the static list as fallback.
+func TestIsXyzDexAssetUsesVenueUniverse(t *testing.T) {
+	// Cold cache: an un-prefixed symbol the static list does not know is not
+	// recognised (an explicit "xyz:" prefix is authoritative on its own).
+	if IsXyzDexAsset("NEWLYLISTED") {
+		t.Fatal("unknown asset must not be treated as xyz on a cold cache")
+	}
+
+	hlAssetCtxCache.mu.Lock()
+	hlAssetCtxCache.xyzUniverse = map[string]bool{"xyz:NEWLYLISTED": true}
+	hlAssetCtxCache.mu.Unlock()
+	t.Cleanup(func() {
+		hlAssetCtxCache.mu.Lock()
+		hlAssetCtxCache.xyzUniverse = nil
+		hlAssetCtxCache.mu.Unlock()
+	})
+
+	// Plain, prefixed and suffixed forms must all resolve.
+	for _, sym := range []string{"xyz:NEWLYLISTED", "XYZ:NEWLYLISTED", "NEWLYLISTED"} {
+		if !IsXyzDexAsset(sym) {
+			t.Errorf("IsXyzDexAsset(%q) = false, want true from the venue universe", sym)
+		}
+	}
+	// Crypto symbols are unaffected (and the call must not recurse: Normalize
+	// consults IsXyzDexAsset).
+	if IsXyzDexAsset("BTCUSDT") {
+		t.Error("crypto symbol misclassified as xyz")
+	}
+	if Normalize("BTC") != "BTCUSDT" || Normalize("xyz:NEWLYLISTED") != "xyz:NEWLYLISTED" {
+		t.Error("Normalize broken for xyz/crypto paths")
+	}
+}
