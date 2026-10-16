@@ -190,6 +190,63 @@ func TestStrategyConfigNormalizeProductSchemaForLLMLabels(t *testing.T) {
 	}
 }
 
+// ADX / Supertrend are printed for the primary frame only, and the primary
+// frame drives candle-close alignment. The strategy studio keeps the primary
+// inside the selected list, but an API/agent write could pick a primary outside
+// it — which silently drops those gauges from the prompt.
+func TestNormalizeKeepsPrimaryTimeframeSelected(t *testing.T) {
+	contains := func(list []string, want string) bool {
+		for _, v := range list {
+			if v == want {
+				return true
+			}
+		}
+		return false
+	}
+
+	cfg := GetDefaultStrategyConfig("en")
+	cfg.Indicators.Klines.PrimaryTimeframe = "1h"
+	cfg.Indicators.Klines.SelectedTimeframes = []string{"15m", "4h", "1m"}
+	cfg.NormalizeProductSchema()
+
+	got := cfg.Indicators.Klines.SelectedTimeframes
+	if !contains(got, "1h") {
+		t.Fatalf("primary timeframe dropped from selected_timeframes: %v", got)
+	}
+	if got[0] != "1h" {
+		t.Fatalf("primary timeframe should come first, got %v", got)
+	}
+	if len(got) != 4 {
+		t.Fatalf("existing frames must be kept, got %v", got)
+	}
+
+	// Already-present primary leaves the order untouched.
+	cfg.Indicators.Klines.SelectedTimeframes = []string{"15m", "1h", "4h"}
+	cfg.NormalizeProductSchema()
+	if got := cfg.Indicators.Klines.SelectedTimeframes; len(got) != 3 || got[0] != "15m" || got[1] != "1h" {
+		t.Fatalf("selected_timeframes reordered unnecessarily: %v", got)
+	}
+
+	// A full list is capped, and the primary still survives the cap.
+	cfg.Indicators.Klines.SelectedTimeframes = []string{"1m", "5m", "15m", "4h"}
+	cfg.ClampLimits()
+	got = cfg.Indicators.Klines.SelectedTimeframes
+	if len(got) != MaxTimeframes {
+		t.Fatalf("selected_timeframes = %v, want %d entries", got, MaxTimeframes)
+	}
+	if !contains(got, "1h") {
+		t.Fatalf("primary timeframe lost while capping: %v", got)
+	}
+
+	// No primary configured: nothing to enforce.
+	cfg.Indicators.Klines.PrimaryTimeframe = ""
+	cfg.Indicators.Klines.SelectedTimeframes = []string{"5m"}
+	cfg.NormalizeProductSchema()
+	if got := cfg.Indicators.Klines.SelectedTimeframes; len(got) != 1 || got[0] != "5m" {
+		t.Fatalf("selected_timeframes changed without a primary: %v", got)
+	}
+}
+
 // A missing/invalid margin-usage value must mean "use the product default",
 // not "silently cap at 10%" and never "skip the cap". The pre-trade gate calls
 // the same function, so a zero written by any path cannot disable the check.

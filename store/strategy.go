@@ -255,6 +255,39 @@ func (c *StrategyConfig) NormalizeProductSchema() {
 	if len(c.Indicators.Klines.SelectedTimeframes) > 0 {
 		c.Indicators.Klines.EnableMultiTimeframe = true
 	}
+
+	c.ensurePrimaryTimeframe()
+}
+
+// ensurePrimaryTimeframe keeps the primary timeframe in the selected list. The
+// primary frame drives candle-close alignment and is the only frame that prints
+// ADX / Supertrend, so a write path that selects a primary outside the list
+// (API, agent, imported config) silently loses those gauges and under-counts the
+// prompt timeframes. The strategy studio enforces this in its timeframe
+// toggles; the stored config has to as well.
+func (c *StrategyConfig) ensurePrimaryTimeframe() {
+	primary := c.Indicators.Klines.PrimaryTimeframe
+	if primary == "" {
+		return
+	}
+
+	selected := c.Indicators.Klines.SelectedTimeframes
+	for _, tf := range selected {
+		if tf == primary {
+			return
+		}
+	}
+
+	if len(selected) == 0 {
+		c.Indicators.Klines.SelectedTimeframes = []string{primary}
+		return
+	}
+
+	next := append([]string{primary}, selected...)
+	if len(next) > MaxTimeframes {
+		next = next[:MaxTimeframes]
+	}
+	c.Indicators.Klines.SelectedTimeframes = next
 }
 
 func normalizeStrategyType(value string) string {

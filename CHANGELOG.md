@@ -112,6 +112,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bot uses the same model selection as the web agent.
 
 ### Fixed
+- The primary timeframe is now guaranteed to be one of the analysed frames. ADX / Supertrend are
+  printed for the primary frame only and the primary drives candle-close alignment, so a config
+  written through the API or the agent (the strategy studio already keeps them consistent) could
+  pick a primary outside `selected_timeframes` and silently drop those gauges from the prompt
+  while the trader still waited for that frame's close. Normalization now inserts the primary at
+  the front of the list, capped at `MaxTimeframes`.
 - The indicator playbook no longer reads as an ADX veto. It said "> 25 = trending, < 20 = range
   where breakout entries are low quality", and a live model turned that into a hard gate and quoted
   it back ("无一满足趋势市（>25）…突破质量差") while holding for hours of cycles in a row. ADX is
