@@ -411,6 +411,11 @@ Returns: {"is_running":<bool>,"trader_id":"<string>"}`,
 				`Query: ?trader_id=<EXACT trader_id from GET /api/my-traders>
 Returns: {"balance":<float>,"equity":<float>,"unrealized_pnl":<float>,"initial_balance":<float>,"total_return_pct":<float>}`,
 				s.handleAccount)
+			s.routeWithSchema(protected, "GET", "/account/equity-history", "Equity curve history for one of your own traders (cash-flow neutral)",
+				`Query: ?trader_id=<EXACT trader_id from GET /api/my-traders>
+Returns: [{"timestamp":"<string>","total_equity":<float>,"total_pnl":<float>,"total_pnl_pct":<float>,"initial_balance":<float>}]
+Works for private traders too; the public /api/equity-history only serves traders published to the competition.`,
+				s.handleMyEquityHistory)
 			s.routeWithSchema(protected, "GET", "/positions", "Current open positions",
 				`Query: ?trader_id=<EXACT trader_id from GET /api/my-traders>
 Returns: [{"symbol":"<string>","side":"long|short","size":<float>,"entry_price":<float>,"mark_price":<float>,"unrealized_pnl":<float>,"leverage":<int>}]`,

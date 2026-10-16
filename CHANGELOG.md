@@ -54,6 +54,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   funding) → execution quality (microstructure) — and end with the principle that a single
   indicator is never a reason to enter. ADX and Supertrend are also listed among the
   available inputs.
+- Indicator periods are editable in the strategy studio. `ema_periods`, `rsi_periods`,
+  `atr_periods`, `adx_periods`, `boll_periods`, `macd_fast_period`/`macd_slow_period`,
+  `boll_multiplier` and `supertrend_period`/`supertrend_multiplier` reach the calculations but
+  had no UI, which left an hourly strategy stuck on the 20/50 EMA defaults — the prompt could
+  only ever report the defaults. Period lists accept comma-separated values (e.g. `50,200`,
+  committed on blur so typing is not normalised per keystroke).
+- `klines.prompt_display_bars` caps how many bars and indicator values are printed per
+  timeframe in the prompt (default 40, editable 5–200). The analysis window stays
+  `primary_count`, so a 200-bar window with EMA200 costs no prompt space — only the recent
+  shape the model needs is paid for.
+- Every decision cycle logs its prompt size with a rough token estimate
+  (`📏 prompt size: … KB … ≈ N tokens | <tf> primary, P positions, C candidates, T timeframes`),
+  making a context that is outgrowing the model's window visible before the provider rejects it.
 
 ### Changed
 - Max margin usage is now editable in the strategy studio (10–100%, previously a read-only
@@ -99,6 +112,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bot uses the same model selection as the web agent.
 
 ### Fixed
+- The equity curve now stays cash-flow neutral across deposits and withdrawals. Each
+  snapshot records the PnL baseline in effect when it was taken
+  (`trader_equity_snapshots.initial_balance`, added to existing tables), and both
+  `/api/equity-history` and `/api/equity-history-batch` measure every point against its own
+  baseline. Previously the whole history was rebased onto the current baseline — so any
+  deposit made the earlier part of the curve read as a large loss (and a withdrawal as a large
+  gain) — and the reported PnL was the point's *unrealized* PnL divided by the first
+  snapshot's wallet balance, which is not a return at all.
+- The dashboard's equity chart loads from the new owner-scoped
+  `GET /api/account/equity-history` instead of the public competition route. Private traders
+  are deliberately hidden from the public route (404, to avoid leaking their existence), which
+  the chart surfaced to its own owner as "API not found" — so the equity curve never rendered
+  for anyone who had not enabled "show in competition".
+- The equity chart no longer recomputes PnL on the client from a single account-wide baseline
+  (nor falls back to a hardcoded 1000 USDT, which NaN-ed small accounts into a fictional large
+  loss). It uses the per-point `total_pnl` / `total_pnl_pct` / `initial_balance` the API returns;
+  the previous field names (`pnl`/`pnl_pct`) never matched the API and were always undefined.
 - Hyperliquid xyz dex (HIP-3) orders are now judged against the pool they actually settle
   against. The xyz dex keeps its own USDC margin account, separate from the main perp
   account, so sizing an `xyz:*` order off the combined equity could approve an order the

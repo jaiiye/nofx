@@ -26,9 +26,10 @@ import {
 interface EquityPoint {
   timestamp: string
   total_equity: number
-  pnl: number
-  pnl_pct: number
-  cycle_number: number
+  total_pnl?: number
+  total_pnl_pct?: number
+  initial_balance?: number
+  cycle_number?: number
 }
 
 interface EquityChartProps {
@@ -43,7 +44,7 @@ export function EquityChart({ traderId, embedded = false }: EquityChartProps) {
 
   const { data: history, error, isLoading } = useSWR<EquityPoint[]>(
     user && token && traderId ? `equity-history-${traderId}` : null,
-    () => api.getEquityHistory(traderId, true),
+    () => api.getAccountEquityHistory(traderId!, true),
     {
       refreshInterval: 30000, // 30秒刷新（历史数据更新频率较低）
       revalidateOnFocus: false,
@@ -133,28 +134,42 @@ export function EquityChart({ traderId, embedded = false }: EquityChartProps) {
       ? validHistory.slice(-MAX_DISPLAY_POINTS)
       : validHistory
 
-  // 计算初始余额（优先从 account 获取配置的初始余额，备选从历史数据反推）
-  const initialBalance =
-    account?.initial_balance || // 从交易员配置读取真实初始余额
-    (validHistory[0]
-      ? validHistory[0].total_equity - validHistory[0].pnl
-      : undefined) || // 备选：淨值 - 盈亏
-    1000 // 默认值（与创建交易员时的默认配置一致）
+  // 每点用服务端算好的、当时生效的 PnL 基线（存过款后基线会上移）。
+  // 不能用"当前初始余额"去重算整段历史，否则存款前后的点会失真。
+  // account 的当前基线只作为旧数据（未记录基线）的兜底。
+  const latestPoint = validHistory[validHistory.length - 1]
+  const currentBaseline =
+    account?.initial_balance ||
+    latestPoint?.initial_balance ||
+    (latestPoint ? latestPoint.total_equity - (latestPoint.total_pnl ?? 0) : 0) ||
+    0
 
   // 转换数据格式
   const chartData = displayHistory.map((point, index) => {
-    const pnl = point.total_equity - initialBalance
-    const pnlPct = ((pnl / initialBalance) * 100).toFixed(2)
+    const baseline =
+      point.initial_balance && point.initial_balance > 0
+        ? point.initial_balance
+        : currentBaseline
+    const pnl =
+      typeof point.total_pnl === 'number'
+        ? point.total_pnl
+        : point.total_equity - baseline
+    const pnlPct =
+      typeof point.total_pnl_pct === 'number'
+        ? point.total_pnl_pct
+        : baseline > 0
+          ? (pnl / baseline) * 100
+          : 0
     return {
       time: new Date(point.timestamp).toLocaleTimeString('zh-CN', {
         hour: '2-digit',
         minute: '2-digit',
       }),
-      value: displayMode === 'dollar' ? point.total_equity : parseFloat(pnlPct),
+      value: displayMode === 'dollar' ? point.total_equity : parseFloat(pnlPct.toFixed(2)),
       cycle: point.cycle_number ?? index + 1,
       raw_equity: point.total_equity,
       raw_pnl: pnl,
-      raw_pnl_pct: parseFloat(pnlPct),
+      raw_pnl_pct: parseFloat(pnlPct.toFixed(2)),
     }
   })
 
@@ -174,10 +189,10 @@ export function EquityChart({ traderId, embedded = false }: EquityChartProps) {
     } else {
       // 美元模式：以初始余额为基准，上下留10%余量
       const values = chartData.map((d) => d.value)
-      const minVal = Math.min(...values, initialBalance)
-      const maxVal = Math.max(...values, initialBalance)
+      const minVal = Math.min(...values, currentBaseline)
+      const maxVal = Math.max(...values, currentBaseline)
       const range = maxVal - minVal
-      const padding = Math.max(range * 0.15, initialBalance * 0.01) // 至少留1%余量
+      const padding = Math.max(range * 0.15, currentBaseline * 0.01) // 至少留1%余量
       return [Math.floor(minVal - padding), Math.ceil(maxVal + padding)]
     }
   }
@@ -367,7 +382,7 @@ export function EquityChart({ traderId, embedded = false }: EquityChartProps) {
             />
             <Tooltip content={<CustomTooltip />} />
             <ReferenceLine
-              y={displayMode === 'dollar' ? initialBalance : 0}
+              y={displayMode === 'dollar' ? currentBaseline : 0}
               stroke="#474D57"
               strokeDasharray="3 3"
               label={{
@@ -416,7 +431,7 @@ export function EquityChart({ traderId, embedded = false }: EquityChartProps) {
             className="text-xs sm:text-sm font-bold mono"
             style={{ color: '#EAECEF' }}
           >
-            {initialBalance.toFixed(2)} USDT
+            {currentBaseline.toFixed(2)} USDT
           </div>
         </div>
         <div

@@ -27,6 +27,9 @@ func (at *AutoTrader) saveEquitySnapshot(ctx *kernel.Context) {
 		UnrealizedPnL: ctx.Account.UnrealizedPnL,
 		PositionCount: ctx.Account.PositionCount,
 		MarginUsedPct: ctx.Account.MarginUsedPct,
+		// Record the baseline in effect now so the return curve stays cash-flow
+		// neutral when a deposit or withdrawal shifts it later.
+		InitialBalance: at.initialBalance,
 	}
 
 	if err := at.store.Equity().Save(snapshot); err != nil {

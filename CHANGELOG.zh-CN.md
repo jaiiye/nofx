@@ -47,6 +47,17 @@ NOFX 项目的所有重要更改都将记录在此文件中。
   （MACD、RSI）→ 入场时机（布林带）→ 风险与仓位（ATR）→ 信号确认（成交量、持仓量、
   资金费）→ 执行质量（微观结构），并以"单一指标不构成入场理由"作结。ADX 与 Supertrend
   也已加入可用指标清单。
+- 指标周期在策略工作室可编辑。`ema_periods`、`rsi_periods`、`atr_periods`、`adx_periods`、
+  `boll_periods`、`macd_fast_period`/`macd_slow_period`、`boll_multiplier`、
+  `supertrend_period`/`supertrend_multiplier` 原本只进计算链路、没有输入框，导致小时级策略
+  被困在默认的 EMA 20/50——prompt 里只能显示默认值。周期列表用逗号分隔（如 `50,200`），
+  **失焦时提交**，因此输入过程中不会被逐字符归一化。
+- `klines.prompt_display_bars` 控制 prompt 中每个时间帧打印多少根 K 线/多少个指标值
+  （默认 40，可设 5–200）。分析窗口仍是 `primary_count`，所以 200 根窗口 + EMA200 不增加
+  prompt 体积——只为模型确实需要的近期形态付费。
+- 每轮决策打印 prompt 体积与估算 token
+  （`📏 prompt size: … KB … ≈ N tokens | <tf> primary, P positions, C candidates, T timeframes`），
+  让"上下文快要超过模型窗口"在 provider 报错之前就可见。
 
 ### 变更
 - 最大保证金使用率改为策略工作室可编辑（10–100%，此前只读显示），但**代码仍是权威**：
@@ -81,6 +92,18 @@ NOFX 项目的所有重要更改都将记录在此文件中。
   继续使用平铺工具；非管理域工具保持不变。
 
 ### 修复
+- 净值曲线在出入金前后保持"现金流中性"。每条快照记录当时生效的 PnL 基线
+  （`trader_equity_snapshots.initial_balance`，对已有表会自动加列），
+  `/api/equity-history` 与 `/api/equity-history-batch` 都按每个点自己的基线计算。此前整段
+  历史被套用"当前基线"，导致任何一笔存款都会让曲线前半段显示为大额亏损（出金则相反）；
+  且当时上报的 PnL 是"该点的未实现盈亏 ÷ 首个快照的钱包余额"，根本不是一个收益率。
+- 仪表盘的净值曲线改走新的属主接口 `GET /api/account/equity-history`，不再走公开的竞赛接口。
+  公开接口对未开启"显示在竞赛中"的交易员会故意返回 404（避免泄露其存在），而前端把该 404
+  直接展示成 "API not found"，于是**自己的私有交易员永远画不出净值曲线**。
+- 前端不再用"账户当前单一基线"去重算整段历史，也移除了硬编码的 1000 USDT 兜底（它会让小额
+  账户因 NaN 显示出虚构的大额亏损）。现在直接使用接口返回的逐点
+  `total_pnl` / `total_pnl_pct` / `initial_balance`；此前的字段名 `pnl`/`pnl_pct` 与接口不匹配，
+  一直是 undefined。
 - Hyperliquid xyz dex（HIP-3）订单现在按它实际结算的保证金池来判定。xyz dex 拥有独立的 USDC
   保证金账户（与主永续账户分离），此前的下单额度按"合并权益"计算，会放行交易所随后以
   `Insufficient margin to place order` 拒绝的订单（实盘在 `xyz:SILVER` 上出现）。现在 xyz 标的

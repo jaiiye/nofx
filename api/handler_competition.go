@@ -119,6 +119,59 @@ func (s *Server) handleCompetition(c *gin.Context) {
 	c.JSON(http.StatusOK, competition)
 }
 
+// equityHistoryPoint is one point of a trader's return curve. TotalPnL and
+// TotalPnLPct are cash-flow neutral: they compare the point's equity with the
+// PnL baseline that was in effect when it was taken (InitialBalance), so a
+// deposit or withdrawal never shows up as trading profit.
+type equityHistoryPoint struct {
+	Timestamp        string  `json:"timestamp"`
+	TotalEquity      float64 `json:"total_equity"`      // Account equity (wallet + unrealized)
+	AvailableBalance float64 `json:"available_balance"` // Wallet balance
+	InitialBalance   float64 `json:"initial_balance"`   // PnL baseline in effect at this point
+	TotalPnL         float64 `json:"total_pnl"`         // Total PnL (cash-flow neutral)
+	TotalPnLPct      float64 `json:"total_pnl_pct"`     // Total PnL percentage
+	PositionCount    int     `json:"position_count"`    // Position count
+	MarginUsedPct    float64 `json:"margin_used_pct"`   // Margin used percentage
+}
+
+// equityHistoryForTrader builds the return curve of one trader. Access control
+// belongs to the caller: the public competition route requires the trader to
+// have opted in, the owner route requires ownership.
+func (s *Server) equityHistoryForTrader(traderID string, limit int, configuredBalance float64) ([]equityHistoryPoint, error) {
+	snapshots, err := s.store.Equity().GetLatest(traderID, limit)
+	if err != nil {
+		return nil, err
+	}
+	if len(snapshots) == 0 {
+		return []equityHistoryPoint{}, nil
+	}
+
+	// Rows written before the baseline was stored per snapshot fall back to the
+	// trader's configured balance, then to the first wallet balance.
+	fallbackBaseline := configuredBalance
+	if fallbackBaseline <= 0 {
+		fallbackBaseline = snapshots[0].Balance
+	}
+
+	history := make([]equityHistoryPoint, 0, len(snapshots))
+	for _, snap := range snapshots {
+		baseline := resolveSnapshotBaseline(snap.InitialBalance, fallbackBaseline)
+		totalPnL, totalPnLPct := equityPointPnL(snap.TotalEquity, baseline)
+
+		history = append(history, equityHistoryPoint{
+			Timestamp:        snap.Timestamp.Format("2006-01-02 15:04:05"),
+			TotalEquity:      snap.TotalEquity,
+			AvailableBalance: snap.Balance,
+			InitialBalance:   baseline,
+			TotalPnL:         totalPnL,
+			TotalPnLPct:      totalPnLPct,
+			PositionCount:    snap.PositionCount,
+			MarginUsedPct:    snap.MarginUsedPct,
+		})
+	}
+	return history, nil
+}
+
 // handleEquityHistory returns equity history for a trader. This endpoint is
 // PUBLIC (used by the competition leaderboard), so it cannot use the
 // authenticated getTraderFromQuery helper. Instead, it validates that the
@@ -141,55 +194,36 @@ func (s *Server) handleEquityHistory(c *gin.Context) {
 		return
 	}
 
-	// Get equity historical data from new equity table
 	// Every 3 minutes per cycle: 10000 records = about 20 days of data
-	snapshots, err := s.store.Equity().GetLatest(traderID, 10000)
+	history, err := s.equityHistoryForTrader(traderID, 10000, trader.InitialBalance)
 	if err != nil {
 		SafeInternalError(c, "Get historical data", err)
 		return
 	}
+	c.JSON(http.StatusOK, history)
+}
 
-	if len(snapshots) == 0 {
-		c.JSON(http.StatusOK, []interface{}{})
+// handleMyEquityHistory returns the return curve of one of the caller's own
+// traders, whether or not it is published to the competition. The public route
+// deliberately answers 404 for private traders, which the dashboard used to
+// surface as "API not found" on its own equity chart.
+func (s *Server) handleMyEquityHistory(c *gin.Context) {
+	_, traderID, err := s.getTraderFromQuery(c)
+	if err != nil {
+		SafeBadRequest(c, "Invalid trader ID")
+		return
+	}
+	trader, err := s.store.Trader().GetByID(traderID)
+	if err != nil || trader == nil {
+		SafeNotFound(c, "Trader")
 		return
 	}
 
-	// Build return rate historical data points
-	type EquityPoint struct {
-		Timestamp        string  `json:"timestamp"`
-		TotalEquity      float64 `json:"total_equity"`      // Account equity (wallet + unrealized)
-		AvailableBalance float64 `json:"available_balance"` // Available balance
-		TotalPnL         float64 `json:"total_pnl"`         // Total PnL (unrealized PnL)
-		TotalPnLPct      float64 `json:"total_pnl_pct"`     // Total PnL percentage
-		PositionCount    int     `json:"position_count"`    // Position count
-		MarginUsedPct    float64 `json:"margin_used_pct"`   // Margin used percentage
+	history, err := s.equityHistoryForTrader(traderID, 10000, trader.InitialBalance)
+	if err != nil {
+		SafeInternalError(c, "Get historical data", err)
+		return
 	}
-
-	// Use the balance of the first record as initial balance to calculate return rate
-	initialBalance := snapshots[0].Balance
-	if initialBalance == 0 {
-		initialBalance = 1 // Avoid division by zero
-	}
-
-	var history []EquityPoint
-	for _, snap := range snapshots {
-		// Calculate PnL percentage
-		totalPnLPct := 0.0
-		if initialBalance > 0 {
-			totalPnLPct = (snap.UnrealizedPnL / initialBalance) * 100
-		}
-
-		history = append(history, EquityPoint{
-			Timestamp:        snap.Timestamp.Format("2006-01-02 15:04:05"),
-			TotalEquity:      snap.TotalEquity,
-			AvailableBalance: snap.Balance,
-			TotalPnL:         snap.UnrealizedPnL,
-			TotalPnLPct:      totalPnLPct,
-			PositionCount:    snap.PositionCount,
-			MarginUsedPct:    snap.MarginUsedPct,
-		})
-	}
-
 	c.JSON(http.StatusOK, history)
 }
 
@@ -386,29 +420,28 @@ func (s *Server) getEquityHistoryForTraders(traderIDs []string, hours int) map[s
 			continue
 		}
 
-		// Get initial balance for calculating PnL percentage
-		initialBalance := initialBalances[traderID]
-		if initialBalance <= 0 && len(snapshots) > 0 {
-			// If no initial balance configured, use the first snapshot's equity as baseline
-			initialBalance = snapshots[0].TotalEquity
+		// Each snapshot is measured against the baseline it was taken with; the
+		// fallback (configured balance, else the first snapshot's equity) covers
+		// rows written before the baseline was stored.
+		fallbackBaseline := initialBalances[traderID]
+		if fallbackBaseline <= 0 && len(snapshots) > 0 {
+			fallbackBaseline = snapshots[0].TotalEquity
 		}
 
 		// Build return rate historical data with PnL percentage
 		history := make([]map[string]interface{}, 0, len(snapshots)+1)
 		var lastSnapshotTime time.Time
 		for _, snap := range snapshots {
-			// Calculate PnL percentage: (current_equity - initial_balance) / initial_balance * 100
-			pnlPct := 0.0
-			if initialBalance > 0 {
-				pnlPct = (snap.TotalEquity - initialBalance) / initialBalance * 100
-			}
+			baseline := resolveSnapshotBaseline(snap.InitialBalance, fallbackBaseline)
+			totalPnL, pnlPct := equityPointPnL(snap.TotalEquity, baseline)
 
 			history = append(history, map[string]interface{}{
-				"timestamp":     snap.Timestamp,
-				"total_equity":  snap.TotalEquity,
-				"total_pnl":     snap.UnrealizedPnL,
-				"total_pnl_pct": pnlPct,
-				"balance":       snap.Balance,
+				"timestamp":       snap.Timestamp,
+				"total_equity":    snap.TotalEquity,
+				"total_pnl":       totalPnL,
+				"total_pnl_pct":   pnlPct,
+				"balance":         snap.Balance,
+				"initial_balance": baseline,
 			})
 			if snap.Timestamp.After(lastSnapshotTime) {
 				lastSnapshotTime = snap.Timestamp
@@ -433,17 +466,24 @@ func (s *Server) getEquityHistoryForTraders(traderIDs []string, hours int) map[s
 					if v, ok := accountInfo["wallet_balance"].(float64); ok {
 						walletBalance = v
 					}
+					// The live account reports its current (cash-flow adjusted)
+					// baseline, which is the right one for the appended point.
+					baseline := fallbackBaseline
+					if v, ok := accountInfo["initial_balance"].(float64); ok && v > 0 {
+						baseline = v
+					}
 					pnlPct := 0.0
-					if initialBalance > 0 {
-						pnlPct = (totalEquity - initialBalance) / initialBalance * 100
+					if baseline > 0 {
+						pnlPct = totalPnL / baseline * 100
 					}
 
 					history = append(history, map[string]interface{}{
-						"timestamp":     now,
-						"total_equity":  totalEquity,
-						"total_pnl":     totalPnL,
-						"total_pnl_pct": pnlPct,
-						"balance":       walletBalance,
+						"timestamp":       now,
+						"total_equity":    totalEquity,
+						"total_pnl":       totalPnL,
+						"total_pnl_pct":   pnlPct,
+						"balance":         walletBalance,
+						"initial_balance": baseline,
 					})
 				}
 			}

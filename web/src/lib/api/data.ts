@@ -140,6 +140,18 @@ export const dataApi = {
     return result.data!
   },
 
+  // Owner-scoped equity history: served to the trader's own user even when the
+  // trader is private (the public endpoint answers 404 for those).
+  async getAccountEquityHistory(
+    traderId: string,
+    silent?: boolean
+  ): Promise<any[]> {
+    const url = `${API_BASE}/account/equity-history?trader_id=${traderId}`
+    const result = await httpClient.request<any[]>(url, { silent })
+    if (!result.success) throw new Error('Failed to fetch equity history')
+    return result.data!
+  },
+
   async getEquityHistoryBatch(traderIds: string[], hours?: number): Promise<any> {
     const result = await httpClient.post<any>(
       `${API_BASE}/equity-history-batch`,

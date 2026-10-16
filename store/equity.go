@@ -22,7 +22,13 @@ type EquitySnapshot struct {
 	UnrealizedPnL float64   `gorm:"column:unrealized_pnl;not null;default:0" json:"unrealized_pnl"`
 	PositionCount int       `gorm:"column:position_count;default:0" json:"position_count"`
 	MarginUsedPct float64   `gorm:"column:margin_used_pct;default:0" json:"margin_used_pct"`
-	CreatedAt     time.Time `json:"created_at"`
+	// InitialBalance is the cash-flow neutral PnL baseline in effect when this
+	// snapshot was taken (deposits/withdrawals shift it). Storing it per row is
+	// what keeps the return curve correct: applying the current baseline to the
+	// whole history turns any deposit into fake profit/loss on the earlier part
+	// of the curve. 0 = row written before the baseline was recorded.
+	InitialBalance float64   `gorm:"column:initial_balance;not null;default:0" json:"initial_balance"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 func (EquitySnapshot) TableName() string { return "trader_equity_snapshots" }
@@ -39,10 +45,24 @@ func (s *EquityStore) initTables() error {
 		var tableExists int64
 		s.db.Raw(`SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'trader_equity_snapshots'`).Scan(&tableExists)
 		if tableExists > 0 {
-			return nil
+			// The table predates the per-snapshot PnL baseline, so add the column
+			// explicitly — Postgres deployments never run AutoMigrate here.
+			return s.ensureInitialBalanceColumn()
 		}
 	}
-	return s.db.AutoMigrate(&EquitySnapshot{})
+	if err := s.db.AutoMigrate(&EquitySnapshot{}); err != nil {
+		return err
+	}
+	return s.ensureInitialBalanceColumn()
+}
+
+// ensureInitialBalanceColumn adds the per-snapshot PnL baseline column to
+// tables created before it existed.
+func (s *EquityStore) ensureInitialBalanceColumn() error {
+	if s.db.Migrator().HasColumn(&EquitySnapshot{}, "InitialBalance") {
+		return nil
+	}
+	return s.db.Migrator().AddColumn(&EquitySnapshot{}, "InitialBalance")
 }
 
 // Save saves equity snapshot
