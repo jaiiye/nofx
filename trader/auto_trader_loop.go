@@ -592,7 +592,11 @@ func (at *AutoTrader) buildTradingContext() (*kernel.Context, error) {
 		}
 	}
 
-	// 4. Calculate total P&L
+	// 4. Fold deposits/withdrawals into the PnL baseline before any PnL math, so
+	//    the prompt and the UI do not report an external transfer as profit.
+	at.reconcilePnLBaseline(totalWalletBalance)
+
+	// Calculate total P&L
 	totalPnL := totalEquity - at.initialBalance
 	totalPnLPct := 0.0
 	if at.initialBalance > 0 {

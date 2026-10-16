@@ -158,24 +158,28 @@ type AutoTraderConfig struct {
 
 // AutoTrader automatic trader
 type AutoTrader struct {
-	id                      string // Trader unique identifier
-	name                    string // Trader display name
-	aiModel                 string // AI model name
-	exchange                string // Trading platform type (binance/bybit/etc)
-	exchangeID              string // Exchange account UUID
-	showInCompetition       bool   // Whether to show in competition page
-	config                  AutoTraderConfig
-	trader                  Trader         // Use Trader interface (supports multiple platforms)
-	execMode                execution.Mode // order-placement seam (live or simulated)
-	mcpClient               mcp.AIClient
-	store                   *store.Store           // Data storage (decision records, etc.)
-	strategyEngine          *kernel.StrategyEngine // Strategy engine (uses strategy configuration)
-	candidateSelector       kernel.CandidateSelector
-	decisionMaker           *kernel.DecisionMaker
-	runCtx                  context.Context // Cancelled by Stop(); flows into kernel contexts for LLM cancellation
-	runCancel               context.CancelFunc
-	cycleNumber             int // Current cycle number
-	initialBalance          float64
+	id                string // Trader unique identifier
+	name              string // Trader display name
+	aiModel           string // AI model name
+	exchange          string // Trading platform type (binance/bybit/etc)
+	exchangeID        string // Exchange account UUID
+	showInCompetition bool   // Whether to show in competition page
+	config            AutoTraderConfig
+	trader            Trader         // Use Trader interface (supports multiple platforms)
+	execMode          execution.Mode // order-placement seam (live or simulated)
+	mcpClient         mcp.AIClient
+	store             *store.Store           // Data storage (decision records, etc.)
+	strategyEngine    *kernel.StrategyEngine // Strategy engine (uses strategy configuration)
+	candidateSelector kernel.CandidateSelector
+	decisionMaker     *kernel.DecisionMaker
+	runCtx            context.Context // Cancelled by Stop(); flows into kernel contexts for LLM cancellation
+	runCancel         context.CancelFunc
+	cycleNumber       int // Current cycle number
+	initialBalance    float64
+	// Cash-flow neutral PnL baseline (see reconcilePnLBaseline): the wallet and
+	// timestamp of the last deposit/withdrawal reconciliation.
+	pnlBaselineWallet       float64
+	pnlBaselineAtMs         int64
 	dailyPnL                float64
 	customPrompt            string // Custom trading strategy prompt
 	overrideBasePrompt      bool   // Whether to override base prompt

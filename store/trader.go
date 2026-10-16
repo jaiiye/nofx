@@ -20,13 +20,19 @@ func NewTraderStore(db *gorm.DB) *TraderStore {
 
 // Trader trader configuration
 type Trader struct {
-	ID                  string    `gorm:"primaryKey" json:"id"`
-	UserID              string    `gorm:"column:user_id;not null;default:default;index" json:"user_id"`
-	Name                string    `gorm:"column:name;not null" json:"name"`
-	AIModelID           string    `gorm:"column:ai_model_id;not null" json:"ai_model_id"`
-	ExchangeID          string    `gorm:"column:exchange_id;not null" json:"exchange_id"`
-	StrategyID          string    `gorm:"column:strategy_id;default:''" json:"strategy_id"`
-	InitialBalance      float64   `gorm:"column:initial_balance;not null" json:"initial_balance"`
+	ID             string  `gorm:"primaryKey" json:"id"`
+	UserID         string  `gorm:"column:user_id;not null;default:default;index" json:"user_id"`
+	Name           string  `gorm:"column:name;not null" json:"name"`
+	AIModelID      string  `gorm:"column:ai_model_id;not null" json:"ai_model_id"`
+	ExchangeID     string  `gorm:"column:exchange_id;not null" json:"exchange_id"`
+	StrategyID     string  `gorm:"column:strategy_id;default:''" json:"strategy_id"`
+	InitialBalance float64 `gorm:"column:initial_balance;not null" json:"initial_balance"`
+	// Cash-flow neutral PnL baseline: the wallet balance and timestamp of the
+	// last reconciliation. Wallet moves that realized PnL does not explain are
+	// deposits/withdrawals, and are folded into InitialBalance so PnL and PnL%
+	// stay meaningful (a deposit used to show up as profit).
+	PnLBaselineWallet   float64   `gorm:"column:pnl_baseline_wallet;default:0" json:"pnl_baseline_wallet"`
+	PnLBaselineAtMs     int64     `gorm:"column:pnl_baseline_at_ms;default:0" json:"pnl_baseline_at_ms"`
 	ScanIntervalMinutes int       `gorm:"column:scan_interval_minutes;default:3" json:"scan_interval_minutes"`
 	IsRunning           bool      `gorm:"column:is_running;default:false" json:"is_running"`
 	IsCrossMargin       bool      `gorm:"column:is_cross_margin;default:true" json:"is_cross_margin"`
@@ -151,6 +157,46 @@ func (s *TraderStore) UpdateInitialBalance(userID, id string, newBalance float64
 	return s.db.Model(&Trader{}).
 		Where("id = ? AND user_id = ?", id, userID).
 		Update("initial_balance", newBalance).Error
+}
+
+// GetPnLBaseline returns the last cash-flow reconciliation point.
+func (s *TraderStore) GetPnLBaseline(userID, id string) (wallet float64, atMs int64, err error) {
+	var row struct {
+		PnLBaselineWallet float64
+		PnLBaselineAtMs   int64
+	}
+	res := s.db.Model(&Trader{}).
+		Select("pnl_baseline_wallet", "pnl_baseline_at_ms").
+		Where("id = ? AND user_id = ?", id, userID).
+		Scan(&row)
+	if res.Error != nil {
+		return 0, 0, res.Error
+	}
+	return row.PnLBaselineWallet, row.PnLBaselineAtMs, nil
+}
+
+// ApplyCashFlow folds an external deposit/withdrawal into the PnL baseline and
+// advances the reconciliation point. Adjusting InitialBalance keeps PnL and
+// PnL% meaningful without touching every consumer.
+func (s *TraderStore) ApplyCashFlow(userID, id string, cashFlow, wallet float64, atMs int64) error {
+	return s.db.Model(&Trader{}).
+		Where("id = ? AND user_id = ?", id, userID).
+		Updates(map[string]interface{}{
+			"initial_balance":     gorm.Expr("initial_balance + ?", cashFlow),
+			"pnl_baseline_wallet": wallet,
+			"pnl_baseline_at_ms":  atMs,
+		}).Error
+}
+
+// AdvancePnLBaseline moves the reconciliation point without adjusting the
+// baseline (no cash flow detected this cycle).
+func (s *TraderStore) AdvancePnLBaseline(userID, id string, wallet float64, atMs int64) error {
+	return s.db.Model(&Trader{}).
+		Where("id = ? AND user_id = ?", id, userID).
+		Updates(map[string]interface{}{
+			"pnl_baseline_wallet": wallet,
+			"pnl_baseline_at_ms":  atMs,
+		}).Error
 }
 
 // UpdateCustomPrompt updates custom prompt
