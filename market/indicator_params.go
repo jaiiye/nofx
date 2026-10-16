@@ -1,6 +1,11 @@
 package market
 
-import "fmt"
+import (
+	"fmt"
+	"sync"
+
+	"nofx/logger"
+)
 
 // IndicatorParams carries the strategy's configured indicator periods into
 // the market calculation layer. Nil/zero fields fall back to the canonical
@@ -103,10 +108,15 @@ func calculateMACDWithPeriods(klines []Kline, fast, slow int) float64 {
 }
 
 // configuredIndicatorSeries computes the strategy-configured EMA/RSI/MACD
-// series over the last `count` bars of klines plus one ATR value per
-// configured period. Series values follow the same convention as the
-// fixed-period fields: a value is appended once the bar index has enough
-// history for the period.
+// series over the last `count` bars of klines plus the single-value gauges
+// (ATR / ADX / DI± / BOLL bands / Supertrend) per configured period. Series
+// values follow the same convention as the fixed-period fields: a value is
+// appended once the bar index has enough history for the period.
+//
+// An indicator whose period exceeds the available window is omitted instead of
+// being emitted as 0: a fabricated zero reads as "zero volatility / no trend"
+// and the model acts on it. The omission is logged once per indicator so a
+// strategy configured beyond its analysis window is visible in the logs.
 func configuredIndicatorSeries(klines []Kline, p *IndicatorParams, count int) []IndicatorSeries {
 	if p == nil {
 		return nil
@@ -116,41 +126,55 @@ func configuredIndicatorSeries(klines []Kline, p *IndicatorParams, count int) []
 	if start < 0 {
 		start = 0
 	}
+	bars := len(klines)
 
 	out := make([]IndicatorSeries, 0, len(p.EMAPeriods)+len(p.RSIPeriods)+len(p.ATRPeriods)+1)
+	appendSeries := func(label string, values []float64, need int) {
+		if len(values) == 0 {
+			warnIndicatorUnavailable(label, bars, need)
+			return
+		}
+		out = append(out, IndicatorSeries{Label: label, Values: values})
+	}
+
 	for _, period := range p.EMAPeriods {
-		out = append(out, IndicatorSeries{
-			Label:  fmt.Sprintf("EMA(%d)", period),
-			Values: indicatorSeriesOverWindow(klines, start, period, func(kl []Kline) float64 { return calculateEMA(kl, period) }),
-		})
+		appendSeries(fmt.Sprintf("EMA(%d)", period),
+			indicatorSeriesOverWindow(klines, start, period, func(kl []Kline) float64 { return calculateEMA(kl, period) }),
+			period)
 	}
 	for _, period := range p.RSIPeriods {
-		out = append(out, IndicatorSeries{
-			Label:  fmt.Sprintf("RSI(%d)", period),
-			Values: indicatorSeriesOverWindow(klines, start, period, func(kl []Kline) float64 { return calculateRSI(kl, period) }),
-		})
+		appendSeries(fmt.Sprintf("RSI(%d)", period),
+			indicatorSeriesOverWindow(klines, start, period, func(kl []Kline) float64 { return calculateRSI(kl, period) }),
+			period)
 	}
 	fast, slow := p.MACDFast, p.MACDSlow
-	out = append(out, IndicatorSeries{
-		Label:  fmt.Sprintf("MACD(%d,%d)", fast, slow),
-		Values: indicatorSeriesOverWindow(klines, start, slow, func(kl []Kline) float64 { return calculateMACDWithPeriods(kl, fast, slow) }),
-	})
+	appendSeries(fmt.Sprintf("MACD(%d,%d)", fast, slow),
+		indicatorSeriesOverWindow(klines, start, slow, func(kl []Kline) float64 { return calculateMACDWithPeriods(kl, fast, slow) }),
+		slow)
+
+	// Single-value gauges: only computed when the window can actually produce
+	// them (the window requirements mirror the calculators' own guards).
 	for _, period := range p.ATRPeriods {
-		out = append(out, IndicatorSeries{
-			Label:  fmt.Sprintf("ATR(%d)", period),
-			Values: []float64{calculateATR(klines, period)},
-		})
+		label := fmt.Sprintf("ATR(%d)", period)
+		if bars <= period {
+			warnIndicatorUnavailable(label, bars, period+1)
+			continue
+		}
+		appendSeries(label, []float64{calculateATR(klines, period)}, period+1)
 	}
 
 	// ADX with its directional indicators: strength and direction together,
 	// as single latest values (regime gauges, not plotted series).
 	for _, period := range p.ADXPeriods {
+		need := period * 2
+		if bars < need {
+			warnIndicatorUnavailable(fmt.Sprintf("ADX(%d)", period), bars, need)
+			continue
+		}
 		adx, plusDI, minusDI := calculateADX(klines, period)
-		out = append(out,
-			IndicatorSeries{Label: fmt.Sprintf("ADX(%d)", period), Values: []float64{adx}},
-			IndicatorSeries{Label: fmt.Sprintf("DI+(%d)", period), Values: []float64{plusDI}},
-			IndicatorSeries{Label: fmt.Sprintf("DI-(%d)", period), Values: []float64{minusDI}},
-		)
+		appendSeries(fmt.Sprintf("ADX(%d)", period), []float64{adx}, need)
+		appendSeries(fmt.Sprintf("DI+(%d)", period), []float64{plusDI}, need)
+		appendSeries(fmt.Sprintf("DI-(%d)", period), []float64{minusDI}, need)
 	}
 
 	// Bollinger Bands with the configured period and standard-deviation
@@ -169,28 +193,36 @@ func configuredIndicatorSeries(klines []Kline, p *IndicatorParams, count int) []
 			_, _, l := calculateBOLL(kl, period, mult)
 			return l
 		})
-		out = append(out,
-			IndicatorSeries{Label: fmt.Sprintf("BOLL_UPPER(%d,%.1f)", period, mult), Values: upper},
-			IndicatorSeries{Label: fmt.Sprintf("BOLL_MIDDLE(%d,%.1f)", period, mult), Values: middle},
-			IndicatorSeries{Label: fmt.Sprintf("BOLL_LOWER(%d,%.1f)", period, mult), Values: lower},
-		)
+		appendSeries(fmt.Sprintf("BOLL_UPPER(%d,%.1f)", period, mult), upper, period)
+		appendSeries(fmt.Sprintf("BOLL_MIDDLE(%d,%.1f)", period, mult), middle, period)
+		appendSeries(fmt.Sprintf("BOLL_LOWER(%d,%.1f)", period, mult), lower, period)
 	}
 
 	// Supertrend: trailing band plus its direction (+1 up / -1 down).
 	if p.SupertrendPeriod > 0 {
+		bandLabel := fmt.Sprintf("SUPERTREND(%d,%.1f)", p.SupertrendPeriod, p.SupertrendMultiplier)
+		dirLabel := fmt.Sprintf("SUPERTREND_DIR(%d,%.1f)", p.SupertrendPeriod, p.SupertrendMultiplier)
+		if bars <= p.SupertrendPeriod {
+			warnIndicatorUnavailable(bandLabel, bars, p.SupertrendPeriod+1)
+			return out
+		}
 		band, direction := calculateSupertrend(klines, p.SupertrendPeriod, p.SupertrendMultiplier)
-		out = append(out,
-			IndicatorSeries{
-				Label:  fmt.Sprintf("SUPERTREND(%d,%.1f)", p.SupertrendPeriod, p.SupertrendMultiplier),
-				Values: []float64{band},
-			},
-			IndicatorSeries{
-				Label:  fmt.Sprintf("SUPERTREND_DIR(%d,%.1f)", p.SupertrendPeriod, p.SupertrendMultiplier),
-				Values: []float64{float64(direction)},
-			},
-		)
+		appendSeries(bandLabel, []float64{band}, p.SupertrendPeriod+1)
+		appendSeries(dirLabel, []float64{float64(direction)}, p.SupertrendPeriod+1)
 	}
 	return out
+}
+
+// indicatorWarnings dedupes the "this indicator does not fit the window" log:
+// without it the same line repeats per symbol and per timeframe on every cycle.
+var indicatorWarnings sync.Map
+
+func warnIndicatorUnavailable(label string, have, need int) {
+	if _, seen := indicatorWarnings.LoadOrStore(label, struct{}{}); seen {
+		return
+	}
+	logger.Infof("⚠️ %s omitted from the prompt: needs %d bars, the window has %d — widen klines.primary_count / longer_count or lower the period",
+		label, need, have)
 }
 
 // indicatorSeriesOverWindow walks the window starting at startIdx, appending

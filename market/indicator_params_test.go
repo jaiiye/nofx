@@ -249,3 +249,52 @@ func TestConfiguredADXAndSupertrendSeriesEmitted(t *testing.T) {
 		}
 	}
 }
+
+// A period longer than the available window used to reach the model as a
+// fabricated 0 (e.g. "ATR(300): 0.0000"), which reads as "zero volatility / no
+// trend" instead of "not computable". Those series must be omitted.
+func TestConfiguredIndicatorSeriesOmitsUnavailablePeriods(t *testing.T) {
+	klines := makeKlines(120) // window shorter than the periods below
+	series := configuredIndicatorSeries(klines, &IndicatorParams{
+		EMAPeriods:       []int{30, 200},
+		RSIPeriods:       []int{14, 300},
+		ATRPeriods:       []int{7, 300},
+		ADXPeriods:       []int{14, 100},
+		BOLLPeriods:      []int{20, 400},
+		SupertrendPeriod: 300,
+	}, 30)
+
+	labels := map[string]bool{}
+	for _, s := range series {
+		labels[s.Label] = true
+		if len(s.Values) == 0 {
+			t.Fatalf("series %s emitted with no values", s.Label)
+		}
+	}
+
+	for _, want := range []string{"EMA(30)", "RSI(14)", "ATR(7)", "ADX(14)", "BOLL_UPPER(20,2.0)"} {
+		if !labels[want] {
+			t.Errorf("computable series %s missing (have %v)", want, labels)
+		}
+	}
+	for _, bad := range []string{
+		"EMA(200)", "RSI(300)", "ATR(300)", "ADX(100)", "DI+(100)",
+		"BOLL_UPPER(400,2.0)", "SUPERTREND(300,3.0)", "SUPERTREND_DIR(300,3.0)",
+	} {
+		if labels[bad] {
+			t.Errorf("series %s cannot be computed from %d bars but was emitted", bad, len(klines))
+		}
+	}
+
+	// Boundary: exactly enough history must still produce a value.
+	exact := configuredIndicatorSeries(makeKlines(200), &IndicatorParams{EMAPeriods: []int{200}}, 30)
+	found := false
+	for _, s := range exact {
+		if s.Label == "EMA(200)" && len(s.Values) == 1 && s.Values[0] != 0 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("EMA(200) over a 200-bar window must emit exactly one value, got %v", exact)
+	}
+}

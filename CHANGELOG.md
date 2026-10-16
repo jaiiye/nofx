@@ -112,6 +112,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bot uses the same model selection as the web agent.
 
 ### Fixed
+- Indicator values the analysis window cannot produce are omitted from the prompt instead of being
+  printed as `0`. A period longer than the available bars used to reach the model as a fabricated
+  zero (`ATR(300): 0.0000`, `ADX(14): 0.0`, `SUPERTREND_DIR: 0`), which reads as "zero volatility /
+  no trend" rather than "not computable" — and the model acts on it. Each omission is logged once
+  per indicator (e.g. `ATR(300)` needs 301 bars, the window has 200) so a strategy configured
+  beyond its window is visible instead of silently degrading. The legacy longer-term builder now
+  shares the same availability-guarded path instead of duplicating the series construction.
 - The primary timeframe is now guaranteed to be one of the analysed frames. ADX / Supertrend are
   printed for the primary frame only and the primary drives candle-close alignment, so a config
   written through the API or the agent (the strategy studio already keeps them consistent) could

@@ -435,31 +435,7 @@ func calculateLongerTermData(klines []Kline, params ...*IndicatorParams) *Longer
 	}
 
 	if len(params) > 0 && params[0] != nil {
-		p := params[0].normalized()
-		configured := make([]IndicatorSeries, 0, len(p.EMAPeriods)+len(p.RSIPeriods)+len(p.ATRPeriods)+1)
-		for _, period := range p.EMAPeriods {
-			configured = append(configured, IndicatorSeries{
-				Label:  fmt.Sprintf("EMA(%d)", period),
-				Values: []float64{calculateEMA(klines, period)},
-			})
-		}
-		for _, period := range p.RSIPeriods {
-			configured = append(configured, IndicatorSeries{
-				Label:  fmt.Sprintf("RSI(%d)", period),
-				Values: indicatorSeriesOverWindow(klines, start, period, func(kl []Kline) float64 { return calculateRSI(kl, period) }),
-			})
-		}
-		configured = append(configured, IndicatorSeries{
-			Label:  fmt.Sprintf("MACD(%d,%d)", p.MACDFast, p.MACDSlow),
-			Values: indicatorSeriesOverWindow(klines, start, p.MACDSlow, func(kl []Kline) float64 { return calculateMACDWithPeriods(kl, p.MACDFast, p.MACDSlow) }),
-		})
-		for _, period := range p.ATRPeriods {
-			configured = append(configured, IndicatorSeries{
-				Label:  fmt.Sprintf("ATR(%d)", period),
-				Values: []float64{calculateATR(klines, period)},
-			})
-		}
-		data.ConfiguredIndicators = configured
+		data.ConfiguredIndicators = configuredIndicatorSeries(klines, params[0], 10)
 	}
 
 	return data
