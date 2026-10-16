@@ -596,8 +596,8 @@ func (e *StrategyEngine) writeIndicatorPlaybook(sb *strings.Builder, zh bool) {
 	var gate []string
 	if ind.EnableADX {
 		gate = append(gate, l(
-			"ADX gauges regime: > 25 = trending, < 20 = range/chop where breakout entries are low quality. DI+ above DI- = bullish side, below = bearish.",
-			"ADX 判断市场状态：> 25 为趋势市，< 20 为震荡市（此时突破入场质量差）。DI+ 高于 DI- 为多头方向，反之空头。"))
+			"ADX measures trend STRENGTH — it is context, not a permission gate: above ~25 the market is trending (trade with the DI+/DI- side), 20-25 is a tradeable transition, below 20 it is ranging and breakout continuation is the weak play — there prefer the range edges or a fresh reversal. DI+ above DI- = bullish side, below = bearish. A low ADX on its own is not a reason to stay flat.",
+			"ADX 衡量趋势「强度」，是判断背景的输入，不是开仓许可：约 25 以上为趋势市（顺 DI+/DI- 方向做），20-25 为可交易的过渡区，20 以下为震荡市——此时突破延续是最弱的打法，优先在区间边缘或出现明确反转时进场。DI+ 高于 DI- 为多头方向，反之空头。ADX 偏低本身不构成观望理由。"))
 	}
 	if ind.EnableSupertrend {
 		gate = append(gate, l(
@@ -681,8 +681,8 @@ func (e *StrategyEngine) writeIndicatorPlaybook(sb *strings.Builder, zh bool) {
 		}
 	}
 	sb.WriteString(l(
-		"\nPrinciple: a single indicator is never a reason to enter. When the enabled indicators conflict, stand aside or take the smallest position; enter when they align with the trend gate.\n\n",
-		"\n原则：单一指标不构成入场理由。已启用指标相互矛盾时观望或取最小仓位；与趋势判断同向共振时才入场。\n\n"))
+		"\nPrinciple: a single indicator is never a reason to enter. Alignment means the enabled signals do not contradict each other and the trend gate agrees — it does not require every indicator to sit at an extreme, and a quiet, low-volatility tape is not by itself a reason to stay flat: size the position to the opportunity instead. When the enabled indicators genuinely conflict, stand aside or take the smallest position.\n\n",
+		"\n原则：单一指标不构成入场理由。所谓共振，指已启用信号之间不互相矛盾、且与趋势判断同向——并不要求每个指标都处于极值；行情安静、波动偏低本身也不构成观望理由，应按机会大小调整仓位。只有当已启用指标确实相互矛盾时，才观望或取最小仓位。\n\n"))
 }
 
 // writeExitDiscipline states when a position may be closed. Without it the

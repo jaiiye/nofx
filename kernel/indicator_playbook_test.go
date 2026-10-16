@@ -31,7 +31,7 @@ func TestIndicatorPlaybookOnlyMentionsEnabledIndicators(t *testing.T) {
 		t.Fatalf("playbook missing from prompt")
 	}
 	for _, want := range []string{
-		"ADX gauges regime",
+		"ADX measures trend STRENGTH",
 		"Supertrend direction",
 		"Bollinger Bands time entries",
 		"MACD crossing",
@@ -96,8 +96,45 @@ func TestIndicatorPlaybookLocalized(t *testing.T) {
 	engine := NewStrategyEngine(&cfg)
 
 	prompt := engine.BuildSystemPrompt(1000, "balanced")
-	if !strings.Contains(prompt, "指标协同规则") || !strings.Contains(prompt, "ADX 判断市场状态") {
+	if !strings.Contains(prompt, "指标协同规则") || !strings.Contains(prompt, "ADX 衡量趋势") {
 		t.Fatalf("zh playbook not localized")
+	}
+}
+
+// A live run stalled on this rule: the playbook read as a veto ("< 20 = range
+// where breakout entries are low quality") and the model echoed it back —
+// "无一满足趋势市（>25）…突破质量差" — then held for hours across every cycle.
+// ADX must stay a strength reading the model weighs, not a gate it hides behind.
+func TestIndicatorPlaybookADXIsNotAVeto(t *testing.T) {
+	cfg := store.GetDefaultStrategyConfig("en")
+	cfg.Indicators.EnableADX = true
+	prompt := NewStrategyEngine(&cfg).BuildSystemPrompt(1000, "balanced")
+
+	if !strings.Contains(prompt, "not a permission gate") {
+		t.Error("ADX rule must state it is not a permission gate")
+	}
+	if !strings.Contains(prompt, "is not a reason to stay flat") {
+		t.Error("ADX rule must state that a low reading alone does not forbid entering")
+	}
+	for _, veto := range []string{"low quality", "not a reason to enter"} {
+		if strings.Contains(prompt, veto) {
+			t.Errorf("ADX rule reads as an entry veto: %q", veto)
+		}
+	}
+
+	// The confluence principle must not demand an extreme on every indicator.
+	if !strings.Contains(prompt, "does not require every indicator to sit at an extreme") {
+		t.Error("confluence principle must not demand an extreme from every indicator")
+	}
+
+	zhCfg := store.GetDefaultStrategyConfig("zh")
+	zhCfg.Indicators.EnableADX = true
+	zh := NewStrategyEngine(&zhCfg).BuildSystemPrompt(1000, "balanced")
+	if !strings.Contains(zh, "不是开仓许可") || !strings.Contains(zh, "不构成观望理由") {
+		t.Error("zh ADX rule must not read as a veto")
+	}
+	if strings.Contains(zh, "入场质量差") {
+		t.Error("zh ADX rule still reads as an entry veto")
 	}
 }
 

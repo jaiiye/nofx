@@ -112,6 +112,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bot uses the same model selection as the web agent.
 
 ### Fixed
+- The indicator playbook no longer reads as an ADX veto. It said "> 25 = trending, < 20 = range
+  where breakout entries are low quality", and a live model turned that into a hard gate and quoted
+  it back ("无一满足趋势市（>25）…突破质量差") while holding for hours of cycles in a row. ADX is
+  now described as trend *strength* the model weighs — "context, not a permission gate": 20-25 is a
+  tradeable transition, and below 20 prefer the range edges or a fresh reversal over breakout
+  continuation. The confluence principle also states that alignment does not require every
+  indicator to sit at an extreme, and that a quiet, low-volatility tape is not by itself a reason
+  to stay flat.
 - The equity curve now stays cash-flow neutral across deposits and withdrawals. Each
   snapshot records the PnL baseline in effect when it was taken
   (`trader_equity_snapshots.initial_balance`, added to existing tables), and both
