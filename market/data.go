@@ -254,27 +254,47 @@ func GetWithTimeframesIndicators(symbol string, timeframes []string, primaryTime
 	priceChange1h := calculatePriceChangeByBars(primaryKlines, primaryTimeframe, 60)  // 1 hour
 	priceChange4h := calculatePriceChangeByBars(primaryKlines, primaryTimeframe, 240) // 4 hours
 
-	// Get OI data
-	oiData, err := getOpenInterestData(symbol)
-	if err != nil {
-		oiData = &OIData{Latest: 0, Average: 0}
-	}
-
-	// Get Funding Rate
-	fundingRate, _ := getFundingRate(symbol)
+	// Market context (OI / funding / premium / 24h volume): prefer the venue's
+	// own figures, which also cover the HIP-3 dex (stocks, commodities,
+	// indices) that Binance cannot serve at all.
+	oiData, fundingRatePerDay, premiumPct, dayNotional := marketContext(symbol)
 
 	return &Data{
-		Symbol:        symbol,
-		CurrentPrice:  currentPrice,
-		PriceChange1h: priceChange1h,
-		PriceChange4h: priceChange4h,
-		CurrentEMA20:  currentEMA20,
-		CurrentMACD:   currentMACD,
-		CurrentRSI7:   currentRSI7,
-		OpenInterest:  oiData,
-		FundingRate:   fundingRate,
-		TimeframeData: timeframeData,
+		Symbol:            symbol,
+		CurrentPrice:      currentPrice,
+		PriceChange1h:     priceChange1h,
+		PriceChange4h:     priceChange4h,
+		CurrentEMA20:      currentEMA20,
+		CurrentMACD:       currentMACD,
+		CurrentRSI7:       currentRSI7,
+		OpenInterest:      oiData,
+		FundingRate:       fundingRatePerDay,
+		FundingRatePerDay: fundingRatePerDay,
+		PremiumPct:        premiumPct,
+		DayNotionalVolume: dayNotional,
+		TimeframeData:     timeframeData,
 	}, nil
+}
+
+// marketContext resolves OI, per-day funding, premium and 24h notional volume
+// for a symbol. The venue (Hyperliquid) is preferred: it serves every asset it
+// lists, including the HIP-3 dex, while Binance is the fallback for assets the
+// venue does not carry and for non-Hyperliquid deployments.
+func marketContext(symbol string) (oi *OIData, fundingRatePerDay, premiumPct, dayNotional float64) {
+	if ctx, ok := hyperliquidAssetCtx(symbol); ok {
+		return &OIData{Latest: ctx.OpenInterest, Average: ctx.OpenInterest},
+			ctx.Funding * 24, // the venue charges funding hourly
+			ctx.Premium * 100,
+			ctx.DayNtlVlm
+	}
+
+	// Fallback: Binance perps (funding is charged every 8 hours there).
+	oiData, err := getOpenInterestData(symbol)
+	if err != nil || oiData == nil {
+		oiData = &OIData{}
+	}
+	rate, _ := getFundingRate(symbol)
+	return oiData, rate * 3, 0, 0
 }
 
 // getOpenInterestData retrieves OI data

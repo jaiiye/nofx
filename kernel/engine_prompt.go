@@ -1024,7 +1024,24 @@ func (e *StrategyEngine) formatMarketData(data *market.Data, fullKlines bool) st
 		}
 
 		if indicators.EnableFundingRate {
-			sb.WriteString(fmt.Sprintf("Funding Rate: %.2e\n\n", data.FundingRate))
+			// Per-day normalization: the venue charges funding hourly, so the
+			// raw rate is 24x the daily carry cost the AI should reason about.
+			sb.WriteString(fmt.Sprintf("Funding Rate: %.4f%%/day\n\n", data.FundingRatePerDay*100))
+		}
+
+		// Venue context that Binance cannot provide (HIP-3 stocks/commodities
+		// included): premium against the oracle price and 24h traded notional.
+		if data.PremiumPct != 0 || data.DayNotionalVolume > 0 {
+			if data.DayNotionalVolume > 0 {
+				sb.WriteString(fmt.Sprintf("24h Notional Volume: $%.0f", data.DayNotionalVolume))
+			}
+			if data.PremiumPct != 0 {
+				if data.DayNotionalVolume > 0 {
+					sb.WriteString(" | ")
+				}
+				sb.WriteString(fmt.Sprintf("Premium vs oracle: %+.4f%%", data.PremiumPct))
+			}
+			sb.WriteString("\n\n")
 		}
 	}
 

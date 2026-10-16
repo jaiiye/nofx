@@ -133,6 +133,14 @@ func (t *HyperliquidTrader) SyncOrdersFromHyperliquid(traderID string, exchangeI
 	}
 
 	logger.Infof("✅ Order sync completed: %d new trades synced", syncedCount)
+
+	// Funding payments are charged hourly on this venue: fold them into the
+	// open position records so PnL, the protections and the AI context see the
+	// real carry cost of multi-day holds.
+	if err := t.SyncFundingPayments(traderID, st); err != nil {
+		// Non-fatal: the order sync itself succeeded.
+		logger.Infof("⚠️  Funding sync failed for %s: %v", traderID, err)
+	}
 	return nil
 }
 

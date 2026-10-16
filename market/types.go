@@ -4,15 +4,26 @@ import "time"
 
 // Data market data structure
 type Data struct {
-	Symbol            string
-	CurrentPrice      float64
-	PriceChange1h     float64 // 1-hour price change percentage
-	PriceChange4h     float64 // 4-hour price change percentage
-	CurrentEMA20      float64
-	CurrentMACD       float64
-	CurrentRSI7       float64
-	OpenInterest      *OIData
-	FundingRate       float64
+	Symbol        string
+	CurrentPrice  float64
+	PriceChange1h float64 // 1-hour price change percentage
+	PriceChange4h float64 // 4-hour price change percentage
+	CurrentEMA20  float64
+	CurrentMACD   float64
+	CurrentRSI7   float64
+	OpenInterest  *OIData
+	FundingRate   float64
+	// FundingRatePerDay is the carry cost per day (the venue charges Hyperliquid
+	// funding hourly, Binance every 8h), so the AI can weigh it against a
+	// multi-day holding period.
+	FundingRatePerDay float64
+	// PremiumPct is the venue's mark-vs-oracle premium in percent (Hyperliquid
+	// only; 0 when unavailable).
+	PremiumPct float64
+	// DayNotionalVolume is the venue's 24h traded notional in USD (Hyperliquid
+	// only). It gives the liquidity filter a value for assets without a Binance
+	// OI reading (HIP-3 stocks/commodities/indices).
+	DayNotionalVolume float64
 	IntradaySeries    *IntradayData
 	LongerTermContext *LongerTermData
 	// Multi-timeframe data (new)

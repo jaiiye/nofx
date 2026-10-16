@@ -260,16 +260,28 @@ func fetchMarketDataWithStrategy(ctx *Context, engine *StrategyEngine) error {
 			continue
 		}
 
-		// Liquidity filter (skip for xyz dex assets - they don't have OI data from Binance)
+		// Liquidity filter. The OI value (OI x price) is the historical
+		// measure; HIP-3 assets (stocks, commodities, indices) have no Binance
+		// OI, so they are judged on the venue's 24h traded notional instead of
+		// being exempted from the filter entirely.
 		isExistingPosition := positionSymbols[coin.Symbol]
-		isXyzAsset := market.IsXyzDexAsset(coin.Symbol)
-		if !isExistingPosition && !isXyzAsset && data.OpenInterest != nil && data.CurrentPrice > 0 {
-			oiValue := data.OpenInterest.Latest * data.CurrentPrice
-			oiValueInMillions := oiValue / 1_000_000
-			if oiValueInMillions < minOIThresholdMillions {
-				logger.Infof("⚠️  %s OI value too low (%.2fM USD < %.1fM), skipping coin",
-					coin.Symbol, oiValueInMillions, minOIThresholdMillions)
-				continue
+		if !isExistingPosition && data.CurrentPrice > 0 {
+			liquidityUSD := 0.0
+			source := ""
+			if data.OpenInterest != nil && data.OpenInterest.Latest > 0 {
+				liquidityUSD = data.OpenInterest.Latest * data.CurrentPrice
+				source = "OI value"
+			} else if data.DayNotionalVolume > 0 {
+				liquidityUSD = data.DayNotionalVolume
+				source = "24h notional volume"
+			}
+			if liquidityUSD > 0 {
+				liquidityMillions := liquidityUSD / 1_000_000
+				if liquidityMillions < minOIThresholdMillions {
+					logger.Infof("⚠️  %s %s too low (%.2fM USD < %.1fM), skipping coin",
+						coin.Symbol, source, liquidityMillions, minOIThresholdMillions)
+					continue
+				}
 			}
 		}
 

@@ -31,8 +31,12 @@ type Trader struct {
 	// last reconciliation. Wallet moves that realized PnL does not explain are
 	// deposits/withdrawals, and are folded into InitialBalance so PnL and PnL%
 	// stay meaningful (a deposit used to show up as profit).
-	PnLBaselineWallet   float64   `gorm:"column:pnl_baseline_wallet;default:0" json:"pnl_baseline_wallet"`
-	PnLBaselineAtMs     int64     `gorm:"column:pnl_baseline_at_ms;default:0" json:"pnl_baseline_at_ms"`
+	PnLBaselineWallet float64 `gorm:"column:pnl_baseline_wallet;default:0" json:"pnl_baseline_wallet"`
+	PnLBaselineAtMs   int64   `gorm:"column:pnl_baseline_at_ms;default:0" json:"pnl_baseline_at_ms"`
+	// FundingSyncedAtMs is the watermark for venue funding payments already
+	// applied to position records (funding is charged hourly on Hyperliquid, so
+	// multi-day holds accumulate a real carry cost).
+	FundingSyncedAtMs   int64     `gorm:"column:funding_synced_at_ms;default:0" json:"funding_synced_at_ms"`
 	ScanIntervalMinutes int       `gorm:"column:scan_interval_minutes;default:3" json:"scan_interval_minutes"`
 	IsRunning           bool      `gorm:"column:is_running;default:false" json:"is_running"`
 	IsCrossMargin       bool      `gorm:"column:is_cross_margin;default:true" json:"is_cross_margin"`
@@ -157,6 +161,26 @@ func (s *TraderStore) UpdateInitialBalance(userID, id string, newBalance float64
 	return s.db.Model(&Trader{}).
 		Where("id = ? AND user_id = ?", id, userID).
 		Update("initial_balance", newBalance).Error
+}
+
+// GetFundingSyncPoint returns the venue-funding watermark (ms) for a trader.
+func (s *TraderStore) GetFundingSyncPoint(traderID string) (int64, error) {
+	var row struct{ FundingSyncedAtMs int64 }
+	res := s.db.Model(&Trader{}).
+		Select("funding_synced_at_ms").
+		Where("id = ?", traderID).
+		Scan(&row)
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	return row.FundingSyncedAtMs, nil
+}
+
+// AdvanceFundingSyncPoint moves the venue-funding watermark forward.
+func (s *TraderStore) AdvanceFundingSyncPoint(traderID string, atMs int64) error {
+	return s.db.Model(&Trader{}).
+		Where("id = ?", traderID).
+		Update("funding_synced_at_ms", atMs).Error
 }
 
 // GetPnLBaseline returns the last cash-flow reconciliation point.
