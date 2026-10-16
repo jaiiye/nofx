@@ -482,6 +482,11 @@ func (at *AutoTrader) buildTradingContext() (*kernel.Context, error) {
 		return nil, fmt.Errorf("failed to get positions: %w", err)
 	}
 
+	// Reconcile the recorded leverage with the venue's figure: positions built
+	// from the fill stream start with a placeholder, and a wrong leverage makes
+	// every stored PnL% (net/margin) wrong by the same factor.
+	at.reconcilePositionLeverage(positions)
+
 	var positionInfos []kernel.PositionInfo
 	totalMarginUsed := 0.0
 
@@ -739,6 +744,46 @@ func (at *AutoTrader) buildTradingContext() (*kernel.Context, error) {
 	}
 
 	return ctx, nil
+}
+
+// reconcilePositionLeverage aligns the leverage recorded on open positions with
+// the venue's own figure. Positions created by OrderSync (which consumes a fill
+// stream that carries no leverage) start from a placeholder, and everything
+// derived from the stored value — the positions UI and the net/margin PnL% the
+// AI sees — would otherwise be off by the real leverage factor.
+func (at *AutoTrader) reconcilePositionLeverage(exchangePositions []map[string]interface{}) {
+	if at.store == nil || len(exchangePositions) == 0 {
+		return
+	}
+
+	type positionKey struct{ symbol, side string }
+	venueLeverage := make(map[positionKey]int, len(exchangePositions))
+	for _, p := range exchangePositions {
+		symbol, _ := p["symbol"].(string)
+		side, _ := p["side"].(string)
+		leverage, _ := p["leverage"].(float64)
+		if symbol == "" || leverage <= 0 {
+			continue
+		}
+		venueLeverage[positionKey{market.Normalize(symbol), strings.ToUpper(side)}] = int(leverage)
+	}
+
+	stored, err := at.store.Position().GetOpenPositions(at.id)
+	if err != nil {
+		at.logWarnf("⚠ Failed to load stored positions for leverage reconciliation: %v", err)
+		return
+	}
+	for _, pos := range stored {
+		want, ok := venueLeverage[positionKey{market.Normalize(pos.Symbol), strings.ToUpper(pos.Side)}]
+		if !ok || want == pos.Leverage {
+			continue
+		}
+		if err := at.store.Position().UpdateLeverage(at.id, pos.Symbol, pos.Side, want); err != nil {
+			at.logWarnf("⚠ Failed to reconcile leverage for %s %s: %v", pos.Symbol, pos.Side, err)
+			continue
+		}
+		at.logInfof("🔧 Leverage reconciled from the venue for %s %s: %dx → %dx", pos.Symbol, pos.Side, pos.Leverage, want)
+	}
 }
 
 // sortDecisionsByPriority sorts decisions: close positions first, then open positions, finally hold/wait

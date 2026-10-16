@@ -2,6 +2,7 @@ package kernel
 
 import (
 	"fmt"
+	"math"
 	"nofx/logger"
 	"nofx/market"
 )
@@ -10,16 +11,29 @@ import (
 // Decision Validation
 // ============================================================================
 
-func validateDecisions(decisions []Decision, accountEquity float64, btcEthLeverage, altcoinLeverage int, btcEthPosRatio, altcoinPosRatio float64) error {
+// normalizeMinRewardRatio maps an unset/invalid configured minimum to the
+// product default (3:1).
+func normalizeMinRewardRatio(v float64) float64 {
+	if v <= 0 {
+		return 3.0
+	}
+	return v
+}
+
+// validateDecisions validates every decision. entryPriceFor resolves the
+// current market price for a symbol (used for the risk/reward check); when nil
+// or returning 0 the risk/reward check is skipped for that symbol.
+func validateDecisions(decisions []Decision, accountEquity float64, btcEthLeverage, altcoinLeverage int, btcEthPosRatio, altcoinPosRatio float64, entryPriceFor func(symbol string) float64, minRewardRatio float64) error {
+	minRewardRatio = normalizeMinRewardRatio(minRewardRatio)
 	for i := range decisions {
-		if err := validateDecision(&decisions[i], accountEquity, btcEthLeverage, altcoinLeverage, btcEthPosRatio, altcoinPosRatio); err != nil {
+		if err := validateDecision(&decisions[i], accountEquity, btcEthLeverage, altcoinLeverage, btcEthPosRatio, altcoinPosRatio, entryPriceFor, minRewardRatio); err != nil {
 			return fmt.Errorf("decision #%d validation failed: %w", i+1, err)
 		}
 	}
 	return nil
 }
 
-func validateDecision(d *Decision, accountEquity float64, btcEthLeverage, altcoinLeverage int, btcEthPosRatio, altcoinPosRatio float64) error {
+func validateDecision(d *Decision, accountEquity float64, btcEthLeverage, altcoinLeverage int, btcEthPosRatio, altcoinPosRatio float64, entryPriceFor func(symbol string) float64, minRewardRatio float64) error {
 	validActions := map[string]bool{
 		"open_long":   true,
 		"open_short":  true,
@@ -101,31 +115,29 @@ func validateDecision(d *Decision, accountEquity float64, btcEthLeverage, altcoi
 			}
 		}
 
-		var entryPrice float64
-		if d.Action == "open_long" {
-			entryPrice = d.StopLoss + (d.TakeProfit-d.StopLoss)*0.2
-		} else {
-			entryPrice = d.StopLoss - (d.StopLoss-d.TakeProfit)*0.2
+		// Risk/reward is measured against the ACTUAL entry (current market
+		// price), not a synthesized one. The previous version derived the entry
+		// as SL + 20% of the SL->TP span, which made the ratio a tautological
+		// 4.0:1 — every SL/TP pair passed, including targets closer to price
+		// than the stop (a live decision on xyz:SILVER passed with 0.24:1).
+		entryPrice := 0.0
+		if entryPriceFor != nil {
+			entryPrice = entryPriceFor(d.Symbol)
+		}
+		if entryPrice <= 0 {
+			logger.Infof("⚠️  risk/reward check skipped for %s: no market price available", d.Symbol)
+			return nil
 		}
 
-		var riskPercent, rewardPercent, riskRewardRatio float64
-		if d.Action == "open_long" {
-			riskPercent = (entryPrice - d.StopLoss) / entryPrice * 100
-			rewardPercent = (d.TakeProfit - entryPrice) / entryPrice * 100
-			if riskPercent > 0 {
-				riskRewardRatio = rewardPercent / riskPercent
-			}
-		} else {
-			riskPercent = (d.StopLoss - entryPrice) / entryPrice * 100
-			rewardPercent = (entryPrice - d.TakeProfit) / entryPrice * 100
-			if riskPercent > 0 {
-				riskRewardRatio = rewardPercent / riskPercent
-			}
+		risk := math.Abs(entryPrice - d.StopLoss)
+		reward := math.Abs(d.TakeProfit - entryPrice)
+		if risk <= 0 {
+			return fmt.Errorf("stop loss must differ from the entry price (entry %.4f, stop loss %.4f)", entryPrice, d.StopLoss)
 		}
-
-		if riskRewardRatio < 3.0 {
-			return fmt.Errorf("risk/reward ratio too low (%.2f:1), must be ≥3.0:1 [risk: %.2f%% reward: %.2f%%] [stop loss: %.2f take profit: %.2f]",
-				riskRewardRatio, riskPercent, rewardPercent, d.StopLoss, d.TakeProfit)
+		ratio := reward / risk
+		if ratio < minRewardRatio {
+			return fmt.Errorf("risk/reward ratio too low (%.2f:1), must be ≥%.1f:1 [entry %.4f stop loss %.4f take profit %.4f → risk %.4f reward %.4f]",
+				ratio, minRewardRatio, entryPrice, d.StopLoss, d.TakeProfit, risk, reward)
 		}
 	}
 

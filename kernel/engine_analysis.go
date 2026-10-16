@@ -122,6 +122,14 @@ func GetFullDecisionWithStrategy(ctx *Context, mcpClient mcp.AIClient, engine *S
 		riskConfig.AltcoinMaxLeverage,
 		riskConfig.BTCETHMaxPositionValueRatio,
 		riskConfig.AltcoinMaxPositionValueRatio,
+		// Risk/reward is validated against the decision-time market price.
+		func(symbol string) float64 {
+			if data, ok := ctx.MarketDataMap[symbol]; ok && data != nil {
+				return data.CurrentPrice
+			}
+			return 0
+		},
+		riskConfig.MinRiskRewardRatio,
 	)
 
 	if decision != nil {
@@ -297,7 +305,7 @@ func pruneCandidateCoinsWithoutMarketData(ctx *Context) {
 // AI Response Parsing
 // ============================================================================
 
-func parseFullDecisionResponse(aiResponse string, accountEquity float64, btcEthLeverage, altcoinLeverage int, btcEthPosRatio, altcoinPosRatio float64) (*FullDecision, error) {
+func parseFullDecisionResponse(aiResponse string, accountEquity float64, btcEthLeverage, altcoinLeverage int, btcEthPosRatio, altcoinPosRatio float64, entryPriceFor func(symbol string) float64, minRewardRatio float64) (*FullDecision, error) {
 	cotTrace := extractCoTTrace(aiResponse)
 
 	decisions, err := extractDecisions(aiResponse)
@@ -308,7 +316,7 @@ func parseFullDecisionResponse(aiResponse string, accountEquity float64, btcEthL
 		}, fmt.Errorf("failed to extract decisions: %w", err)
 	}
 
-	if err := validateDecisions(decisions, accountEquity, btcEthLeverage, altcoinLeverage, btcEthPosRatio, altcoinPosRatio); err != nil {
+	if err := validateDecisions(decisions, accountEquity, btcEthLeverage, altcoinLeverage, btcEthPosRatio, altcoinPosRatio, entryPriceFor, minRewardRatio); err != nil {
 		return &FullDecision{
 			CoTTrace:  cotTrace,
 			Decisions: decisions,

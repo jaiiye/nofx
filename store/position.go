@@ -445,6 +445,20 @@ func (s *PositionStore) GetNetRealizedPnLSince(traderID string, sinceMs int64) (
 	return net, nil
 }
 
+// UpdateLeverage corrects the recorded leverage of an open position.
+// Positions created from an exchange fill stream (OrderSync) carry no leverage,
+// so PositionBuilder writes a placeholder; the trading loop reconciles the real
+// venue figure afterwards, because the stored PnL% is net/margin and a wrong
+// leverage understates it by the same factor.
+func (s *PositionStore) UpdateLeverage(traderID, symbol, side string, leverage int) error {
+	if leverage <= 0 {
+		return nil
+	}
+	return s.db.Model(&TraderPosition{}).
+		Where("trader_id = ? AND symbol = ? AND UPPER(side) = ? AND status = ?", traderID, symbol, strings.ToUpper(side), "OPEN").
+		Update("leverage", leverage).Error
+}
+
 // GetAllOpenPositions gets all traders' open positions
 func (s *PositionStore) GetAllOpenPositions() ([]*TraderPosition, error) {
 	var positions []*TraderPosition

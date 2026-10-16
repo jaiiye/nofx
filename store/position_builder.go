@@ -68,12 +68,16 @@ func (pb *PositionBuilder) handleOpen(
 			EntryPrice:         price,
 			EntryOrderID:       orderID,
 			EntryTime:          tradeTimeMs,
-			Leverage:           1,
-			Status:             "OPEN",
-			Source:             "sync",
-			Fee:                fee,
-			CreatedAt:          nowMs,
-			UpdatedAt:          nowMs,
+			// Placeholder: the fill stream carries no leverage. The trading loop
+			// reconciles this with the venue's position data (see
+			// AutoTrader.reconcilePositionLeverage); do not invent a real-looking
+			// value here — a wrong leverage skews every derived PnL%.
+			Leverage:  1,
+			Status:    "OPEN",
+			Source:    "sync",
+			Fee:       fee,
+			CreatedAt: nowMs,
+			UpdatedAt: nowMs,
 		}
 		return pb.positionStore.CreateOpenPosition(position)
 	}

@@ -1,6 +1,7 @@
 package kernel
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -84,7 +85,7 @@ func TestLeverageFallback(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Use default position value ratios for testing (10x for BTC/ETH, 1.5x for altcoins)
-			err := validateDecision(&tt.decision, tt.accountEquity, tt.btcEthLeverage, tt.altcoinLeverage, 10.0, 1.5)
+			err := validateDecision(&tt.decision, tt.accountEquity, tt.btcEthLeverage, tt.altcoinLeverage, 10.0, 1.5, nil, 3.0)
 
 			// Check error status
 			if (err != nil) != tt.wantError {
@@ -114,4 +115,58 @@ func stringContains(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// The risk/reward gate used to derive the entry as SL + 20% of the SL→TP span,
+// which made the ratio a tautological 4.0:1 — every pair passed. It now
+// measures against the real market price, so a target closer to price than the
+// stop is rejected (live case: xyz:SILVER entry 57.45, SL 56.40, TP 57.70).
+func TestValidateDecisionRiskRewardUsesMarketPrice(t *testing.T) {
+	priceFor := func(string) float64 { return 57.45 }
+
+	bad := Decision{
+		Symbol: "xyz:SILVER", Action: "open_long", Leverage: 5, PositionSizeUSD: 75,
+		StopLoss: 56.40, TakeProfit: 57.70, // 0.24:1 at the real entry
+	}
+	err := validateDecision(&bad, 153, 5, 5, 0.6, 0.6, priceFor, 3.0)
+	if err == nil {
+		t.Fatal("target nearer than the stop must be rejected")
+	}
+	if !strings.Contains(err.Error(), "risk/reward ratio too low") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The same SL/TP pair is fine when the entry really is near the stop.
+	near := Decision{
+		Symbol: "xyz:SILVER", Action: "open_long", Leverage: 5, PositionSizeUSD: 75,
+		StopLoss: 56.40, TakeProfit: 60.60, // risk 1.05, reward 2.10 → 2.0:1? no: entry 57.45 → 2.0:1
+	}
+	if err := validateDecision(&near, 153, 5, 5, 0.6, 0.6, priceFor, 2.0); err != nil {
+		t.Fatalf("2.0:1 must pass a 2.0 minimum, got: %v", err)
+	}
+	if err := validateDecision(&near, 153, 5, 5, 0.6, 0.6, priceFor, 3.0); err == nil {
+		t.Fatal("2.0:1 must fail a 3.0 minimum")
+	}
+
+	// Configured threshold is respected (not the old hardcoded 3.0).
+	if err := validateDecision(&near, 153, 5, 5, 0.6, 0.6, priceFor, 1.5); err != nil {
+		t.Fatalf("2.0:1 must pass a 1.5 minimum, got: %v", err)
+	}
+
+	// No market price → check skipped rather than blocking trading.
+	if err := validateDecision(&bad, 153, 5, 5, 0.6, 0.6, func(string) float64 { return 0 }, 3.0); err != nil {
+		t.Fatalf("missing price must skip the check, got: %v", err)
+	}
+}
+
+func TestNormalizeMinRewardRatio(t *testing.T) {
+	if got := normalizeMinRewardRatio(0); got != 3.0 {
+		t.Fatalf("0 → %.1f, want 3.0", got)
+	}
+	if got := normalizeMinRewardRatio(-2); got != 3.0 {
+		t.Fatalf("negative → %.1f, want 3.0", got)
+	}
+	if got := normalizeMinRewardRatio(4.5); got != 4.5 {
+		t.Fatalf("explicit → %.1f, want 4.5", got)
+	}
 }
