@@ -1040,6 +1040,7 @@ func (e *StrategyEngine) formatCoinSourceTag(sources []string) string {
 func (e *StrategyEngine) formatMarketData(data *market.Data, fullKlines bool) string {
 	var sb strings.Builder
 	indicators := e.config.Indicators
+	limit := resolveDisplayLimit(indicators)
 
 	// Clearly label the coin symbol
 	sb.WriteString(fmt.Sprintf("=== %s Market Data ===\n\n", data.Symbol))
@@ -1101,38 +1102,38 @@ func (e *StrategyEngine) formatMarketData(data *market.Data, fullKlines bool) st
 			sb.WriteString(fmt.Sprintf("Intraday series (%s intervals, oldest → latest):\n\n", klineConfig.PrimaryTimeframe))
 
 			if len(data.IntradaySeries.MidPrices) > 0 {
-				sb.WriteString(fmt.Sprintf("Mid prices: %s\n\n", formatSeriesTail(data.IntradaySeries.MidPrices)))
+				sb.WriteString(fmt.Sprintf("Mid prices: %s\n\n", formatSeriesTail(data.IntradaySeries.MidPrices, limit)))
 			}
 
 			if indicators.EnableEMA {
-				if !writeConfiguredIndicators(&sb, data.IntradaySeries.ConfiguredIndicators, "EMA", "", "\n\n") && len(data.IntradaySeries.EMA20Values) > 0 {
-					sb.WriteString(fmt.Sprintf("EMA indicators (20-period): %s\n\n", formatSeriesTail(data.IntradaySeries.EMA20Values)))
+				if !writeConfiguredIndicators(&sb, data.IntradaySeries.ConfiguredIndicators, "EMA", "", "\n\n", limit) && len(data.IntradaySeries.EMA20Values) > 0 {
+					sb.WriteString(fmt.Sprintf("EMA indicators (20-period): %s\n\n", formatSeriesTail(data.IntradaySeries.EMA20Values, limit)))
 				}
 			}
 
 			if indicators.EnableMACD {
-				if !writeConfiguredIndicators(&sb, data.IntradaySeries.ConfiguredIndicators, "MACD", "", "\n\n") && len(data.IntradaySeries.MACDValues) > 0 {
-					sb.WriteString(fmt.Sprintf("MACD indicators: %s\n\n", formatSeriesTail(data.IntradaySeries.MACDValues)))
+				if !writeConfiguredIndicators(&sb, data.IntradaySeries.ConfiguredIndicators, "MACD", "", "\n\n", limit) && len(data.IntradaySeries.MACDValues) > 0 {
+					sb.WriteString(fmt.Sprintf("MACD indicators: %s\n\n", formatSeriesTail(data.IntradaySeries.MACDValues, limit)))
 				}
 			}
 
 			if indicators.EnableRSI {
-				if !writeConfiguredIndicators(&sb, data.IntradaySeries.ConfiguredIndicators, "RSI", "", "\n\n") {
+				if !writeConfiguredIndicators(&sb, data.IntradaySeries.ConfiguredIndicators, "RSI", "", "\n\n", limit) {
 					if len(data.IntradaySeries.RSI7Values) > 0 {
-						sb.WriteString(fmt.Sprintf("RSI indicators (7-Period): %s\n\n", formatSeriesTail(data.IntradaySeries.RSI7Values)))
+						sb.WriteString(fmt.Sprintf("RSI indicators (7-Period): %s\n\n", formatSeriesTail(data.IntradaySeries.RSI7Values, limit)))
 					}
 					if len(data.IntradaySeries.RSI14Values) > 0 {
-						sb.WriteString(fmt.Sprintf("RSI indicators (14-Period): %s\n\n", formatSeriesTail(data.IntradaySeries.RSI14Values)))
+						sb.WriteString(fmt.Sprintf("RSI indicators (14-Period): %s\n\n", formatSeriesTail(data.IntradaySeries.RSI14Values, limit)))
 					}
 				}
 			}
 
 			if indicators.EnableVolume && len(data.IntradaySeries.Volume) > 0 {
-				sb.WriteString(fmt.Sprintf("Volume: %s\n\n", formatSeriesTail(data.IntradaySeries.Volume)))
+				sb.WriteString(fmt.Sprintf("Volume: %s\n\n", formatSeriesTail(data.IntradaySeries.Volume, limit)))
 			}
 
 			if indicators.EnableATR {
-				if !writeConfiguredIndicators(&sb, data.IntradaySeries.ConfiguredIndicators, "ATR", "%.3f", "\n\n") {
+				if !writeConfiguredIndicators(&sb, data.IntradaySeries.ConfiguredIndicators, "ATR", "%.3f", "\n\n", limit) {
 					sb.WriteString(fmt.Sprintf("3m ATR (14-period): %.3f\n\n", data.IntradaySeries.ATR14))
 				}
 			}
@@ -1142,14 +1143,14 @@ func (e *StrategyEngine) formatMarketData(data *market.Data, fullKlines bool) st
 			sb.WriteString(fmt.Sprintf("Longer-term context (%s timeframe):\n\n", indicators.Klines.LongerTimeframe))
 
 			if indicators.EnableEMA {
-				if !writeConfiguredIndicators(&sb, data.LongerTermContext.ConfiguredIndicators, "EMA", "%.3f", "\n\n") {
+				if !writeConfiguredIndicators(&sb, data.LongerTermContext.ConfiguredIndicators, "EMA", "%.3f", "\n\n", limit) {
 					sb.WriteString(fmt.Sprintf("20-Period EMA: %.3f vs. 50-Period EMA: %.3f\n\n",
 						data.LongerTermContext.EMA20, data.LongerTermContext.EMA50))
 				}
 			}
 
 			if indicators.EnableATR {
-				if !writeConfiguredIndicators(&sb, data.LongerTermContext.ConfiguredIndicators, "ATR", "%.3f", "\n\n") {
+				if !writeConfiguredIndicators(&sb, data.LongerTermContext.ConfiguredIndicators, "ATR", "%.3f", "\n\n", limit) {
 					sb.WriteString(fmt.Sprintf("3-Period ATR: %.3f vs. 14-Period ATR: %.3f\n\n",
 						data.LongerTermContext.ATR3, data.LongerTermContext.ATR14))
 				}
@@ -1161,14 +1162,14 @@ func (e *StrategyEngine) formatMarketData(data *market.Data, fullKlines bool) st
 			}
 
 			if indicators.EnableMACD {
-				if !writeConfiguredIndicators(&sb, data.LongerTermContext.ConfiguredIndicators, "MACD", "", "\n\n") && len(data.LongerTermContext.MACDValues) > 0 {
-					sb.WriteString(fmt.Sprintf("MACD indicators: %s\n\n", formatSeriesTail(data.LongerTermContext.MACDValues)))
+				if !writeConfiguredIndicators(&sb, data.LongerTermContext.ConfiguredIndicators, "MACD", "", "\n\n", limit) && len(data.LongerTermContext.MACDValues) > 0 {
+					sb.WriteString(fmt.Sprintf("MACD indicators: %s\n\n", formatSeriesTail(data.LongerTermContext.MACDValues, limit)))
 				}
 			}
 
 			if indicators.EnableRSI {
-				if !writeConfiguredIndicators(&sb, data.LongerTermContext.ConfiguredIndicators, "RSI", "", "\n\n") && len(data.LongerTermContext.RSI14Values) > 0 {
-					sb.WriteString(fmt.Sprintf("RSI indicators (14-Period): %s\n\n", formatSeriesTail(data.LongerTermContext.RSI14Values)))
+				if !writeConfiguredIndicators(&sb, data.LongerTermContext.ConfiguredIndicators, "RSI", "", "\n\n", limit) && len(data.LongerTermContext.RSI14Values) > 0 {
+					sb.WriteString(fmt.Sprintf("RSI indicators (14-Period): %s\n\n", formatSeriesTail(data.LongerTermContext.RSI14Values, limit)))
 				}
 			}
 		}
@@ -1183,15 +1184,18 @@ func (e *StrategyEngine) formatMarketData(data *market.Data, fullKlines bool) st
 // series use singleFmt ("" = always slice format). Returns true when at
 // least one series was written, letting callers fall back to the legacy
 // fixed-period fields.
-func writeConfiguredIndicators(sb *strings.Builder, series []market.IndicatorSeries, prefix, singleFmt, lineSuffix string) bool {
+func writeConfiguredIndicators(sb *strings.Builder, series []market.IndicatorSeries, prefix, singleFmt, lineSuffix string, limit int) bool {
 	wrote := false
 	for _, s := range series {
 		if !strings.HasPrefix(s.Label, prefix) || len(s.Values) == 0 {
 			continue
 		}
 		values := s.Values
-		if len(values) > promptDisplayLimit {
-			values = values[len(values)-promptDisplayLimit:]
+		if limit <= 0 {
+			limit = promptDisplayLimit
+		}
+		if len(values) > limit {
+			values = values[len(values)-limit:]
 		}
 		if singleFmt != "" && len(values) == 1 {
 			sb.WriteString(fmt.Sprintf("%s: %s%s", s.Label, fmt.Sprintf(singleFmt, values[0]), lineSuffix))
@@ -1210,7 +1214,17 @@ func writeConfiguredIndicators(sb *strings.Builder, series []market.IndicatorSer
 // values, and the long lookback is already reflected in those values.
 const promptDisplayLimit = 40
 
+// resolveDisplayLimit returns the configured prompt display cap, falling back
+// to the product default (see KlineConfig.PromptDisplayBars).
+func resolveDisplayLimit(indicators store.IndicatorConfig) int {
+	if n := indicators.Klines.PromptDisplayBars; n > 0 {
+		return n
+	}
+	return promptDisplayLimit
+}
+
 func (e *StrategyEngine) formatTimeframeSeriesData(sb *strings.Builder, data *market.TimeframeSeriesData, indicators store.IndicatorConfig, includeKlines bool) {
+	limit := resolveDisplayLimit(indicators)
 	if len(data.Klines) > 0 {
 		// Compact CSV rows instead of fixed-width columns: same data, roughly
 		// 40% fewer characters, and enough significant digits for low-priced
@@ -1240,52 +1254,52 @@ func (e *StrategyEngine) formatTimeframeSeriesData(sb *strings.Builder, data *ma
 			sb.WriteString("\n")
 		}
 	} else if len(data.MidPrices) > 0 {
-		sb.WriteString(fmt.Sprintf("Mid prices: %s\n\n", formatSeriesTail(data.MidPrices)))
+		sb.WriteString(fmt.Sprintf("Mid prices: %s\n\n", formatSeriesTail(data.MidPrices, limit)))
 		if indicators.EnableVolume && len(data.Volume) > 0 {
-			sb.WriteString(fmt.Sprintf("Volume: %s\n\n", formatSeriesTail(data.Volume)))
+			sb.WriteString(fmt.Sprintf("Volume: %s\n\n", formatSeriesTail(data.Volume, limit)))
 		}
 	}
 
 	if indicators.EnableEMA {
-		if !writeConfiguredIndicators(sb, data.ConfiguredIndicators, "EMA", "", "\n") {
+		if !writeConfiguredIndicators(sb, data.ConfiguredIndicators, "EMA", "", "\n", limit) {
 			if len(data.EMA20Values) > 0 {
-				sb.WriteString(fmt.Sprintf("EMA20: %s\n", formatSeriesTail(data.EMA20Values)))
+				sb.WriteString(fmt.Sprintf("EMA20: %s\n", formatSeriesTail(data.EMA20Values, limit)))
 			}
 			if len(data.EMA50Values) > 0 {
-				sb.WriteString(fmt.Sprintf("EMA50: %s\n", formatSeriesTail(data.EMA50Values)))
+				sb.WriteString(fmt.Sprintf("EMA50: %s\n", formatSeriesTail(data.EMA50Values, limit)))
 			}
 		}
 	}
 
 	if indicators.EnableMACD {
-		if !writeConfiguredIndicators(sb, data.ConfiguredIndicators, "MACD", "", "\n") && len(data.MACDValues) > 0 {
-			sb.WriteString(fmt.Sprintf("MACD: %s\n", formatSeriesTail(data.MACDValues)))
+		if !writeConfiguredIndicators(sb, data.ConfiguredIndicators, "MACD", "", "\n", limit) && len(data.MACDValues) > 0 {
+			sb.WriteString(fmt.Sprintf("MACD: %s\n", formatSeriesTail(data.MACDValues, limit)))
 		}
 	}
 
 	if indicators.EnableRSI {
-		if !writeConfiguredIndicators(sb, data.ConfiguredIndicators, "RSI", "", "\n") {
+		if !writeConfiguredIndicators(sb, data.ConfiguredIndicators, "RSI", "", "\n", limit) {
 			if len(data.RSI7Values) > 0 {
-				sb.WriteString(fmt.Sprintf("RSI7: %s\n", formatSeriesTail(data.RSI7Values)))
+				sb.WriteString(fmt.Sprintf("RSI7: %s\n", formatSeriesTail(data.RSI7Values, limit)))
 			}
 			if len(data.RSI14Values) > 0 {
-				sb.WriteString(fmt.Sprintf("RSI14: %s\n", formatSeriesTail(data.RSI14Values)))
+				sb.WriteString(fmt.Sprintf("RSI14: %s\n", formatSeriesTail(data.RSI14Values, limit)))
 			}
 		}
 	}
 
 	if indicators.EnableATR {
-		if !writeConfiguredIndicators(sb, data.ConfiguredIndicators, "ATR", "%.4f", "\n") && data.ATR14 > 0 {
+		if !writeConfiguredIndicators(sb, data.ConfiguredIndicators, "ATR", "%.4f", "\n", limit) && data.ATR14 > 0 {
 			sb.WriteString(fmt.Sprintf("ATR14: %.4f\n", data.ATR14))
 		}
 	}
 
 	if indicators.EnableBOLL {
-		if !writeConfiguredIndicators(sb, data.ConfiguredIndicators, "BOLL", "", "\n") {
+		if !writeConfiguredIndicators(sb, data.ConfiguredIndicators, "BOLL", "", "\n", limit) {
 			if len(data.BOLLUpper) > 0 {
-				sb.WriteString(fmt.Sprintf("BOLL Upper: %s\n", formatSeriesTail(data.BOLLUpper)))
-				sb.WriteString(fmt.Sprintf("BOLL Middle: %s\n", formatSeriesTail(data.BOLLMiddle)))
-				sb.WriteString(fmt.Sprintf("BOLL Lower: %s\n", formatSeriesTail(data.BOLLLower)))
+				sb.WriteString(fmt.Sprintf("BOLL Upper: %s\n", formatSeriesTail(data.BOLLUpper, limit)))
+				sb.WriteString(fmt.Sprintf("BOLL Middle: %s\n", formatSeriesTail(data.BOLLMiddle, limit)))
+				sb.WriteString(fmt.Sprintf("BOLL Lower: %s\n", formatSeriesTail(data.BOLLLower, limit)))
 			}
 		}
 	}
@@ -1294,13 +1308,13 @@ func (e *StrategyEngine) formatTimeframeSeriesData(sb *strings.Builder, data *ma
 	// only, to keep the prompt budget in check.
 	if data.Timeframe == "" || indicators.Klines.PrimaryTimeframe == "" || data.Timeframe == indicators.Klines.PrimaryTimeframe {
 		if indicators.EnableADX {
-			writeConfiguredIndicators(sb, data.ConfiguredIndicators, "ADX", "%.1f", "\n")
-			writeConfiguredIndicators(sb, data.ConfiguredIndicators, "DI+", "%.1f", "\n")
-			writeConfiguredIndicators(sb, data.ConfiguredIndicators, "DI-", "%.1f", "\n")
+			writeConfiguredIndicators(sb, data.ConfiguredIndicators, "ADX", "%.1f", "\n", limit)
+			writeConfiguredIndicators(sb, data.ConfiguredIndicators, "DI+", "%.1f", "\n", limit)
+			writeConfiguredIndicators(sb, data.ConfiguredIndicators, "DI-", "%.1f", "\n", limit)
 		}
 		if indicators.EnableSupertrend {
-			writeConfiguredIndicators(sb, data.ConfiguredIndicators, "SUPERTREND(", "%.4f", "\n")
-			writeConfiguredIndicators(sb, data.ConfiguredIndicators, "SUPERTREND_DIR", "%.0f", "\n")
+			writeConfiguredIndicators(sb, data.ConfiguredIndicators, "SUPERTREND(", "%.4f", "\n", limit)
+			writeConfiguredIndicators(sb, data.ConfiguredIndicators, "SUPERTREND_DIR", "%.0f", "\n", limit)
 		}
 	}
 
@@ -1325,9 +1339,12 @@ func formatCompactPrice(v float64) string {
 // formatSeriesTail prints only the most recent values of a series (see
 // promptDisplayLimit) so a long analysis window never inflates the prompt,
 // whatever path produced the series.
-func formatSeriesTail(values []float64) string {
-	if len(values) > promptDisplayLimit {
-		values = values[len(values)-promptDisplayLimit:]
+func formatSeriesTail(values []float64, limit int) string {
+	if limit <= 0 {
+		limit = promptDisplayLimit
+	}
+	if len(values) > limit {
+		values = values[len(values)-limit:]
 	}
 	return formatFloatSlice(values)
 }

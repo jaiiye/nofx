@@ -917,6 +917,12 @@ type KlineConfig struct {
 	EnableMultiTimeframe bool `json:"enable_multi_timeframe"`
 	// selected timeframe list (new: supports multi-timeframe selection)
 	SelectedTimeframes []string `json:"selected_timeframes,omitempty"`
+	// PromptDisplayBars caps how many bars / indicator values are printed per
+	// timeframe in the AI prompt. The analysis window (PrimaryCount) can be far
+	// longer — an hourly strategy needs 200 bars for EMA200 — but the model only
+	// needs the recent shape, so printing all of it would inflate every prompt
+	// without adding information. 0 = the product default (40).
+	PromptDisplayBars int `json:"prompt_display_bars,omitempty"`
 }
 
 // ExternalDataSource external data source configuration

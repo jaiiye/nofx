@@ -102,6 +102,19 @@ func GetFullDecisionWithStrategy(ctx *Context, mcpClient mcp.AIClient, engine *S
 	// 3. Build User Prompt using strategy engine
 	userPrompt := engine.BuildUserPrompt(ctx)
 
+	// Prompt size is the main cost driver of a decision cycle, and the only way
+	// to notice a context that is outgrowing the model's window before the
+	// provider rejects it. ~3.5 characters per token for this mixed
+	// numbers/prose/Chinese content.
+	promptBytes := len(systemPrompt) + len(userPrompt)
+	logger.Infof("📏 prompt size: %.1f KB (system %.1f + user %.1f) ≈ %d tokens | %s primary, %d positions, %d candidates, %d timeframes",
+		float64(promptBytes)/1024,
+		float64(len(systemPrompt))/1024,
+		float64(len(userPrompt))/1024,
+		promptBytes/3500*1000,
+		engine.GetConfig().Indicators.Klines.PrimaryTimeframe,
+		len(ctx.Positions), len(ctx.CandidateCoins), len(ctx.Timeframes))
+
 	// 4. Call AI API
 	aiCtx := ctx.GoCtx
 	if aiCtx == nil {

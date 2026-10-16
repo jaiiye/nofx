@@ -168,6 +168,8 @@ export interface IndicatorConfig {
   ema_periods?: number[];
   rsi_periods?: number[];
   atr_periods?: number[];
+  macd_fast_period?: number;
+  macd_slow_period?: number;
   adx_periods?: number[];
   supertrend_period?: number;
   supertrend_multiplier?: number;
@@ -208,6 +210,9 @@ export interface KlineConfig {
   enable_multi_timeframe: boolean;
   // 新增：支持选择多个时间周期
   selected_timeframes?: string[];
+  // 展示上限：prompt 中每个时间周期最多打印多少根 K 线/多少个指标值
+  // （分析窗口仍是 primary_count，仅影响 prompt 体积）。0/未填 = 默认 40。
+  prompt_display_bars?: number;
 }
 
 export interface ExternalDataSource {
