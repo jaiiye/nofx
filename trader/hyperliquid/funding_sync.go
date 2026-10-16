@@ -14,6 +14,23 @@ import (
 // an unbounded history.
 const fundingHistoryLookback = 24 * time.Hour
 
+// TakerFeeRate returns the account's actual taker fee rate (fraction of
+// notional), loading it once per process. Returns 0 when the venue cannot be
+// queried, so callers fall back to their static per-venue model.
+func (t *HyperliquidTrader) TakerFeeRate() float64 {
+	t.feeRateOnce.Do(func() {
+		rates, err := hyperliquid.NewClient().GetUserFeeRates(t.ctx, t.walletAddr)
+		if err != nil {
+			logger.Infof("⚠️  Could not read account fee rates, using the venue default: %v", err)
+			return
+		}
+		t.takerFeeRate = rates.Taker
+		t.makerFeeRate = rates.Maker
+		logger.Infof("💱 Account fee rates: taker %.4f%%, maker %.4f%%", rates.Taker*100, rates.Maker*100)
+	})
+	return t.takerFeeRate
+}
+
 // SyncFundingPayments applies the venue's funding payments to the open position
 // records. Hyperliquid charges funding hourly, so a 3-5 day hold accumulates a
 // real carry cost that was previously invisible to PnL, to the AI context and

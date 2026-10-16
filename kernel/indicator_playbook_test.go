@@ -100,3 +100,37 @@ func TestIndicatorPlaybookLocalized(t *testing.T) {
 		t.Fatalf("zh playbook not localized")
 	}
 }
+
+// Exit discipline tells the model when closing is allowed at all; without it
+// the model improvised exits (81% of a live account's exits were
+// discretionary, taken before either level was touched).
+func TestExitDisciplineSection(t *testing.T) {
+	cfg := store.GetDefaultStrategyConfig("en")
+	engine := NewStrategyEngine(&cfg)
+
+	prompt := engine.BuildSystemPrompt(1000, "balanced")
+	if !strings.Contains(prompt, "Exit Discipline") {
+		t.Fatal("exit discipline section missing")
+	}
+	for _, want := range []string{"Stop-loss or take-profit is hit", "Supertrend flips", "Profit protection"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("exit condition missing: %q", want)
+		}
+	}
+	// The code-enforced note appears only when the rule is active.
+	if strings.Contains(prompt, "CODE ENFORCED**: discretionary closes") {
+		t.Error("min-hold note must not appear while the rule is disabled")
+	}
+
+	cfg.RiskControl.MinHoldMinutes = 60
+	engine = NewStrategyEngine(&cfg)
+	if prompt := engine.BuildSystemPrompt(1000, "balanced"); !strings.Contains(prompt, "before 60 minutes") {
+		t.Error("min-hold note missing when the rule is enabled")
+	}
+
+	// Localized.
+	zhCfg := store.GetDefaultStrategyConfig("zh")
+	if prompt := NewStrategyEngine(&zhCfg).BuildSystemPrompt(1000, "balanced"); !strings.Contains(prompt, "出场纪律") {
+		t.Error("zh exit discipline missing")
+	}
+}

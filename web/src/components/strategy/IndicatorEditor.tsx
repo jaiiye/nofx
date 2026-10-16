@@ -128,7 +128,7 @@ export function IndicatorEditor({ config, onChange, disabled, language }: Indica
             <input
               type="number"
               min={10}
-              max={60}
+              max={200}
               value={config.klines.primary_count || 20}
               disabled={disabled}
               onChange={(e) => update({ klines: { ...config.klines, primary_count: Number(e.target.value) || 20 } })}

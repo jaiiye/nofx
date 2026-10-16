@@ -2,9 +2,12 @@ package trader
 
 import (
 	"math"
+	"strings"
 	"testing"
 
 	"nofx/store"
+	"nofx/trader/connector"
+	"time"
 )
 
 func almost(a, b float64) bool { return math.Abs(a-b) < 1e-6 }
@@ -245,5 +248,61 @@ func TestEvaluateRiskGateMarginUsageEditableValue(t *testing.T) {
 	res := EvaluateRiskGate(in)
 	if res.Allowed {
 		t.Fatal("40% projected margin must be rejected under an explicit 30% cap")
+	}
+}
+
+// fee rate: prefer the venue's real rate for this account, fall back to the
+// static model. A wrong fee rate skews the balance-sufficiency sizing.
+type feeRateTraderStub struct {
+	Trader // embedded (nil) — only TakerFeeRate is exercised
+	rate   float64
+}
+
+func (s feeRateTraderStub) TakerFeeRate() float64 { return s.rate }
+
+func TestTakerFeeRatePrefersVenueRate(t *testing.T) {
+	at := &AutoTrader{trader: feeRateTraderStub{rate: 0.00023}, exchange: "hyperliquid"}
+	if got := at.takerFeeRate(); got != 0.00023 {
+		t.Fatalf("takerFeeRate() = %v, want the venue rate 0.00023", got)
+	}
+
+	// Unknown (0) falls back to the static model.
+	at = &AutoTrader{trader: feeRateTraderStub{rate: 0}, exchange: "hyperliquid"}
+	fallback := connector.FeeModelFor("hyperliquid").TakerRate()
+	if got := at.takerFeeRate(); got != fallback {
+		t.Fatalf("takerFeeRate() = %v, want the model fallback %v", got, fallback)
+	}
+}
+
+// The minimum-hold rule blocks discretionary exits before the configured
+// period; stop-loss/take-profit and the drawdown monitor close positions
+// through other paths and are never delayed by it.
+func TestCheckMinHold(t *testing.T) {
+	trader := &AutoTrader{}
+	now := time.Now().UTC().UnixMilli()
+
+	// Disabled (0) → no opinion, regardless of age.
+	if err := trader.checkMinHold(&store.TraderPosition{EntryTime: now}, "SOLUSDT", "LONG"); err != nil {
+		t.Fatalf("disabled rule must allow closes: %v", err)
+	}
+
+	trader.config.StrategyConfig = &store.StrategyConfig{RiskControl: store.RiskControlConfig{MinHoldMinutes: 60}}
+	young := &store.TraderPosition{EntryTime: now - 5*60_000}
+	err := trader.checkMinHold(young, "SOLUSDT", "LONG")
+	if err == nil {
+		t.Fatal("a 5-minute-old position must not be closed under a 60-minute rule")
+	}
+	if !strings.Contains(err.Error(), "60 minutes") {
+		t.Fatalf("error should state the requirement, got: %v", err)
+	}
+
+	old := &store.TraderPosition{EntryTime: now - 90*60_000}
+	if err := trader.checkMinHold(old, "SOLUSDT", "LONG"); err != nil {
+		t.Fatalf("a 90-minute-old position must be closable: %v", err)
+	}
+
+	// Missing entry time (untracked position) must not block a close.
+	if err := trader.checkMinHold(&store.TraderPosition{}, "SOLUSDT", "LONG"); err != nil {
+		t.Fatalf("unknown age must not block: %v", err)
 	}
 }

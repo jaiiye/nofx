@@ -25,6 +25,30 @@ const (
 	positionSizeSafetyFactor = 0.98
 )
 
+// checkMinHold blocks a discretionary AI exit before the configured minimum
+// holding period. Exchange-side stop-loss / take-profit and the drawdown
+// monitor close positions independently of this path, so protective exits are
+// never delayed — only the churn of opening and closing within a cycle or two,
+// which paid round-trip fees for noise (a live run: 81% of exits were
+// discretionary, 8 of 27 closed inside 30 minutes).
+func (at *AutoTrader) checkMinHold(pos *store.TraderPosition, symbol, side string) error {
+	if pos == nil || at.config.StrategyConfig == nil {
+		return nil
+	}
+	minHold := at.config.StrategyConfig.RiskControl.MinHoldMinutes
+	if minHold <= 0 || pos.EntryTime <= 0 {
+		return nil
+	}
+	age := time.Since(time.UnixMilli(pos.EntryTime))
+	if age >= time.Duration(minHold)*time.Minute {
+		return nil
+	}
+	at.logInfof("⏳ Discretionary close of %s %s ignored: held %s, minimum is %d minutes",
+		symbol, side, age.Round(time.Second), minHold)
+	return fmt.Errorf("minimum holding period not reached for %s %s (held %s of %d minutes) — stop-loss/take-profit exits are unaffected",
+		symbol, side, age.Round(time.Second), minHold)
+}
+
 // trackSuccessfulClose counts a confirmed close for the current cycle so the
 // risk gate can offset the exchange's lagging position count. A NO_POSITION
 // result (paper mode closing a non-existent position) does not count.
@@ -257,6 +281,9 @@ func (at *AutoTrader) executeCloseLongWithRecord(decision *kernel.Decision, acti
 	// First try to get from local database (more accurate for quantity)
 	if at.store != nil {
 		if openPos, err := at.store.Position().GetOpenPositionBySymbol(at.id, normalizedSymbol, "LONG"); err == nil && openPos != nil {
+			if err := at.checkMinHold(openPos, decision.Symbol, "LONG"); err != nil {
+				return err
+			}
 			quantity = openPos.Quantity
 			entryPrice = openPos.EntryPrice
 			logger.Infof("  📊 Using local position data: qty=%.8f, entry=%.2f", quantity, entryPrice)
@@ -325,6 +352,9 @@ func (at *AutoTrader) executeCloseShortWithRecord(decision *kernel.Decision, act
 	// First try to get from local database (more accurate for quantity)
 	if at.store != nil {
 		if openPos, err := at.store.Position().GetOpenPositionBySymbol(at.id, normalizedSymbol, "SHORT"); err == nil && openPos != nil {
+			if err := at.checkMinHold(openPos, decision.Symbol, "SHORT"); err != nil {
+				return err
+			}
 			quantity = openPos.Quantity
 			entryPrice = openPos.EntryPrice
 			logger.Infof("  📊 Using local position data: qty=%.8f, entry=%.2f", quantity, entryPrice)

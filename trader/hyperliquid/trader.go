@@ -28,6 +28,11 @@ type HyperliquidTrader struct {
 	xyzMetaMutex sync.RWMutex
 	privateKey   *ecdsa.PrivateKey // For xyz dex signing
 	isTestnet    bool
+
+	// Account fee rates from the venue (loaded once; see TakerFeeRate).
+	feeRateOnce  sync.Once
+	takerFeeRate float64
+	makerFeeRate float64
 }
 
 // xyzDexMeta represents metadata for xyz dex assets

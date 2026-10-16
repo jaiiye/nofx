@@ -16,7 +16,11 @@ const (
 	MaxPositions      = 3
 	MaxTimeframes     = 4
 	MinKlineCount     = 10
-	MaxKlineCount     = 30
+	// MaxKlineCount bounds the analysis window. It matches how many candles the
+	// market layer actually fetches (200), so an hourly strategy can build
+	// EMA200 / multi-day structure; the prompt prints only the most recent bars
+	// (see kernel.promptDisplayLimit), so a long window costs no extra tokens.
+	MaxKlineCount     = 200
 	MinLeverage       = 1
 	MaxBTCETHLeverage = 20
 	MaxAltLeverage    = 20
@@ -950,6 +954,12 @@ type RiskControlConfig struct {
 	MinRiskRewardRatio float64 `json:"min_risk_reward_ratio"`
 	// Min AI confidence to open position (AI guided)
 	MinConfidence int `json:"min_confidence"`
+	// MinHoldMinutes is the code-enforced minimum holding period for
+	// discretionary AI exits. 0 disables the rule. Exchange-side stop-loss /
+	// take-profit and the drawdown monitor are never affected: their job is to
+	// protect the position, while this rule stops the churn of opening and
+	// closing within one or two decision cycles.
+	MinHoldMinutes int `json:"min_hold_minutes,omitempty"`
 
 	// Drawdown profit-protection monitor (CODE ENFORCED). Nil enabled flag
 	// and zero thresholds mean "keep the historical defaults" so configs

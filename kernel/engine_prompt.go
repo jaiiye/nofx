@@ -120,6 +120,10 @@ func (e *StrategyEngine) BuildSystemPrompt(accountEquity float64, variant string
 		sb.WriteString("3. Write chain of thought first, then output structured JSON\n\n")
 	}
 
+	// 6b. Exit discipline: the entry playbook above says how to get in; this
+	//     says when getting out is allowed at all.
+	writeExitDiscipline(&sb, zh, riskControl.MinHoldMinutes)
+
 	// 7. Output format — schema spec stays in English (this is a parser
 	//    contract; reasoning copy is localized below).
 	writeOutputFormat(&sb, accountEquity, riskControl, btcEthPosValueRatio, altcoinPosValueRatio, singleSymbol, primarySymbol, zh)
@@ -681,6 +685,37 @@ func (e *StrategyEngine) writeIndicatorPlaybook(sb *strings.Builder, zh bool) {
 		"\n原则：单一指标不构成入场理由。已启用指标相互矛盾时观望或取最小仓位；与趋势判断同向共振时才入场。\n\n"))
 }
 
+// writeExitDiscipline states when a position may be closed. Without it the
+// model improvises exits: a live run showed 81% of exits were discretionary and
+// taken before either level was touched, on moves far smaller than the planned
+// risk — churn that paid round-trip fees for noise.
+func writeExitDiscipline(sb *strings.Builder, zh bool, minHoldMinutes int) {
+	if zh {
+		sb.WriteString("# 🚪 出场纪律（仅在下列条件之一成立时平仓）\n\n")
+		sb.WriteString("1. 触发止损或止盈（交易所端自动执行）\n")
+		sb.WriteString("2. 趋势结构反转: Supertrend 翻转, 或主时间帧收盘跌破/站上 EMA50, 或 ADX 跌破 20（趋势消失）\n")
+		sb.WriteString("3. 利润保护: 浮盈 ≥2% 后从峰值回吐 30%（由代码监控执行）\n\n")
+		sb.WriteString("其余情况保持持仓：浮亏但未触及止损、指标间分歧、行情震荡都不构成平仓理由。\n")
+		sb.WriteString("不要在多个决策周期内反复开平同一标的——每次往返都支付双边手续费。\n")
+		if minHoldMinutes > 0 {
+			sb.WriteString(fmt.Sprintf("**代码强制**: 持仓不足 %d 分钟的主动平仓会被忽略（止损/止盈不受影响）。\n", minHoldMinutes))
+		}
+		sb.WriteString("\n")
+		return
+	}
+
+	sb.WriteString("# 🚪 Exit Discipline (close only when one of these holds)\n\n")
+	sb.WriteString("1. Stop-loss or take-profit is hit (executed exchange-side)\n")
+	sb.WriteString("2. The trend structure reverses: Supertrend flips, or the primary timeframe closes back through EMA50, or ADX drops below 20 (trend gone)\n")
+	sb.WriteString("3. Profit protection: after a peak of ≥2%, giving back 30% of it (enforced by the monitor)\n\n")
+	sb.WriteString("Otherwise hold: an unrealized loss that has not reached the stop, disagreement between indicators, or choppy price action are not reasons to close.\n")
+	sb.WriteString("Do not open and close the same symbol across consecutive cycles — every round trip pays fees on both sides.\n")
+	if minHoldMinutes > 0 {
+		sb.WriteString(fmt.Sprintf("**CODE ENFORCED**: discretionary closes before %d minutes of holding are ignored (stop-loss / take-profit are unaffected).\n", minHoldMinutes))
+	}
+	sb.WriteString("\n")
+}
+
 // ============================================================================
 // Prompt Building - User Prompt
 // ============================================================================
@@ -1066,34 +1101,34 @@ func (e *StrategyEngine) formatMarketData(data *market.Data, fullKlines bool) st
 			sb.WriteString(fmt.Sprintf("Intraday series (%s intervals, oldest → latest):\n\n", klineConfig.PrimaryTimeframe))
 
 			if len(data.IntradaySeries.MidPrices) > 0 {
-				sb.WriteString(fmt.Sprintf("Mid prices: %s\n\n", formatFloatSlice(data.IntradaySeries.MidPrices)))
+				sb.WriteString(fmt.Sprintf("Mid prices: %s\n\n", formatSeriesTail(data.IntradaySeries.MidPrices)))
 			}
 
 			if indicators.EnableEMA {
 				if !writeConfiguredIndicators(&sb, data.IntradaySeries.ConfiguredIndicators, "EMA", "", "\n\n") && len(data.IntradaySeries.EMA20Values) > 0 {
-					sb.WriteString(fmt.Sprintf("EMA indicators (20-period): %s\n\n", formatFloatSlice(data.IntradaySeries.EMA20Values)))
+					sb.WriteString(fmt.Sprintf("EMA indicators (20-period): %s\n\n", formatSeriesTail(data.IntradaySeries.EMA20Values)))
 				}
 			}
 
 			if indicators.EnableMACD {
 				if !writeConfiguredIndicators(&sb, data.IntradaySeries.ConfiguredIndicators, "MACD", "", "\n\n") && len(data.IntradaySeries.MACDValues) > 0 {
-					sb.WriteString(fmt.Sprintf("MACD indicators: %s\n\n", formatFloatSlice(data.IntradaySeries.MACDValues)))
+					sb.WriteString(fmt.Sprintf("MACD indicators: %s\n\n", formatSeriesTail(data.IntradaySeries.MACDValues)))
 				}
 			}
 
 			if indicators.EnableRSI {
 				if !writeConfiguredIndicators(&sb, data.IntradaySeries.ConfiguredIndicators, "RSI", "", "\n\n") {
 					if len(data.IntradaySeries.RSI7Values) > 0 {
-						sb.WriteString(fmt.Sprintf("RSI indicators (7-Period): %s\n\n", formatFloatSlice(data.IntradaySeries.RSI7Values)))
+						sb.WriteString(fmt.Sprintf("RSI indicators (7-Period): %s\n\n", formatSeriesTail(data.IntradaySeries.RSI7Values)))
 					}
 					if len(data.IntradaySeries.RSI14Values) > 0 {
-						sb.WriteString(fmt.Sprintf("RSI indicators (14-Period): %s\n\n", formatFloatSlice(data.IntradaySeries.RSI14Values)))
+						sb.WriteString(fmt.Sprintf("RSI indicators (14-Period): %s\n\n", formatSeriesTail(data.IntradaySeries.RSI14Values)))
 					}
 				}
 			}
 
 			if indicators.EnableVolume && len(data.IntradaySeries.Volume) > 0 {
-				sb.WriteString(fmt.Sprintf("Volume: %s\n\n", formatFloatSlice(data.IntradaySeries.Volume)))
+				sb.WriteString(fmt.Sprintf("Volume: %s\n\n", formatSeriesTail(data.IntradaySeries.Volume)))
 			}
 
 			if indicators.EnableATR {
@@ -1127,13 +1162,13 @@ func (e *StrategyEngine) formatMarketData(data *market.Data, fullKlines bool) st
 
 			if indicators.EnableMACD {
 				if !writeConfiguredIndicators(&sb, data.LongerTermContext.ConfiguredIndicators, "MACD", "", "\n\n") && len(data.LongerTermContext.MACDValues) > 0 {
-					sb.WriteString(fmt.Sprintf("MACD indicators: %s\n\n", formatFloatSlice(data.LongerTermContext.MACDValues)))
+					sb.WriteString(fmt.Sprintf("MACD indicators: %s\n\n", formatSeriesTail(data.LongerTermContext.MACDValues)))
 				}
 			}
 
 			if indicators.EnableRSI {
 				if !writeConfiguredIndicators(&sb, data.LongerTermContext.ConfiguredIndicators, "RSI", "", "\n\n") && len(data.LongerTermContext.RSI14Values) > 0 {
-					sb.WriteString(fmt.Sprintf("RSI indicators (14-Period): %s\n\n", formatFloatSlice(data.LongerTermContext.RSI14Values)))
+					sb.WriteString(fmt.Sprintf("RSI indicators (14-Period): %s\n\n", formatSeriesTail(data.LongerTermContext.RSI14Values)))
 				}
 			}
 		}
@@ -1154,15 +1189,26 @@ func writeConfiguredIndicators(sb *strings.Builder, series []market.IndicatorSer
 		if !strings.HasPrefix(s.Label, prefix) || len(s.Values) == 0 {
 			continue
 		}
-		if singleFmt != "" && len(s.Values) == 1 {
-			sb.WriteString(fmt.Sprintf("%s: %s%s", s.Label, fmt.Sprintf(singleFmt, s.Values[0]), lineSuffix))
+		values := s.Values
+		if len(values) > promptDisplayLimit {
+			values = values[len(values)-promptDisplayLimit:]
+		}
+		if singleFmt != "" && len(values) == 1 {
+			sb.WriteString(fmt.Sprintf("%s: %s%s", s.Label, fmt.Sprintf(singleFmt, values[0]), lineSuffix))
 		} else {
-			sb.WriteString(fmt.Sprintf("%s: %s%s", s.Label, formatFloatSlice(s.Values), lineSuffix))
+			sb.WriteString(fmt.Sprintf("%s: %s%s", s.Label, formatFloatSlice(values), lineSuffix))
 		}
 		wrote = true
 	}
 	return wrote
 }
+
+// promptDisplayLimit caps how many bars / series values are printed per
+// timeframe. The analysis window can be far longer (an hourly strategy needs
+// 200 bars for EMA200 / multi-day structure), but printing all of it would
+// inflate every prompt; the model needs the recent shape plus the current
+// values, and the long lookback is already reflected in those values.
+const promptDisplayLimit = 40
 
 func (e *StrategyEngine) formatTimeframeSeriesData(sb *strings.Builder, data *market.TimeframeSeriesData, indicators store.IndicatorConfig, includeKlines bool) {
 	if len(data.Klines) > 0 {
@@ -1170,10 +1216,16 @@ func (e *StrategyEngine) formatTimeframeSeriesData(sb *strings.Builder, data *ma
 		// 40% fewer characters, and enough significant digits for low-priced
 		// coins (the old %-9.4f printed 0.0000 below 0.0001).
 		if includeKlines {
+			bars := data.Klines
+			omitted := 0
+			if len(bars) > promptDisplayLimit {
+				omitted = len(bars) - promptDisplayLimit
+				bars = bars[omitted:]
+			}
 			sb.WriteString("Time(UTC),Open,High,Low,Close,Volume\n")
-			for i, k := range data.Klines {
+			for i, k := range bars {
 				marker := ""
-				if i == len(data.Klines)-1 {
+				if i == len(bars)-1 {
 					marker = ",<- current"
 				}
 				sb.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s,%.2f%s\n",
@@ -1182,39 +1234,42 @@ func (e *StrategyEngine) formatTimeframeSeriesData(sb *strings.Builder, data *ma
 					formatCompactPrice(k.Low), formatCompactPrice(k.Close),
 					k.Volume, marker))
 			}
+			if omitted > 0 {
+				sb.WriteString(fmt.Sprintf("(%d earlier bars omitted from the table; the indicators below cover the full window)\n", omitted))
+			}
 			sb.WriteString("\n")
 		}
 	} else if len(data.MidPrices) > 0 {
-		sb.WriteString(fmt.Sprintf("Mid prices: %s\n\n", formatFloatSlice(data.MidPrices)))
+		sb.WriteString(fmt.Sprintf("Mid prices: %s\n\n", formatSeriesTail(data.MidPrices)))
 		if indicators.EnableVolume && len(data.Volume) > 0 {
-			sb.WriteString(fmt.Sprintf("Volume: %s\n\n", formatFloatSlice(data.Volume)))
+			sb.WriteString(fmt.Sprintf("Volume: %s\n\n", formatSeriesTail(data.Volume)))
 		}
 	}
 
 	if indicators.EnableEMA {
 		if !writeConfiguredIndicators(sb, data.ConfiguredIndicators, "EMA", "", "\n") {
 			if len(data.EMA20Values) > 0 {
-				sb.WriteString(fmt.Sprintf("EMA20: %s\n", formatFloatSlice(data.EMA20Values)))
+				sb.WriteString(fmt.Sprintf("EMA20: %s\n", formatSeriesTail(data.EMA20Values)))
 			}
 			if len(data.EMA50Values) > 0 {
-				sb.WriteString(fmt.Sprintf("EMA50: %s\n", formatFloatSlice(data.EMA50Values)))
+				sb.WriteString(fmt.Sprintf("EMA50: %s\n", formatSeriesTail(data.EMA50Values)))
 			}
 		}
 	}
 
 	if indicators.EnableMACD {
 		if !writeConfiguredIndicators(sb, data.ConfiguredIndicators, "MACD", "", "\n") && len(data.MACDValues) > 0 {
-			sb.WriteString(fmt.Sprintf("MACD: %s\n", formatFloatSlice(data.MACDValues)))
+			sb.WriteString(fmt.Sprintf("MACD: %s\n", formatSeriesTail(data.MACDValues)))
 		}
 	}
 
 	if indicators.EnableRSI {
 		if !writeConfiguredIndicators(sb, data.ConfiguredIndicators, "RSI", "", "\n") {
 			if len(data.RSI7Values) > 0 {
-				sb.WriteString(fmt.Sprintf("RSI7: %s\n", formatFloatSlice(data.RSI7Values)))
+				sb.WriteString(fmt.Sprintf("RSI7: %s\n", formatSeriesTail(data.RSI7Values)))
 			}
 			if len(data.RSI14Values) > 0 {
-				sb.WriteString(fmt.Sprintf("RSI14: %s\n", formatFloatSlice(data.RSI14Values)))
+				sb.WriteString(fmt.Sprintf("RSI14: %s\n", formatSeriesTail(data.RSI14Values)))
 			}
 		}
 	}
@@ -1228,9 +1283,9 @@ func (e *StrategyEngine) formatTimeframeSeriesData(sb *strings.Builder, data *ma
 	if indicators.EnableBOLL {
 		if !writeConfiguredIndicators(sb, data.ConfiguredIndicators, "BOLL", "", "\n") {
 			if len(data.BOLLUpper) > 0 {
-				sb.WriteString(fmt.Sprintf("BOLL Upper: %s\n", formatFloatSlice(data.BOLLUpper)))
-				sb.WriteString(fmt.Sprintf("BOLL Middle: %s\n", formatFloatSlice(data.BOLLMiddle)))
-				sb.WriteString(fmt.Sprintf("BOLL Lower: %s\n", formatFloatSlice(data.BOLLLower)))
+				sb.WriteString(fmt.Sprintf("BOLL Upper: %s\n", formatSeriesTail(data.BOLLUpper)))
+				sb.WriteString(fmt.Sprintf("BOLL Middle: %s\n", formatSeriesTail(data.BOLLMiddle)))
+				sb.WriteString(fmt.Sprintf("BOLL Lower: %s\n", formatSeriesTail(data.BOLLLower)))
 			}
 		}
 	}
@@ -1265,6 +1320,16 @@ func formatCompactPrice(v float64) string {
 	default:
 		return strconv.FormatFloat(v, 'f', 8, 64)
 	}
+}
+
+// formatSeriesTail prints only the most recent values of a series (see
+// promptDisplayLimit) so a long analysis window never inflates the prompt,
+// whatever path produced the series.
+func formatSeriesTail(values []float64) string {
+	if len(values) > promptDisplayLimit {
+		values = values[len(values)-promptDisplayLimit:]
+	}
+	return formatFloatSlice(values)
 }
 
 func (e *StrategyEngine) formatQuantData(data *QuantData) string {

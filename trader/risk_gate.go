@@ -185,9 +185,22 @@ func (at *AutoTrader) checkOpenRiskGate(decision *kernel.Decision, positions []m
 		Equity:                  equity,
 		AvailableBalance:        availableBalance,
 		MarginUsedPct:           marginUsagePct(positions, equity),
-		TakerFeeRate:            connector.FeeModelFor(at.exchange).TakerRate(),
+		TakerFeeRate:            at.takerFeeRate(),
 		Config:                  at.config.StrategyConfig,
 	})
+}
+
+// takerFeeRate prefers the venue's real rate for this account — fees decide the
+// balance-sufficiency sizing, and the static per-venue model can differ from
+// the account's actual tier. Falls back to the model when the venue cannot be
+// queried.
+func (at *AutoTrader) takerFeeRate() float64 {
+	if provider, ok := at.trader.(interface{ TakerFeeRate() float64 }); ok {
+		if rate := provider.TakerFeeRate(); rate > 0 {
+			return rate
+		}
+	}
+	return connector.FeeModelFor(at.exchange).TakerRate()
 }
 
 // accountEquityAndAvailableFor returns the equity and available balance for
