@@ -69,6 +69,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   making a context that is outgrowing the model's window visible before the provider rejects it.
 
 ### Changed
+- Indicators and their parameters are no longer two separate blocks: the `Indicator parameters`
+  panel is folded into `Optional technical indicators`, one row per indicator, so enabling an
+  indicator reveals its own inputs on the same row (EMA/RSI/ATR/ADX/BOLL periods, MACD fast/slow,
+  BOLL and Supertrend multipliers) instead of toggling above and hunting for the period below.
+  Disabled rows show their default parameters. The display cap (`prompt_display_bars`) belongs to
+  no single indicator, so it moved into `Candles` next to the bar count. Field names, the JSON
+  contract and the backend normalization are unchanged.
 - Max margin usage is now editable in the strategy studio (10–100%, previously a read-only
   display), while the code stays authoritative: `ClampLimits` normalizes every saved config,
   and the pre-trade risk gate applies the same `store.NormalizeMarginUsageLimit` before
