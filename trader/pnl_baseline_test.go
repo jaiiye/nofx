@@ -3,7 +3,122 @@ package trader
 import (
 	"math"
 	"testing"
+	"time"
+
+	"nofx/store"
 )
+
+// newBaselineTestTrader builds a live AutoTrader on a temp SQLite store whose
+// trader row already carries the given capital and reconciliation point. The
+// in-memory reconciliation point starts empty, like a fresh process, so every
+// test goes through the load path.
+func newBaselineTestTrader(t *testing.T, initialBalance, baselineWallet float64) *AutoTrader {
+	t.Helper()
+	st, err := store.New(t.TempDir() + "/nofx.db")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	const (
+		userID   = "u1"
+		traderID = "t1"
+	)
+	if err := st.Trader().Create(&store.Trader{
+		ID:                traderID,
+		UserID:            userID,
+		Name:              "pnl-test",
+		AIModelID:         "m1",
+		ExchangeID:        "e1",
+		InitialBalance:    initialBalance,
+		PnLBaselineWallet: baselineWallet,
+		PnLBaselineAtMs:   time.Now().Add(-time.Hour).UnixMilli(),
+	}); err != nil {
+		t.Fatalf("create trader: %v", err)
+	}
+	return &AutoTrader{id: traderID, name: "pnl-test", userID: userID, store: st, initialBalance: initialBalance}
+}
+
+// addClosedPosition records one closed position with the given net PnL, closed
+// now, so it falls inside any reconciliation window that opened earlier.
+func addClosedPosition(t *testing.T, at *AutoTrader, netPnL float64) {
+	t.Helper()
+	pos := &store.TraderPosition{
+		TraderID:    at.id,
+		Symbol:      "BTC",
+		Side:        "LONG",
+		Quantity:    1,
+		EntryPrice:  100,
+		EntryTime:   time.Now().Add(-2 * time.Hour).UnixMilli(),
+		RealizedPnL: netPnL,
+	}
+	if err := at.store.Position().Create(pos); err != nil {
+		t.Fatalf("create position: %v", err)
+	}
+	if err := at.store.Position().ClosePosition(pos.ID, 100, "", netPnL, 0, "test"); err != nil {
+		t.Fatalf("close position: %v", err)
+	}
+}
+
+// A deposit that arrives while the ledger is live is handled by the ordinary
+// cycle — no repair path involved — and the write is absolute, so repeating the
+// cycle with the same wallet cannot fold the same drift twice.
+func TestReconcileFoldsALaterDepositOnce(t *testing.T) {
+	at := newBaselineTestTrader(t, 75.386714, 75.386714)
+	addClosedPosition(t, at, -8.3631)
+
+	// Wallet 152.993038 = 75.386714 of capital − 8.3631 of losses + 85.969424 deposited.
+	at.reconcilePnLBaseline(152.993038)
+
+	if diff := at.initialBalance - 161.356138; diff > 1e-6 || diff < -1e-6 {
+		t.Fatalf("initial balance = %.6f, want 161.356138", at.initialBalance)
+	}
+	storedWallet, storedAt, err := at.store.Trader().GetPnLBaseline(at.userID, at.id)
+	if err != nil {
+		t.Fatalf("read baseline: %v", err)
+	}
+	if storedWallet != 152.993038 || storedAt <= 0 {
+		t.Fatalf("stored reconciliation point = (%.2f, %d), want the current wallet", storedWallet, storedAt)
+	}
+
+	at.reconcilePnLBaseline(152.993038)
+	if diff := at.initialBalance - 161.356138; diff > 1e-6 || diff < -1e-6 {
+		t.Fatalf("a repeated cycle folded the same drift again: %.6f", at.initialBalance)
+	}
+}
+
+// A wallet move the realized PnL on record explains is a trading result, not a
+// withdrawal: the baseline must stay where it is.
+func TestReconcileLeavesTradingResultInPnL(t *testing.T) {
+	at := newBaselineTestTrader(t, 75.386714, 75.386714)
+	addClosedPosition(t, at, -8.3631)
+
+	at.reconcilePnLBaseline(67.023614)
+
+	if diff := at.initialBalance - 75.386714; diff > 1e-9 || diff < -1e-9 {
+		t.Fatalf("a trading loss moved the baseline to %.6f", at.initialBalance)
+	}
+}
+
+// Changing accounts must not be booked as a deposit. After a re-anchor the
+// starting wallet is unobserved (0), so the first cycle adopts the balance it
+// finds and keeps the declared capital; the bug this guards against folded the
+// difference between the two accounts in and turned a 500 balance into an 850
+// baseline.
+func TestReconcileAdoptsAReanchoredAccount(t *testing.T) {
+	at := newBaselineTestTrader(t, 500, 0)
+
+	at.reconcilePnLBaseline(500)
+
+	if at.initialBalance != 500 {
+		t.Fatalf("initial balance = %.2f, want the declared 500", at.initialBalance)
+	}
+	storedWallet, storedAt, err := at.store.Trader().GetPnLBaseline(at.userID, at.id)
+	if err != nil {
+		t.Fatalf("read baseline: %v", err)
+	}
+	if storedWallet != 500 || storedAt <= 0 {
+		t.Fatalf("stored reconciliation point = (%.2f, %d), want the new account's wallet", storedWallet, storedAt)
+	}
+}
 
 // The live case that motivated this: an $85.97 deposit on a ~$76 wallet. The
 // old code compared equity against the static initial_balance and reported

@@ -360,9 +360,13 @@ func NewAutoTrader(config AutoTraderConfig, st *store.Store, userID string) (*Au
 		if foundBalance > 0 {
 			config.InitialBalance = foundBalance
 			logger.Infof("✓ [%s] Auto-fetched initial balance: %.2f USDT", config.Name, foundBalance)
-			// Save to database so it persists across restarts
+			// Save to database so it persists across restarts. This path runs when
+			// the balance was unknown (a new trader, or an account that was
+			// re-anchored), so the PnL ledger is anchored here too: the fetched
+			// balance is the capital this account starts from, and the realized
+			// PnL recorded before it belongs to another account.
 			if st != nil {
-				if err := st.Trader().UpdateInitialBalance(userID, config.ID, foundBalance); err != nil {
+				if err := st.Trader().SetPnLBaseline(userID, config.ID, foundBalance, foundBalance, time.Now().UTC().UnixMilli()); err != nil {
 					logger.Infof("⚠️  [%s] Failed to save initial balance to database: %v", config.Name, err)
 				} else {
 					logger.Infof("✓ [%s] Initial balance saved to database", config.Name)

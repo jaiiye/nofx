@@ -76,8 +76,11 @@ func deriveBaseline(wallet, netRealizedAll, storedBaseline float64) (float64, bo
 
 // reconcilePnLBaseline detects and applies deposits/withdrawals for this cycle.
 // It must run before the PnL math so the prompt and the UI use the corrected
-// baseline. Paper traders are skipped (no external funding), and the first run
-// just records the starting point.
+// baseline. Paper traders are skipped (no external funding). Three cases share
+// the stored reconciliation point: a first run derives the baseline (a ledger
+// introduced after a deposit existed cannot repair it otherwise), a re-anchored
+// account adopts the wallet it finds, and every other cycle folds the wallet move
+// that the realized PnL on record does not explain.
 func (at *AutoTrader) reconcilePnLBaseline(wallet float64) {
 	if at.store == nil || at.userID == "" || wallet <= 0 {
 		return
@@ -95,6 +98,18 @@ func (at *AutoTrader) reconcilePnLBaseline(wallet float64) {
 			at.pnlBaselineWallet, at.pnlBaselineAtMs = wallet0, atMs0
 		}
 	}
+	if at.pnlBaselineAtMs > 0 && at.pnlBaselineWallet <= 0 {
+		// The account was re-anchored (it changed, or its balance was reset to 0)
+		// and the starting wallet has not been observed since. Adopt this cycle's
+		// wallet without folding the difference, so switching between two accounts
+		// that hold different balances is not booked as a deposit.
+		at.pnlBaselineWallet = wallet
+		at.pnlBaselineAtMs = time.Now().UTC().UnixMilli()
+		if err := at.store.Trader().AdvancePnLBaseline(at.userID, at.id, wallet, at.pnlBaselineAtMs); err != nil {
+			at.logWarnf("⚠ Failed to re-anchor the PnL baseline: %v", err)
+		}
+		return
+	}
 	if at.pnlBaselineAtMs <= 0 {
 		// No reconciliation point was ever stored, so the initial_balance on
 		// record predates this ledger — and a deposit made before it stayed
@@ -105,7 +120,7 @@ func (at *AutoTrader) reconcilePnLBaseline(wallet float64) {
 			at.logWarnf("⚠ Failed to read realized PnL for the baseline repair: %v", err)
 		} else if derived, ok := deriveBaseline(wallet, netAll, at.initialBalance); ok {
 			nowMs := time.Now().UTC().UnixMilli()
-			if err := at.store.Trader().ResetPnLBaseline(at.userID, at.id, derived, wallet, nowMs); err != nil {
+			if err := at.store.Trader().SetPnLBaseline(at.userID, at.id, derived, wallet, nowMs); err != nil {
 				at.logWarnf("⚠ Failed to repair the PnL baseline: %v", err)
 			} else {
 				logger.Infof("💰 PnL baseline repaired: %.2f → %.2f (wallet %.2f, realized on record %+.2f) — capital added before the cash-flow ledger is no longer reported as profit",
@@ -152,14 +167,15 @@ func (at *AutoTrader) reconcilePnLBaseline(wallet float64) {
 		kind = "withdrawal"
 	}
 	previousBaseline := at.initialBalance
-	at.initialBalance += cashFlow
+	reconciled := previousBaseline + cashFlow
+	at.initialBalance = reconciled
 	at.pnlBaselineWallet = wallet
 	at.pnlBaselineAtMs = nowMs
 
-	if err := at.store.Trader().ApplyCashFlow(at.userID, at.id, cashFlow, wallet, nowMs); err != nil {
+	if err := at.store.Trader().SetPnLBaseline(at.userID, at.id, reconciled, wallet, nowMs); err != nil {
 		at.logWarnf("⚠ Failed to apply %s of %.2f to the PnL baseline: %v", kind, cashFlow, err)
-		// Keep the in-memory adjustment: the next cycle retries the persistence
-		// and the drift is recomputed from the stored (unchanged) baseline.
+		// Roll the in-memory adjustment back: the next cycle recomputes the drift
+		// from the stored (unchanged) baseline and retries the persistence.
 		at.initialBalance = previousBaseline
 		at.pnlBaselineWallet = 0
 		at.pnlBaselineAtMs = 0

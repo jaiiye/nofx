@@ -716,6 +716,19 @@ func (s *Server) handleUpdateTrader(c *gin.Context) {
 		}
 	}
 
+	if exchangeChanged {
+		// The PnL ledger describes the previous account, so re-anchor it: keep
+		// initial_balance as the declared capital (the auto-fetch below fills it
+		// in when it is 0) and leave the starting wallet unobserved (0), which
+		// makes the loop adopt the first balance it sees instead of folding the
+		// difference between the two accounts as a deposit.
+		if err := s.store.Trader().SetPnLBaseline(userID, traderID, initialBalance, 0, time.Now().UTC().UnixMilli()); err != nil {
+			SafeInternalError(c, "Failed to re-anchor the trader PnL baseline", err)
+			return
+		}
+		logger.Infof("🔄 Exchange changed for trader %s, re-anchored the PnL ledger", traderID)
+	}
+
 	// Remove old trader from memory first (this also stops if running)
 	s.traderManager.RemoveTrader(traderID)
 

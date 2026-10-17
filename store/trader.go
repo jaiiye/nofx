@@ -30,7 +30,9 @@ type Trader struct {
 	// Cash-flow neutral PnL baseline: the wallet balance and timestamp of the
 	// last reconciliation. Wallet moves that realized PnL does not explain are
 	// deposits/withdrawals, and are folded into InitialBalance so PnL and PnL%
-	// stay meaningful (a deposit used to show up as profit).
+	// stay meaningful (a deposit used to show up as profit). A wallet of 0 means
+	// the starting point has not been observed yet — the account was re-anchored
+	// and the next cycle adopts its wallet without folding the difference.
 	PnLBaselineWallet float64 `gorm:"column:pnl_baseline_wallet;default:0" json:"pnl_baseline_wallet"`
 	PnLBaselineAtMs   int64   `gorm:"column:pnl_baseline_at_ms;default:0" json:"pnl_baseline_at_ms"`
 	// FundingSyncedAtMs is the watermark for venue funding payments already
@@ -203,9 +205,14 @@ func (s *TraderStore) AdvanceFundingSyncPoint(traderID string, atMs int64) error
 
 // GetPnLBaseline returns the last cash-flow reconciliation point.
 func (s *TraderStore) GetPnLBaseline(userID, id string) (wallet float64, atMs int64, err error) {
+	// The column tags are load-bearing: GORM derives `pn_l_baseline_wallet` from
+	// the field name (the "PnL" initialism breaks its naming rule), which matched
+	// no column and silently returned zero values with no error — so the stored
+	// point was never adopted and every restart re-anchored the ledger to the
+	// current wallet.
 	var row struct {
-		PnLBaselineWallet float64
-		PnLBaselineAtMs   int64
+		PnLBaselineWallet float64 `gorm:"column:pnl_baseline_wallet"`
+		PnLBaselineAtMs   int64   `gorm:"column:pnl_baseline_at_ms"`
 	}
 	res := s.db.Model(&Trader{}).
 		Select("pnl_baseline_wallet", "pnl_baseline_at_ms").
@@ -217,24 +224,16 @@ func (s *TraderStore) GetPnLBaseline(userID, id string) (wallet float64, atMs in
 	return row.PnLBaselineWallet, row.PnLBaselineAtMs, nil
 }
 
-// ApplyCashFlow folds an external deposit/withdrawal into the PnL baseline and
-// advances the reconciliation point. Adjusting InitialBalance keeps PnL and
-// PnL% meaningful without touching every consumer.
-func (s *TraderStore) ApplyCashFlow(userID, id string, cashFlow, wallet float64, atMs int64) error {
-	return s.db.Model(&Trader{}).
-		Where("id = ? AND user_id = ?", id, userID).
-		Updates(map[string]interface{}{
-			"initial_balance":     gorm.Expr("initial_balance + ?", cashFlow),
-			"pnl_baseline_wallet": wallet,
-			"pnl_baseline_at_ms":  atMs,
-		}).Error
-}
-
-// ResetPnLBaseline sets the cash-flow neutral baseline outright and advances the
-// reconciliation point. Used once per trader, when the stored baseline predates
-// this ledger and a deposit made before it would otherwise stay booked as
-// profit forever.
-func (s *TraderStore) ResetPnLBaseline(userID, id string, baseline, wallet float64, atMs int64) error {
+// SetPnLBaseline writes the cash-flow neutral baseline outright and advances the
+// reconciliation point. Callers pass the baseline they want persisted — a
+// deposit/withdrawal folded into it, a value re-derived after an upgrade, or a
+// re-anchor after the account changed — so the in-memory value and the row
+// cannot diverge the way a relative `initial_balance + ?` update allowed.
+//
+// wallet is the wallet balance the baseline was reconciled against, or 0 when the
+// starting point has not been observed yet (a re-anchored account): the next
+// cycle then adopts its wallet without folding the difference.
+func (s *TraderStore) SetPnLBaseline(userID, id string, baseline, wallet float64, atMs int64) error {
 	return s.db.Model(&Trader{}).
 		Where("id = ? AND user_id = ?", id, userID).
 		Updates(map[string]interface{}{

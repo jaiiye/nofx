@@ -69,6 +69,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   making a context that is outgrowing the model's window visible before the provider rejects it.
 
 ### Changed
+- Baseline writes are down to two methods: SetPnLBaseline (absolute baseline plus reconciliation point)
+  and AdvancePnLBaseline (advance the point only). A deposit no longer goes through a relative
+  `initial_balance + ?` update, so the in-memory baseline and the stored row cannot diverge.
 - PnL and its baseline are consolidated into a single path; redundancy and fake fallbacks are gone:
   - The never-implemented `cashFlowLedger` (`CashFlowSince`) interface and its `externalCashFlowSince`
     wrapper are deleted; cash-flow detection is one rule in one place: the wallet move that the recorded
@@ -137,6 +140,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bot uses the same model selection as the web agent.
 
 ### Fixed
+- The cash-flow ledger could not read its own reconciliation point: GetPnLBaseline's anonymous struct
+  had no column tags and GORM derives `pn_l_baseline_wallet` from the field name ("PnL" breaks its
+  naming rule), which matched no column — so every call returned zeros with no error. Every process
+  restart therefore treated the ledger as never reconciled and re-anchored it to the current wallet,
+  which permanently missed any deposit made while the process was down (it stayed booked as profit).
+  The column names are explicit now, with a store-level regression test.
+- Switching exchange no longer books the balance difference between two accounts as a deposit: the
+  reconciliation point belonged to the previous account while only initial_balance was reset. A 150 →
+  500 switch turned the baseline into 850 and the dashboard read −350 (≈−41%). The ledger is re-anchored
+  on an exchange change (the declared capital stays, the starting wallet is marked unobserved), so the
+  next cycle adopts the new account's balance without folding the difference; the startup auto-fetch
+  path (a new trader, or a balance reset to 0) anchors the ledger the same way.
 - The PostgreSQL `traders` table now gets every column added after it was created (`paper_trading`,
   `pnl_baseline_wallet`, `pnl_baseline_at_ms`, `funding_synced_at_ms`). The PG path skips AutoMigrate and
   only hand-added `paper_trading`, so on a pre-existing PG table the cash-flow ledger could not read its
