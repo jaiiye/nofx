@@ -752,13 +752,27 @@ func (e *StrategyEngine) BuildUserPrompt(ctx *Context) string {
 	}
 
 	// Account information
-	sb.WriteString(fmt.Sprintf("Account: Equity %.2f | Balance %.2f (%.1f%%) | PnL %+.2f%% | Margin %.1f%% | Positions %d\n\n",
+	sb.WriteString(fmt.Sprintf("Account: Equity %.2f | Balance %.2f (%.1f%%) | PnL %+.2f%% | Margin %.1f%% | Positions %d\n",
 		ctx.Account.TotalEquity,
 		ctx.Account.AvailableBalance,
 		(ctx.Account.AvailableBalance/ctx.Account.TotalEquity)*100,
 		ctx.Account.TotalPnLPct,
 		ctx.Account.MarginUsedPct,
 		ctx.Account.PositionCount))
+	// HIP-3 dex pool: a separate USDC account. Sizing a stock/commodity/index order
+	// off the main balance produces an order the risk gate (and the venue) reject.
+	if ctx.Account.HasXYZDex {
+		sb.WriteString(fmt.Sprintf("xyz dex (stocks/commodities/indices) — separate USDC pool: equity %.2f | available %.2f",
+			ctx.Account.XYZDexEquity, ctx.Account.XYZDexAvailable))
+		if ctx.Account.XYZDexAvailable <= 0 {
+			sb.WriteString(" — NO free margin: transfer USDC into the xyz dex before opening one of these; do not size them off the main Balance")
+		} else {
+			sb.WriteString(fmt.Sprintf(" — size one of these within that pool only: notional ≤ available %.2f × leverage, never from the main Balance",
+				ctx.Account.XYZDexAvailable))
+		}
+		sb.WriteString("\n")
+	}
+	sb.WriteString("\n")
 
 	// Recently completed orders (placed before positions to ensure visibility)
 	if len(ctx.RecentOrders) > 0 {

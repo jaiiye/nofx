@@ -48,6 +48,14 @@ type AccountInfo struct {
 	MarginUsed       float64 `json:"margin_used"`       // Used margin
 	MarginUsedPct    float64 `json:"margin_used_pct"`   // Margin usage rate
 	PositionCount    int     `json:"position_count"`    // Number of positions
+
+	// HIP-3 (xyz) dex margin pool. It is a separate USDC account from the main
+	// perp pool, so xyz assets (stocks, commodities, indices) must never be sized
+	// off AvailableBalance above. HasXYZDex reports that the venue exposes the
+	// pool at all, so other venues print nothing.
+	HasXYZDex       bool    `json:"has_xyz_dex,omitempty"`
+	XYZDexEquity    float64 `json:"xyz_dex_equity,omitempty"`
+	XYZDexAvailable float64 `json:"xyz_dex_available,omitempty"`
 }
 
 // CandidateCoin candidate coin (from coin pool)

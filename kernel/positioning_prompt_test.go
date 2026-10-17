@@ -188,3 +188,40 @@ func TestStockVenueNoteText(t *testing.T) {
 		t.Fatalf("unset window must fall back to the default and stay localized, got %q", got)
 	}
 }
+
+// The xyz dex keeps its own USDC pool. The model has to see it, otherwise it
+// sizes a stock/commodity order off the main balance and the risk gate rejects
+// the order for "no available margin" (observed live on xyz:CL).
+func TestUserPromptShowsXYZDexPool(t *testing.T) {
+	engine := positioningEngine("en")
+
+	empty := &Context{Account: AccountInfo{
+		TotalEquity: 150.56, AvailableBalance: 150.56,
+		HasXYZDex: true, XYZDexEquity: 0, XYZDexAvailable: 0,
+	}}
+	user := engine.BuildUserPrompt(empty)
+	if !strings.Contains(user, "xyz dex") || !strings.Contains(user, "NO free margin") {
+		t.Fatalf("empty xyz pool must be spelled out: %s", user)
+	}
+	if !strings.Contains(user, "do not size them off the main Balance") {
+		t.Fatalf("the sizing rule is missing: %s", user)
+	}
+
+	funded := &Context{Account: AccountInfo{
+		TotalEquity: 150.56, AvailableBalance: 150.56,
+		HasXYZDex: true, XYZDexEquity: 40, XYZDexAvailable: 40,
+	}}
+	user = engine.BuildUserPrompt(funded)
+	if !strings.Contains(user, "available 40.00") || !strings.Contains(user, "notional ≤ available 40.00 × leverage") {
+		t.Fatalf("funded pool must carry its own sizing rule: %s", user)
+	}
+	if strings.Contains(user, "NO free margin") {
+		t.Fatalf("a funded pool must not warn about missing margin: %s", user)
+	}
+
+	// Other venues expose no xyz pool: nothing is printed.
+	other := engine.BuildUserPrompt(&Context{Account: AccountInfo{TotalEquity: 150, AvailableBalance: 150}})
+	if strings.Contains(other, "xyz dex") {
+		t.Fatalf("venues without a HIP-3 pool must not print it: %s", other)
+	}
+}

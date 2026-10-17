@@ -106,17 +106,35 @@ func EvaluateRiskGate(in RiskGateInput) RiskGateResult {
 		}
 		marginFactor := marginOverheadFactor/float64(res.AdjustedLeverage) + feeRate
 		if maxAffordable := in.AvailableBalance / marginFactor; res.AdjustedSizeUSD > maxAffordable {
+			// Zero available margin is not a sizing problem: name the empty pool
+			// instead of reporting a position of 0.00 USDT (which reads as if the
+			// model had asked for nothing).
+			if in.AvailableBalance <= 0 {
+				return riskReject(noMarginReason(in.Symbol, in.AvailableBalance))
+			}
 			res.AdjustedSizeUSD = maxAffordable * positionSizeSafetyFactor
 		}
 	}
 
-	// 6. Minimum position size.
+	// 6. Minimum position size. Three different causes land on this check and each
+	// needs a different fix, so name the one that applies instead of always
+	// reporting "0.00 USDT below minimum".
 	minSize := rc.MinPositionSize
 	if minSize <= 0 {
 		minSize = 12
 	}
 	if res.AdjustedSizeUSD < minSize {
-		return riskReject(fmt.Sprintf("position %.2f USDT below minimum (%.2f USDT)", res.AdjustedSizeUSD, minSize))
+		switch {
+		case in.PositionSizeUSD <= 0:
+			return riskReject(fmt.Sprintf("the decision did not specify a position size for %s (0 USDT, minimum %.2f USDT) — the model must size the trade", in.Symbol, minSize))
+		case in.AvailableBalance <= 0:
+			return riskReject(noMarginReason(in.Symbol, in.AvailableBalance))
+		case res.AdjustedSizeUSD < in.PositionSizeUSD:
+			return riskReject(fmt.Sprintf("position reduced to %.2f USDT (from %.2f requested) by %.2f USDT of available margin, below the %.2f minimum — free up margin or lower min_position_size",
+				res.AdjustedSizeUSD, in.PositionSizeUSD, in.AvailableBalance, minSize))
+		default:
+			return riskReject(fmt.Sprintf("position %.2f USDT below minimum (%.2f USDT)", res.AdjustedSizeUSD, minSize))
+		}
 	}
 
 	// 7. Max margin usage: projected margin must stay within the configured
@@ -166,6 +184,17 @@ func sideLabel(action string) string {
 		return "short"
 	}
 	return "long"
+}
+
+// noMarginReason explains a zero available margin, naming the pool the symbol
+// settles against. The xyz dex (HIP-3) keeps its own USDC account, so an order
+// there can be unfunded while the main perp account holds cash: the operator has
+// to transfer, not resize.
+func noMarginReason(symbol string, available float64) string {
+	if market.IsXyzDexAsset(symbol) {
+		return fmt.Sprintf("no available margin for %s (xyz dex pool: %.2f USDC) — the xyz dex keeps its own USDC account, separate from the main perp account; transfer USDC into the xyz dex before trading it", symbol, available)
+	}
+	return fmt.Sprintf("no available margin for %s (%.2f USDC available) — free up margin or reduce open positions", symbol, available)
 }
 
 // checkOpenRiskGate runs the full pre-trade gate for an opening decision:

@@ -476,6 +476,20 @@ func (at *AutoTrader) buildTradingContext() (*kernel.Context, error) {
 		totalEquity = totalWalletBalance + totalUnrealizedProfit
 	}
 
+	// HIP-3 dex pool (Hyperliquid only): a separate USDC account that xyz assets
+	// settle against. Reported to the model so it does not size stock/commodity
+	// orders off the main balance — the risk gate would reject those anyway.
+	hasXYZDex := false
+	xyzDexEquity, xyzDexAvailable := 0.0, 0.0
+	if v, ok := balance["xyzDexAvailable"].(float64); ok {
+		hasXYZDex = true
+		xyzDexAvailable = v
+	}
+	if v, ok := balance["xyzDexBalance"].(float64); ok {
+		hasXYZDex = true
+		xyzDexEquity = v
+	}
+
 	// 2. Get position information
 	positions, err := at.trader.GetPositions()
 	if err != nil {
@@ -627,6 +641,9 @@ func (at *AutoTrader) buildTradingContext() (*kernel.Context, error) {
 			MarginUsed:       totalMarginUsed,
 			MarginUsedPct:    marginUsedPct,
 			PositionCount:    len(positionInfos),
+			HasXYZDex:        hasXYZDex,
+			XYZDexEquity:     xyzDexEquity,
+			XYZDexAvailable:  xyzDexAvailable,
 		},
 		Positions:      positionInfos,
 		CandidateCoins: candidateCoins,

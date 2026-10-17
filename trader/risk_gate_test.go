@@ -306,3 +306,61 @@ func TestCheckMinHold(t *testing.T) {
 		t.Fatalf("unknown age must not block: %v", err)
 	}
 }
+
+// The three causes behind a sub-minimum size need three different fixes. In
+// particular a zero available margin must name the empty pool: reporting "0.00
+// USDT below minimum" for an xyz symbol reads as if the model had sized nothing,
+// while the actual fix is to transfer USDC into the independent xyz dex account.
+func TestRiskGateExplainsWhySizeIsZero(t *testing.T) {
+	cfg := baseRiskConfig()
+
+	// 1. The decision did not size the trade.
+	res := EvaluateRiskGate(RiskGateInput{
+		Action: "open_long", Symbol: "xyz:CL", PositionSizeUSD: 0, Leverage: 3,
+		Equity: 150, AvailableBalance: 150, Config: cfg,
+	})
+	if res.Allowed || !strings.Contains(res.Reason, "did not specify a position size") {
+		t.Fatalf("zero-size decision: allowed=%v reason=%q", res.Allowed, res.Reason)
+	}
+
+	// 2. The xyz dex pool is empty although the main account holds cash.
+	res = EvaluateRiskGate(RiskGateInput{
+		Action: "open_long", Symbol: "xyz:CL", PositionSizeUSD: 90, Leverage: 3,
+		Equity: 150, AvailableBalance: 0, Config: cfg,
+	})
+	if res.Allowed {
+		t.Fatal("zero xyz margin must be rejected")
+	}
+	for _, want := range []string{"xyz dex pool", "transfer USDC into the xyz dex"} {
+		if !strings.Contains(res.Reason, want) {
+			t.Errorf("xyz zero-margin reason missing %q: %s", want, res.Reason)
+		}
+	}
+
+	// 3. A crypto symbol with no margin says so without the xyz wording.
+	res = EvaluateRiskGate(RiskGateInput{
+		Action: "open_long", Symbol: "SOLUSDT", PositionSizeUSD: 90, Leverage: 3,
+		Equity: 150, AvailableBalance: 0, Config: cfg,
+	})
+	if res.Allowed || !strings.Contains(res.Reason, "no available margin") || strings.Contains(res.Reason, "xyz dex") {
+		t.Fatalf("crypto zero-margin reason = %q", res.Reason)
+	}
+
+	// 4. Margin exists but reduces the order below the minimum: explain the cut.
+	res = EvaluateRiskGate(RiskGateInput{
+		Action: "open_long", Symbol: "SOLUSDT", PositionSizeUSD: 90, Leverage: 10,
+		Equity: 150, AvailableBalance: 1, Config: cfg,
+	})
+	if res.Allowed || !strings.Contains(res.Reason, "reduced to") {
+		t.Fatalf("reduced-size reason = %q", res.Reason)
+	}
+
+	// 5. The plain case keeps its original wording.
+	res = EvaluateRiskGate(RiskGateInput{
+		Action: "open_long", Symbol: "SOLUSDT", PositionSizeUSD: 5, Leverage: 3,
+		Equity: 150, AvailableBalance: 150, Config: cfg,
+	})
+	if res.Allowed || !strings.Contains(res.Reason, "below minimum") {
+		t.Fatalf("plain min-size reason = %q", res.Reason)
+	}
+}

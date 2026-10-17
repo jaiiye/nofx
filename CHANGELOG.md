@@ -191,6 +191,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bot uses the same model selection as the web agent.
 
 ### Fixed
+- The pre-trade gate now says why a position size came out at zero instead of always reporting
+  "position 0.00 USDT below minimum". Three different causes landed on that one check: a decision that
+  did not size the trade, a margin pool with no free margin, and an order the available margin reduced
+  below the minimum. Each now gets its own message — the pool case names the pool, and for xyz assets
+  it says the HIP-3 dex keeps its own USDC account and needs a transfer rather than a resize
+  (observed live on `xyz:CL`: 150 USDT on the main pool, an empty xyz pool, and a model proposal of
+  90 USDT that surfaced as "0.00 USDT below minimum").
+- The prompt shows the xyz dex pool next to the main balance and gives it its own sizing rule
+  (notional ≤ xyz available × leverage, never from the main balance), so the model stops sizing
+  stock/commodity/index orders off the main account — the upstream cause of that rejection. Venues
+  without a HIP-3 pool print nothing.
 - The studio's context estimate is back in sync with the prompt. It still assumed the pre-optimization
   prompt — the full analysis window of candles on every timeframe at ~80 chars per row — so a 10-name
   hourly strategy with the full indicator set was estimated at 338k tokens while the prompt it actually
