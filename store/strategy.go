@@ -38,6 +38,24 @@ const (
 	MaxPositionSize    = 1000.0
 	MinConfidence      = 50
 	MaxConfidence      = 100
+	// DefaultPromptDisplayBars is how many bars / indicator values the prompt
+	// prints per timeframe when the config does not say. The analysis window can
+	// be far longer; only this much of it reaches the model.
+	DefaultPromptDisplayBars = 40
+	// Token-estimate costs, calibrated against the prompt the engine actually
+	// builds (kernel/estimate_drift_test.go measures the two against each other).
+	// The estimate is a pre-flight guard, so it is allowed to overshoot slightly —
+	// it must never undershoot.
+	promptKlineRowChars           = 50 // compact CSV row (timestamp + OHLC + volume)
+	promptIndicatorValueChars     = 9  // one formatted value inside a series
+	promptIndicatorLabelChars     = 16 // "EMA(200): " style label
+	promptGaugeChars              = 30 // ATR / ADX / DI / SUPERTREND single value
+	promptMicrostructureChars     = 170
+	promptPositioningChars        = 210
+	promptVenueContextChars       = 120 // OI + funding lines per coin
+	promptSystemBaseCharsEN       = 6900
+	promptSystemBaseCharsZH       = 6400
+	promptSystemCharsPerIndicator = 300 // one confluence group per enabled indicator
 	// Hyperliquid ranking default: the venue's volume board. Liquidity is the
 	// right funnel for a trend strategy — the most traded assets have tight
 	// books and track their underlying best — while trend and timing stay with
@@ -1042,6 +1060,18 @@ type KlineConfig struct {
 	PromptDisplayBars int `json:"prompt_display_bars,omitempty"`
 }
 
+// EffectivePromptDisplayBars returns the display cap the prompt writer applies:
+// the configured value when set, otherwise the product default. This is the cap
+// on BOTH the candle table and the indicator series, and it is what the token
+// estimate has to use — the analysis window (`primary_count`) can be much larger
+// than what is printed.
+func (k KlineConfig) EffectivePromptDisplayBars() int {
+	if k.PromptDisplayBars > 0 {
+		return k.PromptDisplayBars
+	}
+	return DefaultPromptDisplayBars
+}
+
 // ExternalDataSource external data source configuration
 type ExternalDataSource struct {
 	Name        string            `json:"name"`   // data source name
@@ -1530,11 +1560,33 @@ func (c *StrategyConfig) EstimateTokens() TokenEstimate {
 	breakdown := TokenBreakdown{}
 
 	// --- System Prompt ---
-	// Base system prompt: schema + role + rules + output format
-	baseChars := 4000 // English default
-	if c.Language == "zh" {
-		baseChars = 3000
+	// Calibrated against the prompt the engine builds: base text (role, hard
+	// rules, output schema, decision process, exit discipline) plus one
+	// confluence group per enabled indicator/data switch.
+	enabledIndicators := 0
+	for _, on := range []bool{
+		c.Indicators.EnableEMA,
+		c.Indicators.EnableMACD,
+		c.Indicators.EnableRSI,
+		c.Indicators.EnableATR,
+		c.Indicators.EnableBOLL,
+		c.Indicators.EnableADX,
+		c.Indicators.EnableSupertrend,
+		c.Indicators.EnableVolume,
+		c.Indicators.EnableOI,
+		c.Indicators.EnableFundingRate,
+		c.Indicators.PositioningEnabled(),
+		c.Indicators.EnableMicrostructure == nil || *c.Indicators.EnableMicrostructure,
+	} {
+		if on {
+			enabledIndicators++
+		}
 	}
+	baseChars := promptSystemBaseCharsEN
+	if c.Language == "zh" {
+		baseChars = promptSystemBaseCharsZH
+	}
+	baseChars += enabledIndicators * promptSystemCharsPerIndicator
 	// Add prompt sections
 	baseChars += len(c.PromptSections.RoleDefinition)
 	baseChars += len(c.PromptSections.TradingFrequency)
@@ -1553,44 +1605,84 @@ func (c *StrategyConfig) EstimateTokens() TokenEstimate {
 	breakdown.FixedOverhead = 800 / 4 // ~200 tokens
 
 	// --- Market Data ---
+	// Mirrors how the engine builds the prompt: the candle table and every
+	// indicator series are trimmed to the DISPLAY cap (`prompt_display_bars`), not
+	// to the analysis window, and candidates only print the candle table for their
+	// primary timeframe while positions print it for every timeframe.
 	numCoins := c.getEffectiveCoinCount()
 	numTimeframes := c.getEffectiveTimeframeCount()
-	klineCount := c.Indicators.Klines.PrimaryCount
-	if klineCount <= 0 {
-		klineCount = 20
+	if numTimeframes < 1 {
+		numTimeframes = 1
 	}
+	window := c.Indicators.Klines.PrimaryCount
+	if window <= 0 {
+		window = 20
+	}
+	displayRows := c.Indicators.Klines.EffectivePromptDisplayBars()
+	if displayRows > window {
+		displayRows = window
+	}
+	// Positions carry the full candle table on every timeframe, and their count is
+	// not a config field, so the estimate assumes the configured maximum: an
+	// understated estimate would let an oversized prompt through.
+	positionCoins := MaxPositions
 
-	// Per coin per timeframe: kline OHLCV rows
-	charsPerCoinTF := klineCount * 80 // each OHLCV line ~80 chars
+	// Rows that carry a candle table: candidates (primary frame only) plus
+	// positions (every frame).
+	rowsWithCandles := numCoins + positionCoins*numTimeframes
+	klineChars := rowsWithCandles * displayRows * promptKlineRowChars
 
-	// Add enabled indicator overhead per timeframe
-	indicatorCharsPerLine := 0
+	// Indicator series per timeframe, using the configured periods and falling
+	// back to the canonical defaults the market layer would apply.
+	periodCount := func(configured, fallback int) int {
+		if configured > 0 {
+			return configured
+		}
+		return fallback
+	}
+	seriesPerTF := 0
 	if c.Indicators.EnableEMA {
-		indicatorCharsPerLine += 20 // EMA values appended
-	}
-	if c.Indicators.EnableMACD {
-		indicatorCharsPerLine += 30
+		seriesPerTF += periodCount(len(c.Indicators.EMAPeriods), 2)
 	}
 	if c.Indicators.EnableRSI {
-		indicatorCharsPerLine += 15
+		seriesPerTF += periodCount(len(c.Indicators.RSIPeriods), 2)
 	}
-	if c.Indicators.EnableATR {
-		indicatorCharsPerLine += 15
+	if c.Indicators.EnableMACD {
+		seriesPerTF++
 	}
 	if c.Indicators.EnableBOLL {
-		indicatorCharsPerLine += 25
+		seriesPerTF += 3 * periodCount(len(c.Indicators.BOLLPeriods), 1)
 	}
-	if c.Indicators.EnableVolume {
-		indicatorCharsPerLine += 10
+	indicatorCharsPerTF := seriesPerTF * (displayRows*promptIndicatorValueChars + promptIndicatorLabelChars)
+
+	// Single-value gauges: ATR, ADX with DI+/DI-, Supertrend band + direction.
+	gauges := 0
+	if c.Indicators.EnableATR {
+		gauges += periodCount(len(c.Indicators.ATRPeriods), 1)
 	}
-	charsPerCoinTF += klineCount * indicatorCharsPerLine
+	if c.Indicators.EnableADX {
+		gauges += 3 * periodCount(len(c.Indicators.ADXPeriods), 1)
+	}
+	if c.Indicators.EnableSupertrend {
+		gauges += 2
+	}
+	indicatorCharsPerTF += gauges * promptGaugeChars
 
-	totalMarketChars := numCoins * numTimeframes * charsPerCoinTF
+	indicatorChars := (numCoins + positionCoins) * numTimeframes * indicatorCharsPerTF
 
-	// OI + Funding per coin
+	// Per-coin sections the prompt emits beside the series.
+	extrasPerCoin := 0
 	if c.Indicators.EnableOI || c.Indicators.EnableFundingRate {
-		totalMarketChars += numCoins * 100
+		extrasPerCoin += promptVenueContextChars
 	}
+	if c.Indicators.EnableMicrostructure == nil || *c.Indicators.EnableMicrostructure {
+		extrasPerCoin += promptMicrostructureChars
+	}
+	if c.Indicators.PositioningEnabled() {
+		extrasPerCoin += promptPositioningChars
+	}
+
+	totalMarketChars := klineChars + indicatorChars + (numCoins+positionCoins)*extrasPerCoin
 
 	breakdown.MarketData = totalMarketChars / 4 // numeric data: ~4 chars per token
 
@@ -1676,16 +1768,25 @@ func (c *StrategyConfig) EstimateTokens() TokenEstimate {
 		}
 	}
 	if minLimit > 0 && total > minLimit {
-		if numTimeframes > 1 {
-			savedPerTF := (numCoins * klineCount * (80 + indicatorCharsPerLine)) / 4 * 115 / 100
-			suggestions = append(suggestions, fmt.Sprintf("Reduce 1 timeframe to save ~%d tokens", savedPerTF))
-		}
+		// Per-coin-per-timeframe cost of one more coin (its candle table plus its
+		// indicator series).
+		savedPerCoin := (numTimeframes*indicatorCharsPerTF + displayRows*promptKlineRowChars + extrasPerCoin) / 4 * 115 / 100
 		if numCoins > 1 {
-			savedPerCoin := (numTimeframes * klineCount * (80 + indicatorCharsPerLine)) / 4 * 115 / 100
 			suggestions = append(suggestions, fmt.Sprintf("Reduce 1 coin to save ~%d tokens", savedPerCoin))
 		}
-		if klineCount > 15 {
-			suggestions = append(suggestions, "Reduce K-line count to 15 to save tokens")
+		if numTimeframes > 1 {
+			// Dropping a timeframe removes its indicator series for every coin.
+			savedPerTF := (numCoins + positionCoins) * indicatorCharsPerTF / 4 * 115 / 100
+			suggestions = append(suggestions, fmt.Sprintf("Reduce 1 timeframe to save ~%d tokens", savedPerTF))
+		}
+		// The display cap is the lever that actually bounds the prompt: the analysis
+		// window can be long while the model only needs the recent shape.
+		if displayRows > 20 {
+			const trimmedRows = 20
+			savedRows := rowsWithCandles * (displayRows - trimmedRows) * promptKlineRowChars
+			savedValues := (numCoins + positionCoins) * numTimeframes * (displayRows - trimmedRows) * promptIndicatorValueChars * seriesPerTF
+			suggestions = append(suggestions, fmt.Sprintf("Reduce the prompt display window from %d to %d bars to save ~%d tokens",
+				displayRows, trimmedRows, (savedRows+savedValues)/4*115/100))
 		}
 	}
 

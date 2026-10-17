@@ -191,6 +191,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bot uses the same model selection as the web agent.
 
 ### Fixed
+- The studio's context estimate is back in sync with the prompt. It still assumed the pre-optimization
+  prompt — the full analysis window of candles on every timeframe at ~80 chars per row — so a 10-name
+  hourly strategy with the full indicator set was estimated at 338k tokens while the prompt it actually
+  builds is ~33k: a **10x** overstatement. That also made the pre-flight guard in
+  `kernel/engine_analysis.go` refuse cycles that would have fit, since it blocks when the estimate
+  exceeds the model's context limit. The estimate now follows the rules the prompt builder follows (the
+  display cap decides how much is printed; candidates print the candle table only for their primary
+  timeframe while positions print it on every timeframe; per-row and per-value costs are measured; and
+  the sections added since — ADX/Supertrend, positioning, microstructure, exit discipline — are
+  counted), and the savings suggestion is the lever that actually matters (the display window) instead
+  of "reduce K-line count". `kernel/estimate_drift_test.go` guards it by measuring the estimate against
+  the built prompt: worst case 1.15x, typical 1.4x, and never below the measurement.
+- `klines.prompt_display_bars` now governs the candle table too. The indicator series honoured the
+  setting while the table stayed hardcoded to 40 rows, so raising the cap to 100 produced 100
+  indicator values with 40 candles, and lowering it changed nothing about the candles at all.
 - The cash-flow ledger could not read its own reconciliation point: GetPnLBaseline's anonymous struct
   had no column tags and GORM derives `pn_l_baseline_wallet` from the field name ("PnL" breaks its
   naming rule), which matched no column — so every call returned zeros with no error. Every process

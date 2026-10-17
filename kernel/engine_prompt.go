@@ -1438,7 +1438,7 @@ func writeConfiguredIndicators(sb *strings.Builder, series []market.IndicatorSer
 		}
 		values := s.Values
 		if limit <= 0 {
-			limit = promptDisplayLimit
+			limit = store.DefaultPromptDisplayBars
 		}
 		if len(values) > limit {
 			values = values[len(values)-limit:]
@@ -1453,20 +1453,12 @@ func writeConfiguredIndicators(sb *strings.Builder, series []market.IndicatorSer
 	return wrote
 }
 
-// promptDisplayLimit caps how many bars / series values are printed per
-// timeframe. The analysis window can be far longer (an hourly strategy needs
-// 200 bars for EMA200 / multi-day structure), but printing all of it would
-// inflate every prompt; the model needs the recent shape plus the current
-// values, and the long lookback is already reflected in those values.
-const promptDisplayLimit = 40
-
-// resolveDisplayLimit returns the configured prompt display cap, falling back
-// to the product default (see KlineConfig.PromptDisplayBars).
+// resolveDisplayLimit returns the configured prompt display cap, falling back to
+// the product default. The cap governs both the candle table and the indicator
+// series, and the token estimate reads the same setting (single source: see
+// store.KlineConfig.EffectivePromptDisplayBars).
 func resolveDisplayLimit(indicators store.IndicatorConfig) int {
-	if n := indicators.Klines.PromptDisplayBars; n > 0 {
-		return n
-	}
-	return promptDisplayLimit
+	return indicators.Klines.EffectivePromptDisplayBars()
 }
 
 func (e *StrategyEngine) formatTimeframeSeriesData(sb *strings.Builder, data *market.TimeframeSeriesData, indicators store.IndicatorConfig, includeKlines bool) {
@@ -1478,8 +1470,10 @@ func (e *StrategyEngine) formatTimeframeSeriesData(sb *strings.Builder, data *ma
 		if includeKlines {
 			bars := data.Klines
 			omitted := 0
-			if len(bars) > promptDisplayLimit {
-				omitted = len(bars) - promptDisplayLimit
+			// The configured display cap governs the candle table too: it is the
+			// setting that decides how much of the window the model actually sees.
+			if len(bars) > limit {
+				omitted = len(bars) - limit
 				bars = bars[omitted:]
 			}
 			sb.WriteString("Time(UTC),Open,High,Low,Close,Volume\n")
@@ -1587,7 +1581,7 @@ func formatCompactPrice(v float64) string {
 // whatever path produced the series.
 func formatSeriesTail(values []float64, limit int) string {
 	if limit <= 0 {
-		limit = promptDisplayLimit
+		limit = store.DefaultPromptDisplayBars
 	}
 	if len(values) > limit {
 		values = values[len(values)-limit:]
