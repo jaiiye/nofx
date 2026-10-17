@@ -596,12 +596,8 @@ func (at *AutoTrader) buildTradingContext() (*kernel.Context, error) {
 	//    the prompt and the UI do not report an external transfer as profit.
 	at.reconcilePnLBaseline(totalWalletBalance)
 
-	// Calculate total P&L
-	totalPnL := totalEquity - at.initialBalance
-	totalPnLPct := 0.0
-	if at.initialBalance > 0 {
-		totalPnLPct = (totalPnL / at.initialBalance) * 100
-	}
+	// Calculate total P&L against the cash-flow neutral baseline
+	totalPnL, totalPnLPct := PnLAgainstBaseline(totalEquity, at.initialBalance)
 
 	marginUsedPct := 0.0
 	if totalEquity > 0 {

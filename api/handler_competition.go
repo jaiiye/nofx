@@ -9,6 +9,7 @@ import (
 
 	"nofx/logger"
 	"nofx/store"
+	"nofx/trader"
 
 	"github.com/gin-gonic/gin"
 )
@@ -137,7 +138,7 @@ type equityHistoryPoint struct {
 // equityHistoryForTrader builds the return curve of one trader. Access control
 // belongs to the caller: the public competition route requires the trader to
 // have opted in, the owner route requires ownership.
-func (s *Server) equityHistoryForTrader(traderID string, limit int, configuredBalance float64) ([]equityHistoryPoint, error) {
+func (s *Server) equityHistoryForTrader(traderID string, limit int) ([]equityHistoryPoint, error) {
 	snapshots, err := s.store.Equity().GetLatest(traderID, limit)
 	if err != nil {
 		return nil, err
@@ -146,18 +147,15 @@ func (s *Server) equityHistoryForTrader(traderID string, limit int, configuredBa
 		return []equityHistoryPoint{}, nil
 	}
 
-	// Rows written before the baseline was stored per snapshot fall back to the
-	// trader's configured balance, then to the first wallet balance.
-	fallbackBaseline := configuredBalance
-	if fallbackBaseline <= 0 {
-		fallbackBaseline = snapshots[0].Balance
+	baselines, err := s.snapshotBaselines(traderID, snapshots)
+	if err != nil {
+		return nil, err
 	}
-	baselines := s.snapshotBaselines(traderID, snapshots, fallbackBaseline)
 
 	history := make([]equityHistoryPoint, 0, len(snapshots))
 	for i, snap := range snapshots {
 		baseline := baselines[i]
-		totalPnL, totalPnLPct := equityPointPnL(snap.TotalEquity, baseline)
+		totalPnL, totalPnLPct := trader.PnLAgainstBaseline(snap.TotalEquity, baseline)
 
 		history = append(history, equityHistoryPoint{
 			Timestamp:        snap.Timestamp.Format("2006-01-02 15:04:05"),
@@ -196,7 +194,7 @@ func (s *Server) handleEquityHistory(c *gin.Context) {
 	}
 
 	// Every 3 minutes per cycle: 10000 records = about 20 days of data
-	history, err := s.equityHistoryForTrader(traderID, 10000, trader.InitialBalance)
+	history, err := s.equityHistoryForTrader(traderID, 10000)
 	if err != nil {
 		SafeInternalError(c, "Get historical data", err)
 		return
@@ -220,7 +218,7 @@ func (s *Server) handleMyEquityHistory(c *gin.Context) {
 		return
 	}
 
-	history, err := s.equityHistoryForTrader(traderID, 10000, trader.InitialBalance)
+	history, err := s.equityHistoryForTrader(traderID, 10000)
 	if err != nil {
 		SafeInternalError(c, "Get historical data", err)
 		return
@@ -380,9 +378,6 @@ func (s *Server) getEquityHistoryForTraders(traderIDs []string, hours int) map[s
 	// equity curves leak to anyone holding their IDs. Private/unknown IDs are
 	// skipped silently so their existence is not revealed either.
 	visible := make([]string, 0, len(traderIDs))
-
-	// Pre-fetch initial balances for all traders
-	initialBalances := make(map[string]float64)
 	for _, traderID := range traderIDs {
 		if traderID == "" {
 			continue
@@ -393,9 +388,6 @@ func (s *Server) getEquityHistoryForTraders(traderIDs []string, hours int) map[s
 			continue
 		}
 		visible = append(visible, traderID)
-		if trader.InitialBalance > 0 {
-			initialBalances[traderID] = trader.InitialBalance
-		}
 	}
 
 	for _, traderID := range visible {
@@ -421,22 +413,19 @@ func (s *Server) getEquityHistoryForTraders(traderIDs []string, hours int) map[s
 			continue
 		}
 
-		// Each snapshot is measured against the baseline it was taken with; rows
-		// written before the baseline was stored are reconstructed from the
-		// realized PnL series (fallback: configured balance, else the first
-		// snapshot's equity).
-		fallbackBaseline := initialBalances[traderID]
-		if fallbackBaseline <= 0 && len(snapshots) > 0 {
-			fallbackBaseline = snapshots[0].TotalEquity
+		baselines, err := s.snapshotBaselines(traderID, snapshots)
+		if err != nil {
+			logger.Errorf("[API] Failed to reconstruct PnL baselines for %s: %v", traderID, err)
+			errors[traderID] = "Failed to reconstruct PnL baselines"
+			continue
 		}
-		baselines := s.snapshotBaselines(traderID, snapshots, fallbackBaseline)
 
 		// Build return rate historical data with PnL percentage
 		history := make([]map[string]interface{}, 0, len(snapshots)+1)
 		var lastSnapshotTime time.Time
 		for i, snap := range snapshots {
 			baseline := baselines[i]
-			totalPnL, pnlPct := equityPointPnL(snap.TotalEquity, baseline)
+			totalPnL, pnlPct := trader.PnLAgainstBaseline(snap.TotalEquity, baseline)
 
 			history = append(history, map[string]interface{}{
 				"timestamp":       snap.Timestamp,
@@ -453,32 +442,24 @@ func (s *Server) getEquityHistoryForTraders(traderIDs []string, hours int) map[s
 
 		// Append current real-time data point to ensure chart matches leaderboard
 		// This ensures the latest point is always current, not from a potentially stale snapshot
-		if trader, err := s.traderManager.GetTrader(traderID); err == nil {
-			if accountInfo, err := trader.GetAccountInfo(); err == nil {
+		if liveTrader, err := s.traderManager.GetTrader(traderID); err == nil {
+			if accountInfo, err := liveTrader.GetAccountInfo(); err == nil {
 				// Only append if it's been more than 30 seconds since last snapshot
 				if now.Sub(lastSnapshotTime) > 30*time.Second {
 					totalEquity := 0.0
 					if v, ok := accountInfo["total_equity"].(float64); ok {
 						totalEquity = v
 					}
-					totalPnL := 0.0
-					if v, ok := accountInfo["total_pnl"].(float64); ok {
-						totalPnL = v
-					}
 					walletBalance := 0.0
 					if v, ok := accountInfo["wallet_balance"].(float64); ok {
 						walletBalance = v
 					}
-					// The live account reports its current (cash-flow adjusted)
-					// baseline, which is the right one for the appended point.
-					baseline := fallbackBaseline
-					if v, ok := accountInfo["initial_balance"].(float64); ok && v > 0 {
-						baseline = v
-					}
-					pnlPct := 0.0
-					if baseline > 0 {
-						pnlPct = totalPnL / baseline * 100
-					}
+					// The live account reports its current (cash-flow neutral)
+					// baseline, which is the right one for the appended point —
+					// and the point is measured with the same rule as every
+					// snapshot above.
+					baseline, _ := accountInfo["initial_balance"].(float64)
+					totalPnL, pnlPct := trader.PnLAgainstBaseline(totalEquity, baseline)
 
 					history = append(history, map[string]interface{}{
 						"timestamp":       now,

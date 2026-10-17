@@ -48,25 +48,9 @@ export function ComparisonChart({ traders }: ComparisonChartProps) {
   const { data: allTraderHistories, isLoading } = useSWR(
     traders.length > 0 ? `equity-histories-${tradersKey}-${selectedHours}` : null,
     async () => {
-      console.log('Fetching equity history with hours:', selectedHours)
       const traderIds = traders.map((trader) => trader.trader_id)
       const batchData = await api.getEquityHistoryBatch(traderIds, selectedHours)
-      console.log('Received data points:', Object.values(batchData.histories || {}).map((h: any) => h?.length))
-      return traders.map((trader) => {
-        const history = batchData.histories?.[trader.trader_id] || []
-
-        // If backend doesn't return total_pnl_pct, calculate it from equity
-        if (history.length > 0 && history[0].total_pnl_pct === undefined) {
-          const initialEquity = history[0].total_equity
-          history.forEach((point: any) => {
-            point.total_pnl_pct = initialEquity > 0
-              ? ((point.total_equity - initialEquity) / initialEquity) * 100
-              : 0
-          })
-        }
-
-        return history
-      })
+      return traders.map((trader) => batchData.histories?.[trader.trader_id] || [])
     },
     {
       refreshInterval: 30000,

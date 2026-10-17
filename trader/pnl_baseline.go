@@ -38,14 +38,33 @@ func detectCashFlow(previousWallet, currentWallet, realizedSince float64) (float
 	return drift, true
 }
 
+// BaselineFromWallet returns the cash-flow neutral PnL baseline implied by a
+// wallet balance and the realized PnL booked up to the same moment: money in is
+// whatever the wallet holds that trading did not produce. This single rule backs
+// both the live baseline (all-time realized PnL) and the reconstructed baseline
+// of a historical equity point (realized PnL up to that point).
+func BaselineFromWallet(wallet, realized float64) float64 {
+	return wallet - realized
+}
+
+// PnLAgainstBaseline returns the cash-flow neutral PnL amount and percentage of
+// an equity figure measured against a PnL baseline. A baseline that is not a
+// usable capital base reports no PnL rather than a meaningless ratio.
+func PnLAgainstBaseline(totalEquity, baseline float64) (amount, pct float64) {
+	if baseline <= 0 {
+		return 0, 0
+	}
+	amount = totalEquity - baseline
+	return amount, amount / baseline * 100
+}
+
 // deriveBaseline re-derives the cash-flow neutral baseline of a trader whose
-// stored one predates this ledger: money in is the wallet minus the realized PnL
-// on record, so a deposit made before the ledger existed lands in the baseline
-// instead of being reported as profit. It returns ok = false when the stored
-// baseline already matches the wallet (nothing to repair) or when the derived
-// value is not usable as a capital base.
+// stored one predates this ledger — a deposit made before the ledger existed
+// would otherwise stay booked as profit forever. It returns ok = false when the
+// stored baseline already matches the wallet (nothing to repair) or when the
+// derived value is not a usable capital base.
 func deriveBaseline(wallet, netRealizedAll, storedBaseline float64) (float64, bool) {
-	derived := wallet - netRealizedAll
+	derived := BaselineFromWallet(wallet, netRealizedAll)
 	if derived <= 0 {
 		return 0, false
 	}
@@ -53,23 +72,6 @@ func deriveBaseline(wallet, netRealizedAll, storedBaseline float64) (float64, bo
 		return 0, false
 	}
 	return derived, true
-}
-
-// cashFlowLedger is implemented by venue adapters that can report external cash
-// flows exactly (a ledger of deposits/withdrawals/transfers).
-type cashFlowLedger interface {
-	CashFlowSince(sinceMs int64) (float64, bool)
-}
-
-// externalCashFlowSince resolves the external cash flow for the current window:
-// the venue ledger when available, otherwise the wallet-move heuristic.
-func (at *AutoTrader) externalCashFlowSince(realizedSince, wallet float64) (float64, bool) {
-	if ledger, ok := at.trader.(cashFlowLedger); ok {
-		if flow, exact := ledger.CashFlowSince(at.pnlBaselineAtMs); exact {
-			return flow, math.Abs(flow) >= cashFlowMateriality(wallet)
-		}
-	}
-	return detectCashFlow(at.pnlBaselineWallet, wallet, realizedSince)
 }
 
 // reconcilePnLBaseline detects and applies deposits/withdrawals for this cycle.
@@ -130,11 +132,10 @@ func (at *AutoTrader) reconcilePnLBaseline(wallet float64) {
 		return
 	}
 
-	// Prefer the venue's own ledger: it reports deposits/withdrawals/transfers
-	// exactly, unlike the wallet-move heuristic which has to tolerate
-	// unrecorded funding and rounding. Venues without a ledger use the
-	// heuristic.
-	cashFlow, detected := at.externalCashFlowSince(realizedSince, wallet)
+	// A wallet move the realized PnL on record does not explain is an external
+	// transfer. Unrecorded funding and rounding below the materiality threshold
+	// stay in the result instead of being folded into the baseline.
+	cashFlow, detected := detectCashFlow(at.pnlBaselineWallet, wallet, realizedSince)
 
 	nowMs := time.Now().UTC().UnixMilli()
 	if !detected {

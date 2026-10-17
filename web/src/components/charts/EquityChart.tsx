@@ -134,32 +134,19 @@ export function EquityChart({ traderId, embedded = false }: EquityChartProps) {
       ? validHistory.slice(-MAX_DISPLAY_POINTS)
       : validHistory
 
-  // 每点用服务端算好的、当时生效的 PnL 基线（存过款后基线会上移）。
+  // 每点用服务端算好的、当时生效的 PnL 基线（存款后基线上移）。
   // 不能用"当前初始余额"去重算整段历史，否则存款前后的点会失真。
-  // account 的当前基线只作为旧数据（未记录基线）的兜底。
   const latestPoint = validHistory[validHistory.length - 1]
   const currentBaseline =
-    account?.initial_balance ||
-    latestPoint?.initial_balance ||
-    (latestPoint ? latestPoint.total_equity - (latestPoint.total_pnl ?? 0) : 0) ||
-    0
+    latestPoint?.initial_balance && latestPoint.initial_balance > 0
+      ? latestPoint.initial_balance
+      : latestPoint
+        ? latestPoint.total_equity - (latestPoint.total_pnl ?? 0)
+        : 0
 
   // 转换数据格式
   const chartData = displayHistory.map((point, index) => {
-    const baseline =
-      point.initial_balance && point.initial_balance > 0
-        ? point.initial_balance
-        : currentBaseline
-    const pnl =
-      typeof point.total_pnl === 'number'
-        ? point.total_pnl
-        : point.total_equity - baseline
-    const pnlPct =
-      typeof point.total_pnl_pct === 'number'
-        ? point.total_pnl_pct
-        : baseline > 0
-          ? (pnl / baseline) * 100
-          : 0
+    const pnlPct = point.total_pnl_pct ?? 0
     return {
       time: new Date(point.timestamp).toLocaleTimeString('zh-CN', {
         hour: '2-digit',
@@ -168,7 +155,7 @@ export function EquityChart({ traderId, embedded = false }: EquityChartProps) {
       value: displayMode === 'dollar' ? point.total_equity : parseFloat(pnlPct.toFixed(2)),
       cycle: point.cycle_number ?? index + 1,
       raw_equity: point.total_equity,
-      raw_pnl: pnl,
+      raw_pnl: point.total_pnl ?? 0,
       raw_pnl_pct: parseFloat(pnlPct.toFixed(2)),
     }
   })

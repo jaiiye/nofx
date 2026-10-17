@@ -162,11 +162,8 @@ func (at *AutoTrader) GetAccountInfo() (map[string]interface{}, error) {
 			totalUnrealizedProfit, totalUnrealizedPnLCalculated, diff)
 	}
 
-	totalPnL := totalEquity - at.initialBalance
-	totalPnLPct := 0.0
-	if at.initialBalance > 0 {
-		totalPnLPct = (totalPnL / at.initialBalance) * 100
-	} else {
+	totalPnL, totalPnLPct := PnLAgainstBaseline(totalEquity, at.initialBalance)
+	if at.initialBalance <= 0 {
 		logger.Infof("⚠️ Initial Balance abnormal: %.2f, cannot calculate P&L percentage", at.initialBalance)
 	}
 

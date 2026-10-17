@@ -69,6 +69,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   making a context that is outgrowing the model's window visible before the provider rejects it.
 
 ### Changed
+- PnL and its baseline are consolidated into a single path; redundancy and fake fallbacks are gone:
+  - The never-implemented `cashFlowLedger` (`CashFlowSince`) interface and its `externalCashFlowSince`
+    wrapper are deleted; cash-flow detection is one rule in one place: the wallet move that the recorded
+    realized PnL does not explain.
+  - One implementation each for money in (`trader.BaselineFromWallet`) and for measuring against a
+    baseline (`trader.PnLAgainstBaseline`) — the same formula used to be written out separately in the
+    decision loop, the account endpoint and the equity curve. An unusable baseline (<= 0) now reports no
+    PnL, fixing "baseline 0 counts the whole equity as profit" (`/api/account` returned
+    `total_pnl = equity` in that case).
+  - The equity curve drops its "fall back to the trader's configured balance" crutch
+    (`resolveSnapshotBaseline`, the `configuredBalance` parameter, the leaderboard's prefetched balance
+    map): a point without a stored baseline is reconstructed, and an unreadable position series fails
+    that trader's chart instead of silently measuring it against the configured balance — the path that
+    made the pre-deposit segment look like a loss.
+  - Two client-side recomputations are deleted: `ComparisonChart` deriving `total_pnl_pct` from its first
+    equity point (not cash-flow neutral), and `EquityChart`'s per-point baseline/PnL fallback chain plus
+    its `account.initial_balance` fallback (the backend returns both for every point). The debug
+    `console.log` calls in that chart fetch go with them.
 - Indicators and their parameters are no longer two separate blocks: the `Indicator parameters`
   panel is folded into `Optional technical indicators`, one row per indicator, so enabling an
   indicator reveals its own inputs on the same row (EMA/RSI/ATR/ADX/BOLL periods, MACD fast/slow,

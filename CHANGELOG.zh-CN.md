@@ -60,6 +60,17 @@ NOFX 项目的所有重要更改都将记录在此文件中。
   让"上下文快要超过模型窗口"在 provider 报错之前就可见。
 
 ### 变更
+- PnL / 基线这一块收敛为单一路径，删掉冗余与假兜底：
+  - 删除从未被任何适配器实现的 `cashFlowLedger`（`CashFlowSince`）接口及其包装 `externalCashFlowSince`；
+    入金判定只保留"钱包变动 − 账上已实现 PnL"这一处。
+  - "投入本金"（`trader.BaselineFromWallet`）与"对基线的 PnL"（`trader.PnLAgainstBaseline`）各只保留一处
+    实现——此前同一公式在决策循环、账户接口、权益曲线里各写了一遍。基线不可用（≤0）时统一按"无 PnL"
+    返回，修掉"初始余额为 0 时把全部权益当成盈利"（账户接口此前会返回 `total_pnl = equity`）。
+  - 权益曲线删除"回退到交易员配置余额"的兜底（`resolveSnapshotBaseline`、`configuredBalance` 参数、竞赛榜
+    预取余额的 map）：没有存储基线的历史点一律按点重建，平仓序列读不到时直接报错，不再静默按配置余额
+    计算——那正是会让入金前那段显示假亏损的路径。
+  - 前端删除两处客户端重算：`ComparisonChart` 用首个权益点当基线重算 `total_pnl_pct`（非现金流中性），
+    `EquityChart` 逐点的 baseline/pnl 兜底链与 `account.initial_balance` 兜底（后端每个点都已返回）。
 - 技术指标与指标参数不再是两块：`指标参数` 面板并入 `可选技术指标`，每个技术指标占一行，
   开启后在同一行直接编辑它自己的参数（EMA/RSI/ATR/ADX/BOLL 周期、MACD 快线/慢线、
   BOLL 与 Supertrend 倍数），未开启时该行显示默认参数，不再需要"上面开开关、下面找参数"。
