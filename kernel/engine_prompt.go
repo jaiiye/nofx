@@ -653,8 +653,8 @@ func (e *StrategyEngine) writeIndicatorPlaybook(sb *strings.Builder, zh bool) {
 	}
 	if ind.EnableFundingRate {
 		confirmation = append(confirmation, l(
-			"Extreme funding marks crowded positioning — avoid chasing in that direction.",
-			"资金费率极端代表持仓拥挤——避免在该方向追单。"))
+			"Extreme funding marks crowded positioning — avoid chasing in that direction. Where the percentile against the coin's own 7d funding is available (top/bottom decile), that is the crowding read to use.",
+			"资金费率极端代表持仓拥挤——避免在该方向追单。若给出了相对该币自身 7 日资金费的分位（高位/低位十分位），以该分位为拥挤度依据。"))
 	}
 	addGroup(l("Confirmation", "信号确认"), confirmation)
 
@@ -665,6 +665,19 @@ func (e *StrategyEngine) writeIndicatorPlaybook(sb *strings.Builder, zh bool) {
 			"微观结构：价差过宽或流动性评分过低时不要市价追单；盘口失衡只代表短期压力，不构成趋势理由。"))
 	}
 	addGroup(l("Execution quality", "执行质量"), execution)
+
+	// Positioning: what the venue's own open interest and trade flow say about
+	// who is entering or leaving. Hyperliquid exposes no account long/short
+	// ratio, so these read as the reason behind a move, not as entry triggers.
+	var positioning []string
+	if ind.PositioningEnabled() {
+		positioning = append(positioning,
+			l("Open interest × price separates new money from closed positions: OI up + price up = new longs, OI up + price down = new shorts, OI down + price up = short covering, OI down + price down = long capitulation. Read it as the reason behind the candle, not as an entry trigger.",
+				"持仓量 × 价格可区分『新资金入场』与『头寸平仓』：持仓↑价↑=新多、持仓↑价↓=新空、持仓↓价↑=空头回补、持仓↓价↓=多头割肉。它用来解释 K 线背后的原因，而不是当作入场触发。"),
+			l("Taker flow ratio (buy/sell notional) confirms momentum when it aligns with the move; a large ratio against a flat price means someone is absorbing supply, so prefer confirmation before entering.",
+				"主动成交比（买卖名义额）与价格同向放大时可作动量确认；若比值很大而价格不动，说明有对手在承接/派发，入场前应等待确认。"))
+	}
+	addGroup(l("Positioning / crowding", "持仓与拥挤度"), positioning)
 
 	if len(groups) == 0 {
 		return
@@ -870,6 +883,7 @@ func (e *StrategyEngine) BuildUserPrompt(ctx *Context) string {
 			}
 		}
 		candidateBody.WriteString(e.formatMicrostructure(ctx, coin.Symbol))
+		candidateBody.WriteString(e.formatPositioning(ctx, coin.Symbol))
 		candidateBody.WriteString("\n")
 	}
 	sb.WriteString(fmt.Sprintf("## Candidate Coins (%d coins)\n\n", displayedCount))
@@ -930,6 +944,197 @@ func (e *StrategyEngine) formatMicrostructure(ctx *Context, symbol string) strin
 	return sb.String()
 }
 
+// formatPositioning writes the Hyperliquid-native positioning reading for one
+// symbol: hourly funding with its own-history percentile, open interest against
+// price, and the aggressor-side flow ratio. Hyperliquid exposes no account
+// long/short ratio, so the header says outright that this is a venue-native
+// proxy. Clauses without enough samples are omitted — never printed as zero,
+// which the model would read as "no positioning" rather than "unknown".
+func (e *StrategyEngine) formatPositioning(ctx *Context, symbol string) string {
+	if ctx == nil || ctx.PositioningMap == nil {
+		return ""
+	}
+	p, ok := ctx.PositioningMap[symbol]
+	if !ok || p == nil {
+		return ""
+	}
+
+	zh := e.GetLanguage() == LangChinese
+	pick := func(en, cn string) string {
+		if zh {
+			return cn
+		}
+		return en
+	}
+
+	var sb strings.Builder
+	wrote := false
+	ensureHeader := func() {
+		if wrote {
+			return
+		}
+		sb.WriteString(pick("**HL POSITIONING (venue-native proxy, not an account long/short ratio)**\n",
+			"**HL 持仓信号（交易所原生代理指标，不是账户多空比）**\n"))
+		wrote = true
+	}
+
+	// Snapshot line: funding (+ percentile and crowding), premium, open interest.
+	var clauses []string
+	if p.Funding.RateHourlyPct != 0 || p.Funding.PercentileOK {
+		funding := fmt.Sprintf(pick("funding %+.4f%%/h ≈ %+.0f%% APR", "资金费 %+.4f%%/小时 ≈ 年化 %+.0f%%"),
+			p.Funding.RateHourlyPct, p.Funding.AnnualPct)
+		if p.Funding.RateHourlyPct > 0 {
+			funding += pick(" (longs pay shorts)", "（多头付空头）")
+		} else if p.Funding.RateHourlyPct < 0 {
+			funding += pick(" (shorts pay longs)", "（空头付多头）")
+		}
+		if p.Funding.PercentileOK {
+			if zh {
+				funding += fmt.Sprintf(" | 处于该币自身 7 日资金费的第 %.0f 百分位", p.Funding.Percentile)
+			} else {
+				funding += fmt.Sprintf(" | %s pct of the coin's own 7d funding", formatOrdinal(p.Funding.Percentile))
+			}
+		}
+		if crowding := fundingCrowding(p.Funding.Percentile, p.Funding.PercentileOK, zh); crowding != "" {
+			funding += " | " + crowding
+		}
+		clauses = append(clauses, funding)
+	}
+	if p.PremiumPct != 0 {
+		clauses = append(clauses, fmt.Sprintf(pick("premium %+.3f%%", "溢价 %+.3f%%"), p.PremiumPct))
+	}
+	if p.OIUSD > 0 {
+		clauses = append(clauses, fmt.Sprintf(pick("OI $%s", "持仓 $%s"), formatUSDCompact(p.OIUSD)))
+	}
+	if len(clauses) > 0 {
+		ensureHeader()
+		sb.WriteString("- " + strings.Join(clauses, " | ") + "\n")
+	}
+
+	// Open interest against price: separates new money from closed positions.
+	var oiParts []string
+	for _, r := range p.OI {
+		if r.Quadrant == "" && r.OIChangePct == 0 {
+			continue
+		}
+		part := fmt.Sprintf(pick("OI %s %+.2f%% / price %+.2f%%", "持仓 %s %+.2f%% / 价格 %+.2f%%"),
+			windowLabel(r.Window), r.OIChangePct, r.PriceChangePct)
+		if label := oiQuadrantLabel(r.Quadrant, zh); label != "" {
+			part += " → " + label
+		}
+		oiParts = append(oiParts, part)
+	}
+	if len(oiParts) > 0 {
+		ensureHeader()
+		sb.WriteString("- " + strings.Join(oiParts, " | ") + "\n")
+	}
+
+	// Aggressor-side flow: who is crossing the spread.
+	if f := p.TakerFlow; f != nil {
+		ensureHeader()
+		ratio := fmt.Sprintf("%.2fx", f.Ratio)
+		if math.IsInf(f.Ratio, 1) {
+			ratio = pick("all buys", "全为主动买")
+		} else if f.Ratio == 0 && f.BuyUSD == 0 {
+			ratio = pick("all sells", "全为主动卖")
+		}
+		sb.WriteString(fmt.Sprintf(pick("- Taker flow %s: buy $%s / sell $%s = %s (%d prints)\n",
+			"- 主动成交 %s：买 $%s / 卖 $%s = %s（%d 笔）"),
+			windowLabel(f.Window), formatUSDCompact(f.BuyUSD), formatUSDCompact(f.SellUSD), ratio, f.Samples))
+	}
+
+	if !wrote {
+		return ""
+	}
+	sb.WriteString("\n")
+	return sb.String()
+}
+
+// formatUSDCompact renders a notional amount compactly (12.3K / 1.24M / 850).
+func formatUSDCompact(v float64) string {
+	abs := math.Abs(v)
+	switch {
+	case abs >= 1_000_000_000:
+		return fmt.Sprintf("%.2fB", v/1_000_000_000)
+	case abs >= 1_000_000:
+		return fmt.Sprintf("%.2fM", v/1_000_000)
+	case abs >= 1_000:
+		return fmt.Sprintf("%.1fK", v/1_000)
+	default:
+		return fmt.Sprintf("%.0f", v)
+	}
+}
+
+// formatOrdinal renders a 0-100 percentile as an English ordinal (92 -> "92nd").
+func formatOrdinal(pct float64) string {
+	n := int(math.Round(pct))
+	suffix := "th"
+	if n%100 < 11 || n%100 > 13 {
+		switch n % 10 {
+		case 1:
+			suffix = "st"
+		case 2:
+			suffix = "nd"
+		case 3:
+			suffix = "rd"
+		}
+	}
+	return fmt.Sprintf("%d%s", n, suffix)
+}
+
+// windowLabel renders a lookback compactly (1h / 4h / 3d).
+func windowLabel(d time.Duration) string {
+	switch {
+	case d%(24*time.Hour) == 0:
+		return fmt.Sprintf("%dd", int(d/(24*time.Hour)))
+	case d%time.Hour == 0:
+		return fmt.Sprintf("%dh", int(d/time.Hour))
+	case d%time.Minute == 0:
+		return fmt.Sprintf("%dm", int(d/time.Minute))
+	default:
+		return d.String()
+	}
+}
+
+// fundingCrowding labels a funding percentile that sits at the extremes, which
+// is where funding stops being noise and starts being information.
+func fundingCrowding(percentile float64, ok, zh bool) string {
+	if !ok {
+		return ""
+	}
+	switch {
+	case percentile >= 90:
+		return pickLang(zh, "funding near its 7d high → crowded long, do not chase this side", "资金费接近 7 日高位 → 多头拥挤，不要在该方向追单")
+	case percentile <= 10:
+		return pickLang(zh, "funding near its 7d low → crowded short, do not chase this side", "资金费接近 7 日低位 → 空头拥挤，不要在该方向追单")
+	default:
+		return ""
+	}
+}
+
+// oiQuadrantLabel explains an open-interest/price quadrant in words.
+func oiQuadrantLabel(quadrant string, zh bool) string {
+	switch quadrant {
+	case market.QuadrantNewLongs:
+		return pickLang(zh, "new longs entering", "新多入场")
+	case market.QuadrantNewShorts:
+		return pickLang(zh, "new shorts entering", "新空入场")
+	case market.QuadrantShortCovering:
+		return pickLang(zh, "short covering", "空头回补")
+	case market.QuadrantLongCapitulation:
+		return pickLang(zh, "long capitulation", "多头割肉")
+	default:
+		return ""
+	}
+}
+
+func pickLang(zh bool, en, cn string) string {
+	if zh {
+		return cn
+	}
+	return en
+}
+
 func (e *StrategyEngine) formatPositionInfo(index int, pos PositionInfo, ctx *Context) string {
 	var sb strings.Builder
 
@@ -965,6 +1170,7 @@ func (e *StrategyEngine) formatPositionInfo(index int, pos PositionInfo, ctx *Co
 			}
 		}
 		sb.WriteString(e.formatMicrostructure(ctx, pos.Symbol))
+		sb.WriteString(e.formatPositioning(ctx, pos.Symbol))
 		sb.WriteString("\n")
 	}
 

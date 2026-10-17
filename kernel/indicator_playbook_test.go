@@ -24,6 +24,9 @@ func TestIndicatorPlaybookOnlyMentionsEnabledIndicators(t *testing.T) {
 	cfg.Indicators.EnableOI = false
 	cfg.Indicators.EnableFundingRate = false
 	cfg.Indicators.EnableMicrostructure = boolPtr(false)
+	// Positioning is a data feature of its own, not an indicator: switch it off
+	// so this test measures indicator gating only.
+	cfg.Indicators.EnablePositioning = boolPtr(false)
 	engine := NewStrategyEngine(&cfg)
 
 	prompt := engine.BuildSystemPrompt(1000, "balanced")
@@ -83,6 +86,9 @@ func TestIndicatorPlaybookAbsentWithNoIndicators(t *testing.T) {
 	ind.EnableFundingRate = false
 	ind.EnableQuantData = false
 	ind.EnableMicrostructure = boolPtr(false)
+	// Positioning has its own switch; the playbook only disappears when nothing
+	// at all is enabled.
+	ind.EnablePositioning = boolPtr(false)
 	engine := NewStrategyEngine(&cfg)
 
 	if prompt := engine.BuildSystemPrompt(1000, "balanced"); strings.Contains(prompt, "Indicator Confluence Rules") {

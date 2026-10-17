@@ -12,6 +12,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Hyperliquid-native positioning in the AI prompt: the hourly funding rate with its percentile
+  against the coin's own 7-day funding history (the venue's own crowding read, and the only one
+  that also exists for HIP-3 stock/commodity perps), open interest against price over 1h/4h
+  (new longs / new shorts / short covering / long capitulation), and the mark-vs-oracle premium.
+  Hyperliquid publishes no account-level long/short ratio, so the prompt labels these as
+  venue-native proxies. Every clause is omitted when its samples are insufficient rather than
+  printed as zero — a printed 0 reads as "no positioning" instead of "unknown". The funding
+  baseline is cached per coin for 30 minutes (failures included), so the feature costs at most one
+  extra request per coin per half hour. Toggle: `indicators.enable_positioning` (default on;
+  nil means enabled, the same convention as `enable_microstructure`).
 - Documentation system with multi-language support (EN/CN/RU/UK)
 - Complete getting-started guides (Docker, Custom API)
 - Architecture documentation with system design details

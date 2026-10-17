@@ -192,6 +192,19 @@ func loadMicrostructure(ctx *Context, symbol string, data *market.Data, primaryT
 	}
 }
 
+// loadPositioning stores the Hyperliquid-native positioning reading for a
+// symbol. It never fails the cycle: a symbol without a venue context, or one
+// whose histories are still too short, is simply absent from the map and the
+// prompt omits it.
+func loadPositioning(ctx *Context, symbol string) {
+	if ctx.PositioningMap == nil {
+		ctx.PositioningMap = make(map[string]*market.Positioning)
+	}
+	if reading, ok := market.HyperliquidPositioning(symbol); ok && reading != nil {
+		ctx.PositioningMap[symbol] = reading
+	}
+}
+
 // fetchMarketDataWithStrategy fetches market data using strategy config (multiple timeframes)
 func fetchMarketDataWithStrategy(ctx *Context, engine *StrategyEngine) error {
 	config := engine.GetConfig()
@@ -241,6 +254,11 @@ func fetchMarketDataWithStrategy(ctx *Context, engine *StrategyEngine) error {
 	microEnabled := config.Indicators.EnableMicrostructure == nil || *config.Indicators.EnableMicrostructure
 	ctx.MicrostructureMap = make(map[string]*market.MarketMicrostructure)
 
+	// Hyperliquid-native positioning (nil flag = enabled). It costs no request
+	// beyond the funding-history baseline, which is cached per coin.
+	positioningEnabled := config.Indicators.PositioningEnabled()
+	ctx.PositioningMap = make(map[string]*market.Positioning)
+
 	// 1. First fetch data for position coins (must fetch)
 	for _, pos := range ctx.Positions {
 		data, err := market.GetWithTimeframesIndicators(pos.Symbol, timeframes, primaryTimeframe, klineCount, indicatorParams)
@@ -251,6 +269,9 @@ func fetchMarketDataWithStrategy(ctx *Context, engine *StrategyEngine) error {
 		ctx.MarketDataMap[pos.Symbol] = data
 		if microEnabled {
 			loadMicrostructure(ctx, pos.Symbol, data, primaryTimeframe)
+		}
+		if positioningEnabled {
+			loadPositioning(ctx, pos.Symbol)
 		}
 	}
 
@@ -302,6 +323,9 @@ func fetchMarketDataWithStrategy(ctx *Context, engine *StrategyEngine) error {
 		// candidates don't cost an extra REST call.
 		if microEnabled {
 			loadMicrostructure(ctx, coin.Symbol, data, primaryTimeframe)
+		}
+		if positioningEnabled {
+			loadPositioning(ctx, coin.Symbol)
 		}
 
 		ctx.MarketDataMap[coin.Symbol] = data

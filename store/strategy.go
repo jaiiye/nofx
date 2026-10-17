@@ -38,7 +38,43 @@ const (
 	MaxPositionSize    = 1000.0
 	MinConfidence      = 50
 	MaxConfidence      = 100
+	// Entry order modes. The default is the historical behaviour (aggressive
+	// IOC), so an unset or unrecognized value can never change how orders are
+	// submitted.
+	EntryOrderModeMarket = "market"
+	EntryOrderModeMaker  = "maker"
+	// Maker entry wait bounds: long enough to catch a passive fill, short enough
+	// not to stall the decision loop (decisions execute sequentially).
+	DefaultMakerEntryTimeoutSec = 20
+	MinMakerEntryTimeoutSec     = 5
+	MaxMakerEntryTimeoutSec     = 60
 )
+
+// NormalizeEntryOrderMode maps any stored value onto a mode the order path
+// understands. Unknown or empty values fall back to "market": a typo must not
+// silently switch live trading to resting maker orders.
+func NormalizeEntryOrderMode(v string) string {
+	if strings.EqualFold(strings.TrimSpace(v), EntryOrderModeMaker) {
+		return EntryOrderModeMaker
+	}
+	return EntryOrderModeMarket
+}
+
+// NormalizeMakerEntryTimeoutSec clamps the maker-entry wait into bounds. Unset
+// or invalid values map to the default rather than to the minimum, so omitting
+// the field means "use the default".
+func NormalizeMakerEntryTimeoutSec(v int) int {
+	if v <= 0 {
+		return DefaultMakerEntryTimeoutSec
+	}
+	if v < MinMakerEntryTimeoutSec {
+		return MinMakerEntryTimeoutSec
+	}
+	if v > MaxMakerEntryTimeoutSec {
+		return MaxMakerEntryTimeoutSec
+	}
+	return v
+}
 
 // NormalizeMarginUsageLimit clamps a max-margin-usage fraction (0.9 = 90%)
 // into the product bounds. Unset or invalid values (<= 0) map to
@@ -104,6 +140,11 @@ func (c *StrategyConfig) ClampLimits() {
 	if c.RiskControl.MaxPositions > MaxPositions {
 		c.RiskControl.MaxPositions = MaxPositions
 	}
+
+	// Normalize the entry order mode and its wait bound, so no write path can
+	// leave an unrecognized mode or an out-of-bounds timeout stored.
+	c.RiskControl.EntryOrderMode = NormalizeEntryOrderMode(c.RiskControl.EntryOrderMode)
+	c.RiskControl.MakerEntryTimeoutSec = NormalizeMakerEntryTimeoutSec(c.RiskControl.MakerEntryTimeoutSec)
 
 	// Clamp leverage limits to the same bounds as the manual config UI.
 	if c.RiskControl.BTCETHMaxLeverage < MinLeverage {
@@ -889,6 +930,11 @@ type IndicatorConfig struct {
 	// enabled: the pointer avoids old configs silently disabling the feature
 	// on unmarshal (bool zero-value trap).
 	EnableMicrostructure *bool `json:"enable_microstructure,omitempty"`
+	// Hyperliquid-native positioning metrics (funding percentile, open-interest
+	// quadrants, taker buy/sell flow). Nil = enabled, the same pointer
+	// convention as EnableMicrostructure so an existing config cannot silently
+	// turn the feature off on unmarshal.
+	EnablePositioning *bool `json:"enable_positioning,omitempty"`
 	// EMA period configuration
 	EMAPeriods []int `json:"ema_periods,omitempty"` // default [20, 50]
 	// RSI period configuration
@@ -934,6 +980,12 @@ type IndicatorConfig struct {
 	EnablePriceRanking   bool   `json:"enable_price_ranking"`             // whether to enable price ranking data
 	PriceRankingDuration string `json:"price_ranking_duration,omitempty"` // durations: "1h" or "1h,4h,24h"
 	PriceRankingLimit    int    `json:"price_ranking_limit,omitempty"`    // number of entries per ranking (default 10)
+}
+
+// PositioningEnabled reports whether the Hyperliquid-native positioning
+// metrics should be computed and rendered. Nil means enabled.
+func (c *IndicatorConfig) PositioningEnabled() bool {
+	return c.EnablePositioning == nil || *c.EnablePositioning
 }
 
 // KlineConfig K-line configuration
@@ -1000,6 +1052,14 @@ type RiskControlConfig struct {
 	// closing within one or two decision cycles.
 	MinHoldMinutes int `json:"min_hold_minutes,omitempty"`
 
+	// Entry order mode. "" or "market" (default) submits the aggressive IOC
+	// order exactly as before; "maker" first rests a post-only (ALO) limit on
+	// the passive side of the book to pay the maker fee, and falls back to the
+	// market order when it has not filled within MakerEntryTimeoutSec. Opening
+	// orders only — protective exits must never wait for a resting order.
+	EntryOrderMode       string `json:"entry_order_mode,omitempty"`
+	MakerEntryTimeoutSec int    `json:"maker_entry_timeout_sec,omitempty"`
+
 	// Drawdown profit-protection monitor (CODE ENFORCED). Nil enabled flag
 	// and zero thresholds mean "keep the historical defaults" so configs
 	// stored before these fields existed keep monitoring active.
@@ -1007,6 +1067,16 @@ type RiskControlConfig struct {
 	DrawdownCheckIntervalSec  int     `json:"drawdown_check_interval_sec,omitempty"`  // 0 = default 60, clamped to [15, 300]
 	MinProfitThresholdPct     float64 `json:"min_profit_threshold_pct,omitempty"`     // 0 = default 5.0 (%)
 	DrawdownCloseThresholdPct float64 `json:"drawdown_close_threshold_pct,omitempty"` // 0 = default 40.0 (% of peak profit)
+}
+
+// MakerEntry reports whether opening orders should be attempted as passive
+// maker orders and how long to wait for the fill before falling back to the
+// market order. Both values are normalized at read time, so a config written by
+// any path (API, agent, import) behaves the same.
+func (r RiskControlConfig) MakerEntry() (bool, time.Duration) {
+	mode := NormalizeEntryOrderMode(r.EntryOrderMode)
+	return mode == EntryOrderModeMaker,
+		time.Duration(NormalizeMakerEntryTimeoutSec(r.MakerEntryTimeoutSec)) * time.Second
 }
 
 // NewStrategyStore creates a new StrategyStore
