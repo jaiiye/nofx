@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Strategy studio controls for both: a "Positioning" card in the indicator editor's exchange-context
+  grid (default on, matching the backend's nil=on), and an "Entry order mode" picker with its wait in
+  seconds in the risk editor. The wait field is only meaningful for post-only entries, and both values
+  are still normalized by the backend, so an invalid value can never change how orders are submitted.
 - Optional post-only (maker) entries: with `risk_control.entry_order_mode = "maker"` the opening order
   first rests an ALO limit on the passive side of the book (a buy joins the best bid, a sell the best
   ask, so it cannot cross and be rejected) to pay the maker fee instead of the taker fee. If it has

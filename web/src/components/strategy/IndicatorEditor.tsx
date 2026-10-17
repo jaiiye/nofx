@@ -125,6 +125,7 @@ const marketContextCards = [
   { key: 'enable_oi', label: 'Open Interest', hint: 'native exchange context when available', color: '#34d399' },
   { key: 'enable_funding_rate', label: 'Funding', hint: 'perp funding context', color: '#fbbf24' },
   { key: 'enable_microstructure', label: 'Order Book', hint: 'spread / imbalance / depth / liquidity', color: '#38bdf8' },
+  { key: 'enable_positioning', label: 'Positioning', hint: 'HL funding percentile / OI quadrants / taker flow', color: '#f472b6' },
 ] as const
 
 function parsePeriods(raw: string): number[] {
@@ -400,9 +401,11 @@ export function IndicatorEditor({ config, onChange, disabled, language }: Indica
         </div>
         <div className="grid gap-2 sm:grid-cols-3">
           {marketContextCards.map(({ key, label, hint, color }) => {
-            // Microstructure defaults to enabled when the key is absent.
-            const enabled = key === 'enable_microstructure'
-              ? config.enable_microstructure !== false
+            // Microstructure and positioning default to enabled when the key is
+            // absent (the backend treats nil as on), so only an explicit false
+            // turns them off.
+            const enabled = key === 'enable_microstructure' || key === 'enable_positioning'
+              ? config[key] !== false
               : Boolean(config[key])
             return (
               <button

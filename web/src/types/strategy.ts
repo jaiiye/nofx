@@ -165,6 +165,9 @@ export interface IndicatorConfig {
   // Order book microstructure metrics; absent (undefined) = enabled, only
   // an explicit false disables it (matches the backend *bool nil=on default).
   enable_microstructure?: boolean;
+  // Hyperliquid-native positioning (funding percentile, OI quadrants, taker
+  // flow). Same nil=on convention as microstructure.
+  enable_positioning?: boolean;
   ema_periods?: number[];
   rsi_periods?: number[];
   atr_periods?: number[];
@@ -243,4 +246,11 @@ export interface RiskControlConfig {
   min_position_size: number;       // Min position size in USDT (CODE ENFORCED)
   min_risk_reward_ratio: number;   // Min take_profit / stop_loss ratio (AI guided)
   min_confidence: number;          // Min AI confidence to open position (AI guided)
+
+  // Entry order mode: "market" (default) submits the aggressive order as before;
+  // "maker" rests a post-only limit on the passive side to pay the maker fee and
+  // falls back to the market order after maker_entry_timeout_sec. Opening orders
+  // only — protective exits stay aggressive.
+  entry_order_mode?: 'market' | 'maker';
+  maker_entry_timeout_sec?: number; // default 20, clamped to 5-60 by the backend
 }

@@ -327,6 +327,55 @@ export function RiskControlEditor({
               </span>
             </div>
           </div>
+
+          {/* Entry order mode. Backend-enforced: an unset or unrecognized value
+              means market, and the wait is clamped to 5-60s. */}
+          <div className="p-3 rounded-lg" style={{ backgroundColor: 'rgba(255,255,255,0.02)' }}>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-medium" style={{ color: '#EAEFEF' }}>
+                {language === 'zh' ? '入场方式' : 'Entry order mode'}
+              </span>
+              <select
+                value={config.entry_order_mode ?? 'market'}
+                onChange={(e) => updateField('entry_order_mode', e.target.value as 'market' | 'maker')}
+                disabled={disabled}
+                className="rounded-md px-2 py-1 text-xs outline-none disabled:opacity-50"
+                style={{
+                  background: 'rgba(240,185,11,0.08)',
+                  border: '1px solid rgba(240,185,11,0.25)',
+                  color: '#F0B90B',
+                }}
+              >
+                <option value="market">{language === 'zh' ? '市价（IOC）' : 'Market (IOC)'}</option>
+                <option value="maker">{language === 'zh' ? '挂单（post-only）' : 'Post-only (maker)'}</option>
+              </select>
+            </div>
+            <p className="text-xs mb-2" style={{ color: '#848E9C' }}>
+              {language === 'zh'
+                ? '挂单会先在盘口被动侧挂 ALO 限价单以支付 maker 费率；超时未成交则撤单并回退市价。仅作用于开仓，平仓始终为市价；部分成交按已成交量建仓。'
+                : 'Post-only first rests an ALO limit on the passive side of the book to pay the maker fee; on timeout it cancels and falls back to the market order. Opening orders only — closes stay aggressive, and a partial fill is kept as-is.'}
+            </p>
+            <div className="flex items-center gap-2">
+              <span className="text-xs" style={{ color: '#848E9C' }}>
+                {language === 'zh' ? '等待秒数' : 'Wait (s)'}
+              </span>
+              <input
+                type="number"
+                min={5}
+                max={60}
+                value={config.maker_entry_timeout_sec ?? 20}
+                disabled={disabled || (config.entry_order_mode ?? 'market') !== 'maker'}
+                onChange={(e) =>
+                  updateField(
+                    'maker_entry_timeout_sec',
+                    Math.min(60, Math.max(5, Number(e.target.value) || 20))
+                  )
+                }
+                className="w-20 rounded-md px-2 py-1 text-xs outline-none disabled:opacity-50"
+                style={{ background: '#1E2329', border: '1px solid #2B3139', color: '#EAEFEF' }}
+              />
+            </div>
+          </div>
         </div>
       </div>
     </div>
