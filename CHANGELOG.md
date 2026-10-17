@@ -22,6 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   baseline is cached per coin for 30 minutes (failures included), so the feature costs at most one
   extra request per coin per half hour. Toggle: `indicators.enable_positioning` (default on;
   nil means enabled, the same convention as `enable_microstructure`).
+- Hyperliquid trade-flow watcher: one websocket client (the SDK reconnects and resubscribes on its
+  own) streams the venue's public trades for the coins actually being analysed — positions plus
+  surviving candidates, applied as a diff each cycle so the feed does not churn — and accumulates
+  the aggressor-side buy/sell notional into a rolling hour. The clause is only rendered while the
+  newest print is recent (15 min), so a dead feed omits it rather than reporting a stale ratio; a
+  subscription the venue rejects (for example an unlisted HIP-3 name) backs off for 30 minutes
+  instead of retrying every cycle. Best-effort by design: the server starts it, shuts it down on
+  exit, and behaves exactly as before when the connection cannot be established.
 - Documentation system with multi-language support (EN/CN/RU/UK)
 - Complete getting-started guides (Docker, Custom API)
 - Architecture documentation with system design details

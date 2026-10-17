@@ -500,8 +500,13 @@ func HyperliquidPositioning(symbol string) (*Positioning, bool) {
 		})
 	}
 
-	if flow, ok := hlPositioning.flow.Reading(normalized, time.Hour, nowMs); ok {
-		reading.TakerFlow = &flow
+	// The flow clause requires a live feed: prints inside the window are not
+	// enough if the newest one is minutes old, which would report a stale ratio
+	// as if it described the current market.
+	if takerFlowFresh(normalized, nowMs) {
+		if flow, ok := hlPositioning.flow.Reading(normalized, time.Hour, nowMs); ok {
+			reading.TakerFlow = &flow
+		}
 	}
 
 	// Nothing derivable yet (fresh process, venue context without OI): report

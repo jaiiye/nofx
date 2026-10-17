@@ -332,6 +332,18 @@ func fetchMarketDataWithStrategy(ctx *Context, engine *StrategyEngine) error {
 	}
 
 	logger.Infof("📊 Successfully fetched multi-timeframe market data for %d coins", len(ctx.MarketDataMap))
+
+	// Steer the trades feed to the coins actually being analysed (positions plus
+	// surviving candidates). The watcher applies only the difference, so this is
+	// cheap to call every cycle.
+	if positioningEnabled {
+		symbols := make([]string, 0, len(ctx.MarketDataMap))
+		for symbol := range ctx.MarketDataMap {
+			symbols = append(symbols, symbol)
+		}
+		market.UpdateHLFlowSymbols(symbols)
+	}
+
 	return nil
 }
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	nofxiagent "nofx/agent"
 	"nofx/api"
@@ -9,6 +10,7 @@ import (
 	"nofx/crypto"
 	"nofx/logger"
 	"nofx/manager"
+	"nofx/market"
 	_ "nofx/mcp/payment"
 	_ "nofx/mcp/provider"
 	"nofx/store"
@@ -152,6 +154,12 @@ func main() {
 	server.RegisterAgentHandler(agentWeb)
 	nofxiAgent.Start()
 	defer nofxiAgent.Stop()
+
+	// Stream Hyperliquid public trades to feed the positioning taker-flow ratio.
+	// Best-effort: without it the prompt simply omits the flow clause.
+	hlFlowWatcher := market.StartHLFlow(context.Background())
+	market.SetHLFlowWatcher(hlFlowWatcher)
+	defer hlFlowWatcher.Stop()
 
 	go func() {
 		if err := server.Start(); err != nil {
