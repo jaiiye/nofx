@@ -186,13 +186,12 @@ func sideLabel(action string) string {
 	return "long"
 }
 
-// noMarginReason explains a zero available margin, naming the pool the symbol
-// settles against. The xyz dex (HIP-3) keeps its own USDC account, so an order
-// there can be unfunded while the main perp account holds cash: the operator has
-// to transfer, not resize.
+// noMarginReason explains a zero available margin. For HIP-3 assets the account's
+// abstraction mode decides where the collateral lives, so the message names both
+// possibilities instead of asserting the wrong one.
 func noMarginReason(symbol string, available float64) string {
 	if market.IsXyzDexAsset(symbol) {
-		return fmt.Sprintf("no available margin for %s (xyz dex pool: %.2f USDC) — the xyz dex keeps its own USDC account, separate from the main perp account; transfer USDC into the xyz dex before trading it", symbol, available)
+		return fmt.Sprintf("no available margin for %s (%.2f USDC) — unified/portfolio accounts trade %s from the single USDC balance, while standard-mode accounts keep a separate xyz dex balance that must be funded first; check the account's abstraction mode", symbol, available, symbol)
 	}
 	return fmt.Sprintf("no available margin for %s (%.2f USDC available) — free up margin or reduce open positions", symbol, available)
 }
@@ -232,23 +231,31 @@ func (at *AutoTrader) takerFeeRate() float64 {
 	return connector.FeeModelFor(at.exchange).TakerRate()
 }
 
-// accountEquityAndAvailableFor returns the equity and available balance for
-// the margin pool that the given symbol settles against. xyz dex (HIP-3)
-// assets have their own USDC pool: the venue checks that pool's free margin,
-// so sizing them off the account's combined equity (which includes the main
-// perp pool) would approve orders the venue then rejects for insufficient
-// margin. Everything else keeps the main-pool numbers.
+// accountEquityAndAvailableFor returns the equity and available balance for the
+// margin pool that the given symbol settles against.
+//
+// HIP-3 (xyz) assets do NOT always have their own pool: it depends on the
+// account's abstraction mode (Hyperliquid docs, "Account abstraction modes"):
+//   - Unified account (the default) and Portfolio margin: one USDC balance backs
+//     validator-operated perps, XYZ perps and spot alike, and per-dex user states
+//     are explicitly "not meaningful" — the venue reports them as zero.
+//   - Manual / Standard: perp, spot and each DEX keep separate balances.
+//
+// So an empty xyz state must never be read as "no margin": only a POSITIVE dex
+// balance proves a separate pool is in use, and only then is it authoritative.
+// Otherwise the main pool's numbers stand, which is what the venue itself checks
+// for a unified account.
 func accountEquityAndAvailableFor(balance map[string]interface{}, symbol string) (equity, available float64) {
 	equity, available = accountEquityAndAvailable(balance)
 	if !market.IsXyzDexAsset(symbol) {
 		return equity, available
 	}
-	if xyzAvailable, ok := balance["xyzDexAvailable"].(float64); ok {
+	if xyzAvailable, ok := balance["xyzDexAvailable"].(float64); ok && xyzAvailable > 0 {
 		available = xyzAvailable
 	}
 	if xyzEquity, ok := balance["xyzDexBalance"].(float64); ok && xyzEquity > 0 {
-		// Position-value caps derive from equity: for an xyz order that has to
-		// be the dex's own collateral, not the combined account.
+		// Position-value caps derive from equity: for a standard-mode xyz order
+		// that has to be the dex's own collateral, not the combined account.
 		equity = xyzEquity
 	}
 	return equity, available

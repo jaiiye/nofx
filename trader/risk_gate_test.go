@@ -323,15 +323,16 @@ func TestRiskGateExplainsWhySizeIsZero(t *testing.T) {
 		t.Fatalf("zero-size decision: allowed=%v reason=%q", res.Allowed, res.Reason)
 	}
 
-	// 2. The xyz dex pool is empty although the main account holds cash.
+	// 2. Zero available margin on an xyz symbol: the message must not assert a
+	// separate pool (unified accounts do not have one), it must name both modes.
 	res = EvaluateRiskGate(RiskGateInput{
 		Action: "open_long", Symbol: "xyz:CL", PositionSizeUSD: 90, Leverage: 3,
 		Equity: 150, AvailableBalance: 0, Config: cfg,
 	})
 	if res.Allowed {
-		t.Fatal("zero xyz margin must be rejected")
+		t.Fatal("zero margin must be rejected")
 	}
-	for _, want := range []string{"xyz dex pool", "transfer USDC into the xyz dex"} {
+	for _, want := range []string{"single USDC balance", "standard-mode accounts keep a separate xyz dex balance"} {
 		if !strings.Contains(res.Reason, want) {
 			t.Errorf("xyz zero-margin reason missing %q: %s", want, res.Reason)
 		}
@@ -362,5 +363,45 @@ func TestRiskGateExplainsWhySizeIsZero(t *testing.T) {
 	})
 	if res.Allowed || !strings.Contains(res.Reason, "below minimum") {
 		t.Fatalf("plain min-size reason = %q", res.Reason)
+	}
+}
+
+// Whether HIP-3 assets have their own collateral pool is an account-mode
+// question (unified/portfolio vs manual-standard). A zero per-dex state must not
+// be read as "no margin" — that mistake rejected a valid xyz:CL order on a
+// unified account whose 150 USDC sat in the single perps balance.
+func TestAccountPoolForXYZDexRespectsAccountMode(t *testing.T) {
+	main := map[string]interface{}{
+		"availableBalance": 150.55,
+		"totalEquity":      150.55,
+		// Unified/portfolio accounts report per-dex states as meaningless zeros.
+		"xyzDexAvailable": 0.0,
+		"xyzDexBalance":   0.0,
+	}
+	if equity, available := accountEquityAndAvailableFor(main, "xyz:CL"); equity != 150.55 || available != 150.55 {
+		t.Fatalf("unified account: equity/available = %v/%v, want the single balance 150.55", equity, available)
+	}
+
+	// Keys absent entirely (non-Hyperliquid venues) behave the same way.
+	if _, available := accountEquityAndAvailableFor(map[string]interface{}{
+		"availableBalance": 150.55, "totalEquity": 150.55,
+	}, "xyz:CL"); available != 150.55 {
+		t.Fatalf("missing dex state: available = %v, want 150.55", available)
+	}
+
+	// Standard mode with a funded dex: the dex balance is authoritative.
+	standard := map[string]interface{}{
+		"availableBalance": 150.55,
+		"totalEquity":      150.55,
+		"xyzDexAvailable":  35.0,
+		"xyzDexBalance":    40.0,
+	}
+	if equity, available := accountEquityAndAvailableFor(standard, "xyz:CL"); equity != 40 || available != 35 {
+		t.Fatalf("standard mode: equity/available = %v/%v, want 40/35", equity, available)
+	}
+
+	// Crypto symbols never use the dex pool.
+	if equity, available := accountEquityAndAvailableFor(standard, "BTCUSDT"); equity != 150.55 || available != 150.55 {
+		t.Fatalf("crypto: equity/available = %v/%v, want the main balance", equity, available)
 	}
 }
