@@ -102,6 +102,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   making a context that is outgrowing the model's window visible before the provider rejects it.
 
 ### Changed
+- The default candidate board is now the venue's **volume ranking, top 10**, instead of the top
+  gainers (top 5). Liquidity is the right funnel for a trend strategy — the most traded assets have
+  tight books and track their underlying best — while trend and timing stay with the indicators. The
+  gainers board is the day's most extended names, which is the worst place to enter a trend, and for
+  stocks its 24h change mixes the overnight gap with the session move. Existing strategies keep the
+  direction and count they have stored; the "trend" preset now ships volume/10, while the "breakout"
+  preset deliberately remains on the gainers board.
 - Baseline writes are down to two methods: SetPnLBaseline (absolute baseline plus reconciliation point)
   and AdvancePnLBaseline (advance the point only). A deposit no longer goes through a relative
   `initial_balance + ?` update, so the in-memory baseline and the stored row cannot diverge.

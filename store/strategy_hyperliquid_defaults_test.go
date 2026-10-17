@@ -36,7 +36,12 @@ func TestEmptyCoinSourceInfersHyperliquidRankNotAI500(t *testing.T) {
 
 func assertHyperliquidStockRankDefault(t *testing.T, cfg StrategyConfig) {
 	t.Helper()
-	if cfg.CoinSource.SourceType != "hyper_rank" || cfg.CoinSource.HyperRankCategory != "stock" || cfg.CoinSource.HyperRankDirection != "gainers" || cfg.CoinSource.HyperRankLimit != 5 {
-		t.Fatalf("coin source = %+v, want Hyperliquid dynamic stock gainers top 5", cfg.CoinSource)
+	// The default board is the venue's volume ranking: liquidity is the funnel,
+	// trend and timing stay with the indicators.
+	if cfg.CoinSource.SourceType != "hyper_rank" || cfg.CoinSource.HyperRankCategory != "stock" || cfg.CoinSource.HyperRankDirection != DefaultHyperRankDirection || cfg.CoinSource.HyperRankLimit != DefaultHyperRankLimit {
+		t.Fatalf("coin source = %+v, want Hyperliquid dynamic stock volume top %d", cfg.CoinSource, DefaultHyperRankLimit)
+	}
+	if DefaultHyperRankDirection != "volume" {
+		t.Fatalf("DefaultHyperRankDirection = %q, want volume", DefaultHyperRankDirection)
 	}
 }

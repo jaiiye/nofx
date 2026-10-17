@@ -301,11 +301,11 @@ func TestEnsureHyperliquidNativeStrategy(t *testing.T) {
 		if cs.HyperRankCategory != "stock" {
 			t.Errorf("HyperRankCategory = %q, want stock", cs.HyperRankCategory)
 		}
-		if cs.HyperRankDirection != "gainers" {
-			t.Errorf("HyperRankDirection = %q, want gainers", cs.HyperRankDirection)
+		if cs.HyperRankDirection != store.DefaultHyperRankDirection {
+			t.Errorf("HyperRankDirection = %q, want %q", cs.HyperRankDirection, store.DefaultHyperRankDirection)
 		}
-		if cs.HyperRankLimit != 5 {
-			t.Errorf("HyperRankLimit = %d, want 5", cs.HyperRankLimit)
+		if cs.HyperRankLimit != store.DefaultHyperRankLimit {
+			t.Errorf("HyperRankLimit = %d, want %d", cs.HyperRankLimit, store.DefaultHyperRankLimit)
 		}
 	})
 

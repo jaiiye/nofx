@@ -38,6 +38,14 @@ const (
 	MaxPositionSize    = 1000.0
 	MinConfidence      = 50
 	MaxConfidence      = 100
+	// Hyperliquid ranking default: the venue's volume board. Liquidity is the
+	// right funnel for a trend strategy — the most traded assets have tight
+	// books and track their underlying best — while trend and timing stay with
+	// the indicators. The gainers board is the day's most extended names, which
+	// is the worst place to enter a trend (and its 24h change mixes the
+	// overnight gap with the session move).
+	DefaultHyperRankDirection = "volume"
+	DefaultHyperRankLimit     = 10
 	// Entry order modes. The default is the historical behaviour (aggressive
 	// IOC), so an unset or unrecognized value can never change how orders are
 	// submitted.
@@ -265,10 +273,10 @@ func (c *StrategyConfig) NormalizeProductSchema() {
 			c.CoinSource.HyperRankCategory = "stock"
 		}
 		if c.CoinSource.HyperRankDirection == "" {
-			c.CoinSource.HyperRankDirection = "gainers"
+			c.CoinSource.HyperRankDirection = DefaultHyperRankDirection
 		}
 		if c.CoinSource.HyperRankLimit <= 0 {
-			c.CoinSource.HyperRankLimit = 5
+			c.CoinSource.HyperRankLimit = DefaultHyperRankLimit
 		}
 	default:
 		c.CoinSource.SourceType = "hyper_rank"
@@ -281,10 +289,10 @@ func (c *StrategyConfig) NormalizeProductSchema() {
 			c.CoinSource.HyperRankCategory = "stock"
 		}
 		if c.CoinSource.HyperRankDirection == "" {
-			c.CoinSource.HyperRankDirection = "gainers"
+			c.CoinSource.HyperRankDirection = DefaultHyperRankDirection
 		}
 		if c.CoinSource.HyperRankLimit <= 0 {
-			c.CoinSource.HyperRankLimit = 5
+			c.CoinSource.HyperRankLimit = DefaultHyperRankLimit
 		}
 	}
 
@@ -902,9 +910,10 @@ type CoinSourceConfig struct {
 	HyperMainLimit int `json:"hyper_main_limit,omitempty"`
 	// Hyperliquid dynamic ranking category: stock, commodity, index, forex, pre_ipo, crypto, all
 	HyperRankCategory string `json:"hyper_rank_category,omitempty"`
-	// Hyperliquid dynamic ranking direction: gainers, losers, volume
+	// Hyperliquid dynamic ranking direction: volume (default), gainers, losers
 	HyperRankDirection string `json:"hyper_rank_direction,omitempty"`
-	// Hyperliquid dynamic ranking maximum count. Defaults to 5 and is hard capped at 10 for AI context safety.
+	// Hyperliquid dynamic ranking maximum count. Defaults to 10 (the volume
+	// board) and is hard capped at MaxCandidateCoins for AI context safety.
 	HyperRankLimit int `json:"hyper_rank_limit,omitempty"`
 	// Note: API URLs are now built automatically using NofxOSAPIKey from IndicatorConfig
 }
@@ -1116,8 +1125,8 @@ func GetDefaultStrategyConfig(lang string) StrategyConfig {
 			UseHyperMain:       false,
 			HyperMainLimit:     30,
 			HyperRankCategory:  "stock",
-			HyperRankDirection: "gainers",
-			HyperRankLimit:     5,
+			HyperRankDirection: DefaultHyperRankDirection,
+			HyperRankLimit:     DefaultHyperRankLimit,
 		},
 		Indicators: IndicatorConfig{
 			Klines: KlineConfig{

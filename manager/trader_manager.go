@@ -432,10 +432,10 @@ func ensureHyperliquidNativeStrategy(traderName, exchangeType string, cfg *store
 		cfg.CoinSource.HyperRankCategory = "stock"
 	}
 	if cfg.CoinSource.HyperRankDirection == "" {
-		cfg.CoinSource.HyperRankDirection = "gainers"
+		cfg.CoinSource.HyperRankDirection = store.DefaultHyperRankDirection
 	}
 	if cfg.CoinSource.HyperRankLimit <= 0 {
-		cfg.CoinSource.HyperRankLimit = 5
+		cfg.CoinSource.HyperRankLimit = store.DefaultHyperRankLimit
 	}
 }
 

@@ -302,7 +302,7 @@ func (s *Server) createDefaultStrategies(userID string, lang string) error {
 			description: locale.trend.description,
 			isActive:    true,
 			applyConfig: func(c *store.StrategyConfig) {
-				setStockRank(c, "volume", 5)
+				setStockRank(c, store.DefaultHyperRankDirection, store.DefaultHyperRankLimit)
 				setStableRisk(c)
 			},
 		},

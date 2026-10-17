@@ -35,14 +35,18 @@ const categoryLabels: Record<string, string> = {
 const categoryOrder = ['stock', 'commodity', 'index', 'forex', 'pre_ipo', 'crypto']
 
 const rankDirections = [
+  // Volume first: it is the product default (liquidity is the funnel, trend and
+  // timing stay with the indicators).
+  { value: 'volume', labelZh: '成交额榜', labelEn: 'Volume' },
   { value: 'gainers', labelZh: '涨幅榜', labelEn: 'Gainers' },
   { value: 'losers', labelZh: '跌幅榜', labelEn: 'Losers' },
-  { value: 'volume', labelZh: '成交额榜', labelEn: 'Volume' },
 ] as const
 
 const SELECTED_MARKET_LIMIT = 10
 const RANK_LIMIT = 10
-const DEFAULT_RANK_LIMIT = 5
+// Matches the backend default: the venue's volume board (liquidity is the
+// funnel; trend and timing stay with the indicators).
+const DEFAULT_RANK_LIMIT = 10
 const CATALOG_DISPLAY_LIMIT = 120
 
 function formatCompactNumber(value?: number) {
@@ -109,7 +113,7 @@ export function CoinSourceEditor({ config, onChange, disabled, language }: CoinS
 
   const rankedPreview = useMemo(() => {
     const rankCategory = config.hyper_rank_category || 'stock'
-    const rankDirection = config.hyper_rank_direction || 'gainers'
+    const rankDirection = config.hyper_rank_direction || 'volume'
     const rankLimit = Math.min(Math.max(config.hyper_rank_limit || DEFAULT_RANK_LIMIT, 1), RANK_LIMIT)
     const filtered = symbols.filter((symbol) => rankCategory === 'all' || (symbol.category || 'crypto') === rankCategory)
     const sorted = [...filtered].sort((a, b) => {
@@ -131,7 +135,7 @@ export function CoinSourceEditor({ config, onChange, disabled, language }: CoinS
       use_hyper_all: false,
       use_hyper_main: false,
       hyper_rank_category: config.hyper_rank_category || 'stock',
-      hyper_rank_direction: config.hyper_rank_direction || 'gainers',
+      hyper_rank_direction: config.hyper_rank_direction || 'volume',
       hyper_rank_limit: Math.min(Math.max(config.hyper_rank_limit || DEFAULT_RANK_LIMIT, 1), RANK_LIMIT),
     })
   }
@@ -147,7 +151,7 @@ export function CoinSourceEditor({ config, onChange, disabled, language }: CoinS
       use_hyper_all: false,
       use_hyper_main: false,
       hyper_rank_category: config.hyper_rank_category || 'stock',
-      hyper_rank_direction: config.hyper_rank_direction || 'gainers',
+      hyper_rank_direction: config.hyper_rank_direction || 'volume',
       hyper_rank_limit: Math.min(Math.max(config.hyper_rank_limit || DEFAULT_RANK_LIMIT, 1), RANK_LIMIT),
       ...patch,
     })
@@ -206,7 +210,7 @@ export function CoinSourceEditor({ config, onChange, disabled, language }: CoinS
             value: 'hyper_rank' as const,
             icon: BarChart3,
             title: t(language, '动态榜单', 'Dynamic ranking'),
-            desc: t(language, '美股/大宗/指数/FX/Crypto 的涨幅榜、跌幅榜、成交额榜；默认 Top 5，最多 Top 10', 'Gainers, losers and volume rankings by asset class; default Top 5, max Top 10'),
+            desc: t(language, '美股/大宗/指数/FX/Crypto 的成交额榜、涨幅榜、跌幅榜；默认成交额榜 Top 10，最多 Top 10', 'Volume, gainers and losers rankings by asset class; default volume Top 10, max Top 10'),
           },
           {
             value: 'static' as const,
@@ -244,7 +248,7 @@ export function CoinSourceEditor({ config, onChange, disabled, language }: CoinS
           <div className="flex items-center justify-between gap-3">
             <div>
               <div className="text-sm font-semibold text-nofx-text">{t(language, '榜单规则', 'Ranking rule')}</div>
-              <div className="text-xs text-nofx-text-muted">{t(language, '动态选出当前榜单前 N 个；默认 Top 5，最多 Top 10。下方仍显示全量可见标的，可手动改成自选。', 'Select current top N dynamically; default Top 5, max Top 10. The full visible market catalog remains below for manual selection.')}</div>
+              <div className="text-xs text-nofx-text-muted">{t(language, '动态选出当前榜单前 N 个；默认成交额榜 Top 10，最多 Top 10。下方仍显示全量可见标的，可手动改成自选。', 'Select current top N dynamically; default volume board Top 10, max Top 10. The full visible market catalog remains below for manual selection.')}</div>
             </div>
             <select
               value={Math.min(Math.max(config.hyper_rank_limit || DEFAULT_RANK_LIMIT, 1), RANK_LIMIT)}
@@ -284,7 +288,7 @@ export function CoinSourceEditor({ config, onChange, disabled, language }: CoinS
                 disabled={disabled}
                 onClick={() => updateRank({ hyper_rank_direction: item.value })}
                 className={`rounded-xl border px-3 py-2 text-sm transition-all ${
-                  (config.hyper_rank_direction || 'gainers') === item.value
+                  (config.hyper_rank_direction || 'volume') === item.value
                     ? 'border-violet-300/70 bg-violet-400/10 text-violet-100'
                     : 'border-white/10 bg-white/[0.02] text-nofx-text-muted hover:text-white'
                 }`}

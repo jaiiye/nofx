@@ -619,7 +619,7 @@ func (e *StrategyEngine) getHyperMainCoins(limit int) ([]CandidateCoin, error) {
 
 func clampHyperRankLimit(limit int) int {
 	if limit <= 0 {
-		return 5
+		return store.DefaultHyperRankLimit
 	}
 	if limit > 10 {
 		return 10
@@ -634,7 +634,9 @@ func (e *StrategyEngine) getHyperRankCoins(category, direction string, limit int
 	}
 	direction = strings.ToLower(strings.TrimSpace(direction))
 	if direction == "" {
-		direction = "gainers"
+		// Keep this in step with the config default: an unset direction must not
+		// resolve differently here than in the stored strategy.
+		direction = store.DefaultHyperRankDirection
 	}
 	limit = clampHyperRankLimit(limit)
 
