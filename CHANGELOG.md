@@ -12,6 +12,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Code-enforced stock session gate: new entries in stock perps are skipped while the venue shows no
+  activity, which is what a closed cash market looks like on Hyperliquid — a stock perp quotes around
+  the clock while its underlying does not, so an entry taken then faces an overnight gap that a stop
+  cannot protect. The signal is the venue itself, via `risk_control.stock_quiet_minutes` (default 30,
+  clamped 5-120): with the trades feed running, silence past the window blocks the entry; without the
+  feed, a thin or wide book does; with neither signal the entry is allowed, because a data gap must
+  never stop trading (the same fail-open rule the slippage guard follows). Stock classification goes
+  through the venue's category map, so newly listed stocks are covered while commodities, indices and
+  FX are not. Close and reduce are never blocked, crypto symbols are untouched, and the prompt is
+  told when a stock looks closed so the model does not propose an entry that cannot execute.
+  Toggle: `risk_control.block_cold_stock_entries` (nil = enabled).
 - Strategy studio controls for both: a "Positioning" card in the indicator editor's exchange-context
   grid (default on, matching the backend's nil=on), and an "Entry order mode" picker with its wait in
   seconds in the risk editor. The wait field is only meaningful for post-only entries, and both values

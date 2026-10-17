@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"nofx/market"
+	"nofx/provider/hyperliquid"
 	"nofx/provider/nofxos"
 	"nofx/store"
 	"strconv"
@@ -1046,8 +1047,47 @@ func (e *StrategyEngine) formatPositioning(ctx *Context, symbol string) string {
 	if !wrote {
 		return ""
 	}
+
+	// Flag a cold venue for stock symbols: the code will refuse new entries there
+	// (the cash market is most likely closed), so say so instead of letting the
+	// model propose an entry that cannot be executed.
+	if note := e.stockVenueNote(symbol); note != "" {
+		sb.WriteString(note)
+	}
+
 	sb.WriteString("\n")
 	return sb.String()
+}
+
+// stockVenueNote describes a stock whose venue has gone quiet. Returns an empty
+// string for non-stocks, for a healthy feed, or when the session gate is off.
+func (e *StrategyEngine) stockVenueNote(symbol string) string {
+	if e.config == nil || !hyperliquid.IsStockAsset(symbol) {
+		return ""
+	}
+	enabled, quietMinutes := e.config.RiskControl.StockEntryGate()
+	feedActive, age := market.VenueActivity(symbol)
+	return stockVenueNoteText(true, enabled, feedActive, age, quietMinutes, e.GetLanguage() == LangChinese)
+}
+
+// stockVenueNoteText is the pure form of stockVenueNote: it decides whether the
+// prompt should warn that a stock's venue has gone cold. The notice matters
+// because the execution path refuses new entries there, so a proposal would be
+// wasted.
+func stockVenueNoteText(isStock, gateEnabled, feedActive bool, age time.Duration, quietMinutes int, zh bool) string {
+	if !isStock || !gateEnabled || !feedActive {
+		return ""
+	}
+	if quietMinutes <= 0 {
+		quietMinutes = store.DefaultStockQuietMinutes
+	}
+	if age > 0 && age <= time.Duration(quietMinutes)*time.Minute {
+		return ""
+	}
+	if zh {
+		return "- ⚠️ 交易所活跃度偏低（该标的近期无成交）——现货市场很可能已闭市，代码会拒绝新开仓；不要在此情形下提出开仓建议。\n"
+	}
+	return "- ⚠️ Venue activity is cold (no recent trades) — the cash market is most likely closed, the code will refuse new entries here; do not propose opening one.\n"
 }
 
 // formatUSDCompact renders a notional amount compactly (12.3K / 1.24M / 850).

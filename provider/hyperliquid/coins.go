@@ -49,6 +49,33 @@ func XYZCategory(baseSymbol string) string {
 	}
 }
 
+// IsStockAsset reports whether a symbol is a stock perpetual on the HIP-3 dex —
+// the instrument class whose underlying cash market closes.
+//
+// Classification goes through the category map rather than a hardcoded ticker
+// list, so a newly listed stock is covered without a code change (the same
+// reason the candidate catalog classifies this way). Commodities, indices, FX and
+// pre-IPO assets are explicitly not stocks.
+func IsStockAsset(symbol string) bool {
+	trimmed := strings.TrimSpace(symbol)
+	lower := strings.ToLower(trimmed)
+	if !strings.Contains(lower, "xyz:") && !strings.HasSuffix(strings.ToUpper(trimmed), "-USDC") {
+		return false
+	}
+
+	// Strip the dex prefix case-insensitively: XYZCategory only trims a lowercase
+	// "xyz:", so passing an upper-cased symbol through it would classify every
+	// commodity/index as stock by falling through to its default.
+	base := strings.ToUpper(trimmed)
+	if idx := strings.Index(base, ":"); idx >= 0 {
+		base = base[idx+1:]
+	}
+	for _, suffix := range []string{"-USDC", "-USDT", "USDT", "USDC"} {
+		base = strings.TrimSuffix(base, suffix)
+	}
+	return XYZCategory(base) == "stock"
+}
+
 // CoinProvider provides Hyperliquid coin lists
 type CoinProvider struct {
 	mu          sync.RWMutex

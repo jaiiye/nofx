@@ -161,3 +161,30 @@ func TestPositioningPlaybookRulesFollowSwitch(t *testing.T) {
 		t.Error("positioning rules must disappear when the feature is off")
 	}
 }
+
+// The prompt warns about a cold stock venue because the execution path refuses
+// new entries there. Every branch that must stay silent does so.
+func TestStockVenueNoteText(t *testing.T) {
+	if got := stockVenueNoteText(false, true, true, time.Hour, 30, false); got != "" {
+		t.Fatalf("non-stock must not carry a venue note, got %q", got)
+	}
+	if got := stockVenueNoteText(true, false, true, time.Hour, 30, false); got != "" {
+		t.Fatalf("a disabled gate must not change the prompt, got %q", got)
+	}
+	if got := stockVenueNoteText(true, true, false, 0, 30, false); got != "" {
+		t.Fatalf("no feed is not evidence about the market, got %q", got)
+	}
+	if got := stockVenueNoteText(true, true, true, 10*time.Minute, 30, false); got != "" {
+		t.Fatalf("an active venue must not be flagged, got %q", got)
+	}
+
+	if got := stockVenueNoteText(true, true, true, 45*time.Minute, 30, false); !strings.Contains(got, "Venue activity is cold") {
+		t.Fatalf("silent venue must be flagged, got %q", got)
+	}
+	if got := stockVenueNoteText(true, true, true, 0, 30, false); !strings.Contains(got, "Venue activity is cold") {
+		t.Fatalf("no prints with a live feed must be flagged, got %q", got)
+	}
+	if got := stockVenueNoteText(true, true, true, 45*time.Minute, 0, true); !strings.Contains(got, "交易所活跃度偏低") {
+		t.Fatalf("unset window must fall back to the default and stay localized, got %q", got)
+	}
+}

@@ -376,6 +376,66 @@ export function RiskControlEditor({
               />
             </div>
           </div>
+
+          {/* Stock session gate: a stock perp quotes around the clock while its
+              underlying does not, so an entry into a closed market faces an
+              overnight gap that a stop cannot protect. */}
+          <div className="p-3 rounded-lg" style={{ backgroundColor: 'rgba(255,255,255,0.02)' }}>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-medium" style={{ color: '#EAEFEF' }}>
+                {language === 'zh' ? '闭市保护（股票）' : 'Stock session gate'}
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  updateField('block_cold_stock_entries', config.block_cold_stock_entries === false)
+                }
+                disabled={disabled}
+                className={`rounded-md px-2 py-1 text-xs ${config.block_cold_stock_entries === false ? '' : 'font-medium'}`}
+                style={{
+                  background:
+                    config.block_cold_stock_entries === false
+                      ? 'rgba(255,255,255,0.04)'
+                      : 'rgba(14,203,129,0.12)',
+                  border: '1px solid rgba(255,255,255,0.12)',
+                  color: config.block_cold_stock_entries === false ? '#848E9C' : '#0ECB81',
+                }}
+              >
+                {config.block_cold_stock_entries === false
+                  ? language === 'zh'
+                    ? '已关闭'
+                    : 'Off'
+                  : language === 'zh'
+                    ? '已开启'
+                    : 'On'}
+              </button>
+            </div>
+            <p className="text-xs mb-2" style={{ color: '#848E9C' }}>
+              {language === 'zh'
+                ? '股票永续全天报价，但其现货市场会休市：闭市期间开仓会遇到跳空，止损无法保护。开启后，当交易所长时间无成交时不再开新仓（平仓不受影响）。'
+                : 'A stock perp quotes around the clock while its underlying does not: entering while the cash market is closed faces a gap that a stop cannot protect. When on, new entries are skipped if the venue shows no trades; closes are never affected.'}
+            </p>
+            <div className="flex items-center gap-2">
+              <span className="text-xs" style={{ color: '#848E9C' }}>
+                {language === 'zh' ? '静默分钟' : 'Quiet (min)'}
+              </span>
+              <input
+                type="number"
+                min={5}
+                max={120}
+                value={config.stock_quiet_minutes ?? 30}
+                disabled={disabled || config.block_cold_stock_entries === false}
+                onChange={(e) =>
+                  updateField(
+                    'stock_quiet_minutes',
+                    Math.min(120, Math.max(5, Number(e.target.value) || 30))
+                  )
+                }
+                className="w-20 rounded-md px-2 py-1 text-xs outline-none disabled:opacity-50"
+                style={{ background: '#1E2329', border: '1px solid #2B3139', color: '#EAEFEF' }}
+              />
+            </div>
+          </div>
         </div>
       </div>
     </div>

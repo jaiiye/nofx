@@ -253,4 +253,10 @@ export interface RiskControlConfig {
   // only — protective exits stay aggressive.
   entry_order_mode?: 'market' | 'maker';
   maker_entry_timeout_sec?: number; // default 20, clamped to 5-60 by the backend
+
+  // Stock session gate: block NEW entries in stock perps while the venue shows
+  // no activity (its cash market is most likely closed). Absent = enabled;
+  // close/reduce are never blocked. stock_quiet_minutes default 30, clamped 5-120.
+  block_cold_stock_entries?: boolean;
+  stock_quiet_minutes?: number;
 }

@@ -252,6 +252,28 @@ func HLFlowCoverage() (int, time.Duration) {
 	return w.Coverage()
 }
 
+// HLFlowFeedActive reports whether the trades feed is connected, subscribed and
+// currently receiving. Callers that treat "no prints for a symbol" as evidence
+// about the market must check this first: no feed is not the same as no trades.
+func HLFlowFeedActive() bool {
+	subscribed, age := HLFlowCoverage()
+	if subscribed == 0 || age == 0 {
+		return false
+	}
+	return age <= hlFlowStaleAfter
+}
+
+// VenueActivity reports how recently a symbol traded on the venue feed. It does
+// no I/O. feedActive is false when the feed is not running, in which case the
+// age carries no information about the market and callers must fall back to
+// another signal (or allow the trade).
+func VenueActivity(symbol string) (feedActive bool, lastPrintAge time.Duration) {
+	if !HLFlowFeedActive() {
+		return false, 0
+	}
+	return true, hlPositioning.flow.LastPrintAge(Normalize(symbol), time.Now().UnixMilli())
+}
+
 // takerFlowFresh reports whether the flow window's newest print for a symbol is
 // recent enough to describe the current market. A stale feed means the clause
 // is omitted instead of reporting a ratio built from minutes-old prints.

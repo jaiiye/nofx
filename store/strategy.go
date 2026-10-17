@@ -56,6 +56,12 @@ const (
 	DefaultMakerEntryTimeoutSec = 20
 	MinMakerEntryTimeoutSec     = 5
 	MaxMakerEntryTimeoutSec     = 60
+	// Stock session gate bounds. 30 minutes of venue silence is a conservative
+	// read of "the cash market is closed"; a quiet midday lull can reach it too,
+	// so the value is clamped to a sane range rather than left open.
+	DefaultStockQuietMinutes = 30
+	MinStockQuietMinutes     = 5
+	MaxStockQuietMinutes     = 120
 )
 
 // NormalizeEntryOrderMode maps any stored value onto a mode the order path
@@ -80,6 +86,22 @@ func NormalizeMakerEntryTimeoutSec(v int) int {
 	}
 	if v > MaxMakerEntryTimeoutSec {
 		return MaxMakerEntryTimeoutSec
+	}
+	return v
+}
+
+// NormalizeStockQuietMinutes clamps the stock quiet window into bounds. Unset or
+// invalid values map to the default rather than the minimum, so omitting the
+// field means "use the default".
+func NormalizeStockQuietMinutes(v int) int {
+	if v <= 0 {
+		return DefaultStockQuietMinutes
+	}
+	if v < MinStockQuietMinutes {
+		return MinStockQuietMinutes
+	}
+	if v > MaxStockQuietMinutes {
+		return MaxStockQuietMinutes
 	}
 	return v
 }
@@ -153,6 +175,7 @@ func (c *StrategyConfig) ClampLimits() {
 	// leave an unrecognized mode or an out-of-bounds timeout stored.
 	c.RiskControl.EntryOrderMode = NormalizeEntryOrderMode(c.RiskControl.EntryOrderMode)
 	c.RiskControl.MakerEntryTimeoutSec = NormalizeMakerEntryTimeoutSec(c.RiskControl.MakerEntryTimeoutSec)
+	c.RiskControl.StockQuietMinutes = NormalizeStockQuietMinutes(c.RiskControl.StockQuietMinutes)
 
 	// Clamp leverage limits to the same bounds as the manual config UI.
 	if c.RiskControl.BTCETHMaxLeverage < MinLeverage {
@@ -1069,6 +1092,16 @@ type RiskControlConfig struct {
 	EntryOrderMode       string `json:"entry_order_mode,omitempty"`
 	MakerEntryTimeoutSec int    `json:"maker_entry_timeout_sec,omitempty"`
 
+	// Stock session gate (CODE ENFORCED): block NEW positions in stock perps when
+	// the venue shows no activity, which is what a closed cash market looks like
+	// on Hyperliquid. A stop cannot protect an entry taken into an overnight gap,
+	// and the underlying is not trading while the perp quote drifts. Close and
+	// reduce are never blocked. Nil enabled flag = enabled.
+	BlockColdStockEntries *bool `json:"block_cold_stock_entries,omitempty"`
+	// StockQuietMinutes is how long a stock may go without a venue trade before
+	// new entries are blocked. 0 = default, clamped to [5, 120].
+	StockQuietMinutes int `json:"stock_quiet_minutes,omitempty"`
+
 	// Drawdown profit-protection monitor (CODE ENFORCED). Nil enabled flag
 	// and zero thresholds mean "keep the historical defaults" so configs
 	// stored before these fields existed keep monitoring active.
@@ -1086,6 +1119,14 @@ func (r RiskControlConfig) MakerEntry() (bool, time.Duration) {
 	mode := NormalizeEntryOrderMode(r.EntryOrderMode)
 	return mode == EntryOrderModeMaker,
 		time.Duration(NormalizeMakerEntryTimeoutSec(r.MakerEntryTimeoutSec)) * time.Second
+}
+
+// StockEntryGate reports whether new stock entries are blocked while the venue
+// looks inactive, and the quiet window that defines "inactive". Nil enabled
+// flag means enabled.
+func (r RiskControlConfig) StockEntryGate() (bool, int) {
+	enabled := r.BlockColdStockEntries == nil || *r.BlockColdStockEntries
+	return enabled, NormalizeStockQuietMinutes(r.StockQuietMinutes)
 }
 
 // NewStrategyStore creates a new StrategyStore

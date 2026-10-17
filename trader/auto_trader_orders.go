@@ -123,6 +123,12 @@ func (at *AutoTrader) executeOpenLongWithRecord(decision *kernel.Decision, actio
 	actionRecord.Quantity = quantity
 	actionRecord.Price = marketData.CurrentPrice
 
+	// Stock session gate: never open into a closed cash market (a gap would jump
+	// straight past the stop). Closes are unaffected.
+	if err := at.checkStockSession(decision.Symbol); err != nil {
+		return err
+	}
+
 	// Entry mode: "maker" first rests a post-only order to pay the maker fee and
 	// falls back to the aggressive order when it does not fill; the venue must
 	// implement MakerEntry for that (duck-typed, so other venues are unchanged).
@@ -261,6 +267,12 @@ func (at *AutoTrader) executeOpenShortWithRecord(decision *kernel.Decision, acti
 	quantity := decision.PositionSizeUSD / marketData.CurrentPrice
 	actionRecord.Quantity = quantity
 	actionRecord.Price = marketData.CurrentPrice
+
+	// Stock session gate: never open into a closed cash market (a gap would jump
+	// straight past the stop). Closes are unaffected.
+	if err := at.checkStockSession(decision.Symbol); err != nil {
+		return err
+	}
 
 	// Entry mode: "maker" first rests a post-only order to pay the maker fee and
 	// falls back to the aggressive order when it does not fill; the venue must
