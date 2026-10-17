@@ -137,6 +137,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bot uses the same model selection as the web agent.
 
 ### Fixed
+- The PostgreSQL `traders` table now gets every column added after it was created (`paper_trading`,
+  `pnl_baseline_wallet`, `pnl_baseline_at_ms`, `funding_synced_at_ms`). The PG path skips AutoMigrate and
+  only hand-added `paper_trading`, so on a pre-existing PG table the cash-flow ledger could not read its
+  own state: it bailed out on every cycle (a single warning in the log) and deposits were counted as
+  profit again. Columns are now ensured per field through the Migrator (the `HasColumn`/`AddColumn`
+  pattern the equity table already uses), replacing the hand-written `ALTER TABLE`.
 - A deposit made before the cash-flow ledger existed is no longer booked as profit forever. The
   first reconciliation used to only record the current wallet as the starting point without
   touching `initial_balance`, so capital added before the ledger stayed inside the baseline: a live

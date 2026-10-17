@@ -75,9 +75,15 @@ func (s *TraderStore) initTables() error {
 		var tableExists int64
 		s.db.Raw(`SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'traders'`).Scan(&tableExists)
 		if tableExists > 0 {
-			// Add newer columns to pre-existing tables (AutoMigrate is skipped for PG).
-			if err := s.db.Exec(`ALTER TABLE traders ADD COLUMN IF NOT EXISTS paper_trading BOOLEAN DEFAULT false`).Error; err != nil {
-				return fmt.Errorf("failed to add paper_trading column: %w", err)
+			// AutoMigrate is skipped for pre-existing PG tables, so every column
+			// added after the table was created has to be ensured here. A missing
+			// baseline column is not cosmetic: the cash-flow ledger cannot read
+			// its own state, bails out on every cycle, and deposits are counted
+			// as profit again.
+			for _, field := range []string{"PaperTrading", "PnLBaselineWallet", "PnLBaselineAtMs", "FundingSyncedAtMs"} {
+				if err := s.ensureColumn(field); err != nil {
+					return err
+				}
 			}
 			return nil
 		}
@@ -85,6 +91,18 @@ func (s *TraderStore) initTables() error {
 	// Use GORM AutoMigrate
 	if err := s.db.AutoMigrate(&Trader{}); err != nil {
 		return fmt.Errorf("failed to migrate traders table: %w", err)
+	}
+	return nil
+}
+
+// ensureColumn adds one column to a traders table that predates it, through the
+// dialect-agnostic migrator instead of hand-written DDL.
+func (s *TraderStore) ensureColumn(field string) error {
+	if s.db.Migrator().HasColumn(&Trader{}, field) {
+		return nil
+	}
+	if err := s.db.Migrator().AddColumn(&Trader{}, field); err != nil {
+		return fmt.Errorf("failed to add traders.%s: %w", field, err)
 	}
 	return nil
 }

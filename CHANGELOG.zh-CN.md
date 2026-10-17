@@ -108,6 +108,11 @@ NOFX 项目的所有重要更改都将记录在此文件中。
   继续使用平铺工具；非管理域工具保持不变。
 
 ### 修复
+- PostgreSQL 部署的 `traders` 表现在会补齐所有后加的列（`paper_trading`、`pnl_baseline_wallet`、
+  `pnl_baseline_at_ms`、`funding_synced_at_ms`）。PG 分支跳过 AutoMigrate，此前只手写补了 `paper_trading`：
+  已有的 PG 库上现金流账本读不到自己的状态，每轮直接返回（日志里只有一条 warning），入金会重新被算成
+  利润。改为按列经 Migrator 补齐（与 equity 表同一套 `HasColumn`/`AddColumn` 模式），替掉手写的
+  `ALTER TABLE`。
 - 早于现金流账本发生的入金不再被永久算成利润。首次对账过去只把当前钱包记为起点、不动
   `initial_balance`，于是账本上线前存入的资金一直留在基线里：某实盘账户本金 75.39、入金 85.97、
   真实盈亏 −8.36，看板与 prompt 却显示 **+99.71%**。现在首次对账会用「钱包 − 账上净已实现盈亏」
