@@ -12,6 +12,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Optional post-only (maker) entries: with `risk_control.entry_order_mode = "maker"` the opening order
+  first rests an ALO limit on the passive side of the book (a buy joins the best bid, a sell the best
+  ask, so it cannot cross and be rejected) to pay the maker fee instead of the taker fee. If it has
+  not filled within `maker_entry_timeout_sec` (default 20s, clamped to 5-60s) the remainder is
+  cancelled and the aggressive order is submitted as before; a rejected post-only order (it would
+  have crossed, or HIP-3 does not support ALO) falls back the same way. A partial fill is kept as-is
+  rather than topped up — the risk gate approves a maximum, not a requirement — and records plus the
+  stop/target use the filled size, never the requested one. The AI's absolute stop/target levels are
+  kept unchanged: a passive fill is at or better than the reference price, so the stop only moves
+  closer and the target further. Opening orders only — closes stay aggressive so a protective exit
+  can never wait. Unset or unrecognized values mean "market", so a typo cannot change execution.
 - Hyperliquid-native positioning in the AI prompt: the hourly funding rate with its percentile
   against the coin's own 7-day funding history (the venue's own crowding read, and the only one
   that also exists for HIP-3 stock/commodity perps), open interest against price over 1h/4h

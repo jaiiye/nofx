@@ -651,7 +651,16 @@ func floatToWireStr(x float64) string {
 // Note: xyz dex orders use builder-deployed perpetuals and require different handling
 // xyz dex asset indices start from 10000 (10000 + meta_index)
 // This implementation bypasses the SDK's NameToAsset lookup and directly constructs the order
+// placeXyzOrder submits an aggressive IOC order on the HIP-3 dex.
 func (t *HyperliquidTrader) placeXyzOrder(coin string, isBuy bool, size float64, price float64, reduceOnly bool) error {
+	return t.placeXyzOrderWithTif(coin, isBuy, size, price, reduceOnly, hyperliquid.TifIoc, "")
+}
+
+// placeXyzOrderWithTif is placeXyzOrder with an explicit time-in-force and
+// client order id, so the same hand-signed path can also rest a post-only (ALO)
+// entry. HIP-3 support for ALO is not documented; a rejection is surfaced to the
+// caller, which falls back to the aggressive order.
+func (t *HyperliquidTrader) placeXyzOrderWithTif(coin string, isBuy bool, size float64, price float64, reduceOnly bool, tif hyperliquid.Tif, cloid string) error {
 	// Fetch xyz meta if not cached
 	t.xyzMetaMutex.RLock()
 	hasMeta := t.xyzMeta != nil
@@ -704,9 +713,12 @@ func (t *HyperliquidTrader) placeXyzOrder(coin string, isBuy bool, size float64,
 		ReduceOnly: reduceOnly,
 		OrderType: hyperliquid.OrderWireType{
 			Limit: &hyperliquid.OrderWireTypeLimit{
-				Tif: hyperliquid.TifIoc,
+				Tif: tif,
 			},
 		},
+	}
+	if cloid != "" {
+		orderWire.Cloid = &cloid
 	}
 
 	// Create OrderAction with NOFX builder fee. Trader startup requires a persisted

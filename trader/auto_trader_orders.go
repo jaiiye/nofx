@@ -123,10 +123,26 @@ func (at *AutoTrader) executeOpenLongWithRecord(decision *kernel.Decision, actio
 	actionRecord.Quantity = quantity
 	actionRecord.Price = marketData.CurrentPrice
 
+	// Entry mode: "maker" first rests a post-only order to pay the maker fee and
+	// falls back to the aggressive order when it does not fill; the venue must
+	// implement MakerEntry for that (duck-typed, so other venues are unchanged).
+	makerEnabled, makerTimeout := at.makerEntrySettings()
+	makerCapable := false
+	if makerEnabled {
+		_, makerCapable = at.trader.(makerEntryTrader)
+		if !makerCapable {
+			at.logInfof("ℹ️ %s does not support post-only entries — submitting the market order", at.exchange)
+		}
+	}
+
 	// Code-enforced execution-quality guard: reject when walking the venue
-	// book would cost more than the slippage ceiling.
-	if err := at.checkVenueSlippage(decision.Symbol, decision.Action, quantity*marketData.CurrentPrice); err != nil {
-		return err
+	// book would cost more than the slippage ceiling. A passive entry does not
+	// walk the book, so the guard runs on the aggressive path (including the
+	// fallback) instead.
+	if !makerCapable {
+		if err := at.checkVenueSlippage(decision.Symbol, decision.Action, quantity*marketData.CurrentPrice); err != nil {
+			return err
+		}
 	}
 
 	// Set margin mode
@@ -136,12 +152,42 @@ func (at *AutoTrader) executeOpenLongWithRecord(decision *kernel.Decision, actio
 	}
 
 	// Open position
-	order, err := at.execMode.OpenLong(decision.Symbol, quantity, decision.Leverage)
-	if err != nil {
-		return fmt.Errorf("failed to open long position for %s: %w", decision.Symbol, err)
+	var order *connector.OrderResult
+	makerUsed := false
+	if makerCapable {
+		makerTrader := at.trader.(makerEntryTrader)
+		order, err = makerTrader.MakerEntry(decision.Symbol, quantity, decision.Leverage, true, makerTimeout)
+		if err != nil {
+			// Not a failed trade: the trade is simply placed aggressively.
+			at.logInfof("↪️ Post-only entry for %s not used (%v) — submitting the market order", decision.Symbol, err)
+			order = nil
+		} else {
+			makerUsed = true
+		}
+	}
+	if order == nil {
+		if makerCapable {
+			// The fallback is a market order after all, so the guard applies.
+			if err := at.checkVenueSlippage(decision.Symbol, decision.Action, quantity*marketData.CurrentPrice); err != nil {
+				return err
+			}
+		}
+		order, err = at.execMode.OpenLong(decision.Symbol, quantity, decision.Leverage)
+		if err != nil {
+			return fmt.Errorf("failed to open long position for %s: %w", decision.Symbol, err)
+		}
 	}
 	if order == nil {
 		return fmt.Errorf("exchange returned no result for %s open_long", decision.Symbol)
+	}
+
+	// A partially filled passive entry means the position is smaller than
+	// requested: records and protective orders must use the amount actually
+	// held, never the requested size.
+	filledQty := quantity
+	if makerUsed && order.FilledQty > 0 && order.FilledQty < quantity {
+		filledQty = order.FilledQty
+		at.logInfof("ℹ️ Post-only entry filled %.8f of %.8f — sizing records and protection to the fill", filledQty, quantity)
 	}
 
 	// Record order ID
@@ -149,20 +195,22 @@ func (at *AutoTrader) executeOpenLongWithRecord(decision *kernel.Decision, actio
 		actionRecord.OrderID = orderID
 	}
 
-	logger.Infof("  ✓ Position opened successfully, order ID: %v, quantity: %.4f", order.OrderID, quantity)
+	logger.Infof("  ✓ Position opened successfully, order ID: %v, quantity: %.4f", order.OrderID, filledQty)
 
 	// Record order to database and poll for confirmation
-	at.recordAndConfirmOrder(order, decision.Symbol, "open_long", quantity, marketData.CurrentPrice, decision.Leverage, 0)
+	at.recordAndConfirmOrder(order, decision.Symbol, "open_long", filledQty, marketData.CurrentPrice, decision.Leverage, 0)
 
 	// Record position opening time
 	posKey := decision.Symbol + "_long"
 	at.positionFirstSeenTime[posKey] = time.Now().UnixMilli()
 
-	// Set stop loss and take profit
-	if err := at.trader.SetStopLoss(decision.Symbol, "LONG", quantity, decision.StopLoss); err != nil {
+	// Set stop loss and take profit. The AI's absolute levels are kept as-is:
+	// a passive fill is always at or better than the reference price, so the
+	// stop only gets closer and the target further — never the reverse.
+	if err := at.trader.SetStopLoss(decision.Symbol, "LONG", filledQty, decision.StopLoss); err != nil {
 		logger.Infof("  ⚠ Failed to set stop loss: %v", err)
 	}
-	if err := at.trader.SetTakeProfit(decision.Symbol, "LONG", quantity, decision.TakeProfit); err != nil {
+	if err := at.trader.SetTakeProfit(decision.Symbol, "LONG", filledQty, decision.TakeProfit); err != nil {
 		logger.Infof("  ⚠ Failed to set take profit: %v", err)
 	}
 
@@ -214,10 +262,26 @@ func (at *AutoTrader) executeOpenShortWithRecord(decision *kernel.Decision, acti
 	actionRecord.Quantity = quantity
 	actionRecord.Price = marketData.CurrentPrice
 
+	// Entry mode: "maker" first rests a post-only order to pay the maker fee and
+	// falls back to the aggressive order when it does not fill; the venue must
+	// implement MakerEntry for that (duck-typed, so other venues are unchanged).
+	makerEnabled, makerTimeout := at.makerEntrySettings()
+	makerCapable := false
+	if makerEnabled {
+		_, makerCapable = at.trader.(makerEntryTrader)
+		if !makerCapable {
+			at.logInfof("ℹ️ %s does not support post-only entries — submitting the market order", at.exchange)
+		}
+	}
+
 	// Code-enforced execution-quality guard: reject when walking the venue
-	// book would cost more than the slippage ceiling.
-	if err := at.checkVenueSlippage(decision.Symbol, decision.Action, quantity*marketData.CurrentPrice); err != nil {
-		return err
+	// book would cost more than the slippage ceiling. A passive entry does not
+	// walk the book, so the guard runs on the aggressive path (including the
+	// fallback) instead.
+	if !makerCapable {
+		if err := at.checkVenueSlippage(decision.Symbol, decision.Action, quantity*marketData.CurrentPrice); err != nil {
+			return err
+		}
 	}
 
 	// Set margin mode
@@ -227,12 +291,42 @@ func (at *AutoTrader) executeOpenShortWithRecord(decision *kernel.Decision, acti
 	}
 
 	// Open position
-	order, err := at.execMode.OpenShort(decision.Symbol, quantity, decision.Leverage)
-	if err != nil {
-		return fmt.Errorf("failed to open short position for %s: %w", decision.Symbol, err)
+	var order *connector.OrderResult
+	makerUsed := false
+	if makerCapable {
+		makerTrader := at.trader.(makerEntryTrader)
+		order, err = makerTrader.MakerEntry(decision.Symbol, quantity, decision.Leverage, false, makerTimeout)
+		if err != nil {
+			// Not a failed trade: the trade is simply placed aggressively.
+			at.logInfof("↪️ Post-only entry for %s not used (%v) — submitting the market order", decision.Symbol, err)
+			order = nil
+		} else {
+			makerUsed = true
+		}
+	}
+	if order == nil {
+		if makerCapable {
+			// The fallback is a market order after all, so the guard applies.
+			if err := at.checkVenueSlippage(decision.Symbol, decision.Action, quantity*marketData.CurrentPrice); err != nil {
+				return err
+			}
+		}
+		order, err = at.execMode.OpenShort(decision.Symbol, quantity, decision.Leverage)
+		if err != nil {
+			return fmt.Errorf("failed to open short position for %s: %w", decision.Symbol, err)
+		}
 	}
 	if order == nil {
 		return fmt.Errorf("exchange returned no result for %s open_short", decision.Symbol)
+	}
+
+	// A partially filled passive entry means the position is smaller than
+	// requested: records and protective orders must use the amount actually
+	// held, never the requested size.
+	filledQty := quantity
+	if makerUsed && order.FilledQty > 0 && order.FilledQty < quantity {
+		filledQty = order.FilledQty
+		at.logInfof("ℹ️ Post-only entry filled %.8f of %.8f — sizing records and protection to the fill", filledQty, quantity)
 	}
 
 	// Record order ID
@@ -240,24 +334,43 @@ func (at *AutoTrader) executeOpenShortWithRecord(decision *kernel.Decision, acti
 		actionRecord.OrderID = orderID
 	}
 
-	logger.Infof("  ✓ Position opened successfully, order ID: %v, quantity: %.4f", order.OrderID, quantity)
+	logger.Infof("  ✓ Position opened successfully, order ID: %v, quantity: %.4f", order.OrderID, filledQty)
 
 	// Record order to database and poll for confirmation
-	at.recordAndConfirmOrder(order, decision.Symbol, "open_short", quantity, marketData.CurrentPrice, decision.Leverage, 0)
+	at.recordAndConfirmOrder(order, decision.Symbol, "open_short", filledQty, marketData.CurrentPrice, decision.Leverage, 0)
 
 	// Record position opening time
 	posKey := decision.Symbol + "_short"
 	at.positionFirstSeenTime[posKey] = time.Now().UnixMilli()
 
-	// Set stop loss and take profit
-	if err := at.trader.SetStopLoss(decision.Symbol, "SHORT", quantity, decision.StopLoss); err != nil {
+	// Set stop loss and take profit. The AI's absolute levels are kept as-is:
+	// a passive fill is always at or better than the reference price, so the
+	// stop only gets closer and the target further — never the reverse.
+	if err := at.trader.SetStopLoss(decision.Symbol, "SHORT", filledQty, decision.StopLoss); err != nil {
 		logger.Infof("  ⚠ Failed to set stop loss: %v", err)
 	}
-	if err := at.trader.SetTakeProfit(decision.Symbol, "SHORT", quantity, decision.TakeProfit); err != nil {
+	if err := at.trader.SetTakeProfit(decision.Symbol, "SHORT", filledQty, decision.TakeProfit); err != nil {
 		logger.Infof("  ⚠ Failed to set take profit: %v", err)
 	}
 
 	return nil
+}
+
+// makerEntryTrader is implemented by venues that can rest a post-only entry
+// (Hyperliquid does). It is deliberately optional rather than part of the Trader
+// interface: the other venues keep submitting the aggressive order unchanged.
+type makerEntryTrader interface {
+	MakerEntry(symbol string, qty float64, leverage int, isLong bool, timeout time.Duration) (*connector.OrderResult, error)
+}
+
+// makerEntrySettings returns whether the strategy asks for passive entries and
+// how long to wait for the fill. Both come from one normalizer, so an unset or
+// misspelled mode can only ever mean "market".
+func (at *AutoTrader) makerEntrySettings() (bool, time.Duration) {
+	if at.config.StrategyConfig == nil {
+		return false, 0
+	}
+	return at.config.StrategyConfig.RiskControl.MakerEntry()
 }
 
 // executeCloseLongWithRecord executes close long position and records detailed information

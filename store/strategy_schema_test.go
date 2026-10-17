@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 func TestStrategyConfigMarshalSeparatesGridAndAIConfig(t *testing.T) {
@@ -244,6 +245,70 @@ func TestNormalizeKeepsPrimaryTimeframeSelected(t *testing.T) {
 	cfg.NormalizeProductSchema()
 	if got := cfg.Indicators.Klines.SelectedTimeframes; len(got) != 1 || got[0] != "5m" {
 		t.Fatalf("selected_timeframes changed without a primary: %v", got)
+	}
+}
+
+// The entry mode must default to the historical behaviour: an unset, empty or
+// misspelled value can never switch live trading to resting maker orders, and
+// the wait bound is clamped rather than accepted blindly.
+func TestNormalizeEntryOrderModeAndTimeout(t *testing.T) {
+	modeCases := []struct {
+		in   string
+		want string
+	}{
+		{"", EntryOrderModeMarket},
+		{"market", EntryOrderModeMarket},
+		{"MAKER", EntryOrderModeMaker},
+		{" maker ", EntryOrderModeMaker},
+		{"Maker", EntryOrderModeMaker},
+		{"limit", EntryOrderModeMarket}, // a typo must not change execution
+		{"makerr", EntryOrderModeMarket},
+	}
+	for _, c := range modeCases {
+		if got := NormalizeEntryOrderMode(c.in); got != c.want {
+			t.Errorf("NormalizeEntryOrderMode(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+
+	timeoutCases := []struct {
+		in   int
+		want int
+	}{
+		{0, DefaultMakerEntryTimeoutSec},
+		{-5, DefaultMakerEntryTimeoutSec},
+		{1, MinMakerEntryTimeoutSec},
+		{5, MinMakerEntryTimeoutSec},
+		{20, 20},
+		{60, MaxMakerEntryTimeoutSec},
+		{600, MaxMakerEntryTimeoutSec},
+	}
+	for _, c := range timeoutCases {
+		if got := NormalizeMakerEntryTimeoutSec(c.in); got != c.want {
+			t.Errorf("NormalizeMakerEntryTimeoutSec(%d) = %d, want %d", c.in, got, c.want)
+		}
+	}
+
+	// MakerEntry is the single read used by the order path.
+	var rc RiskControlConfig
+	if maker, timeout := rc.MakerEntry(); maker || timeout != time.Duration(DefaultMakerEntryTimeoutSec)*time.Second {
+		t.Fatalf("default MakerEntry = %v/%v, want false/%ds", maker, timeout, DefaultMakerEntryTimeoutSec)
+	}
+	rc = RiskControlConfig{EntryOrderMode: "maker", MakerEntryTimeoutSec: 9}
+	if maker, timeout := rc.MakerEntry(); !maker || timeout != 9*time.Second {
+		t.Fatalf("MakerEntry = %v/%v, want true/9s", maker, timeout)
+	}
+
+	// ClampLimits persists normalized values, so a stored config cannot carry an
+	// unknown mode forward.
+	cfg := GetDefaultStrategyConfig("en")
+	cfg.RiskControl.EntryOrderMode = "Limit"
+	cfg.RiskControl.MakerEntryTimeoutSec = 900
+	cfg.ClampLimits()
+	if cfg.RiskControl.EntryOrderMode != EntryOrderModeMarket {
+		t.Fatalf("entry mode = %q, want market", cfg.RiskControl.EntryOrderMode)
+	}
+	if cfg.RiskControl.MakerEntryTimeoutSec != MaxMakerEntryTimeoutSec {
+		t.Fatalf("timeout = %d, want %d", cfg.RiskControl.MakerEntryTimeoutSec, MaxMakerEntryTimeoutSec)
 	}
 }
 
