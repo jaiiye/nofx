@@ -12,6 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `risk_control.min_hold_minutes` is now editable in the strategy studio's risk panel. 0 = off (the
+  default, unchanged); a positive value is the code-enforced minimum holding period for discretionary
+  AI exits, while stop-loss / take-profit and the drawdown monitor are never delayed by it. Exposing it
+  is motivated by the live trade report (the sub-30-minute bucket has net PF 0.11 against 0.33 for
+  longer holds) and by turnover being the cost lever that survived every signal test — but the decision
+  stays with the operator, so no default changed. The same-symbol re-entry cooldown (60 min,
+  `protections.cooldown_minutes`) already exists as the second line of defence.
 - `nofx trade-report`: a trade-quality report over closed positions — gross vs net per trade, fees as
   a share of notional, profit factor for both, and a breakdown by holding time (<30m, 30m-2h, 2-12h,
   12-24h, 1-3d, >3d, unknown) plus AI-initiated vs protective closes. It also builds a random-entry
@@ -136,6 +143,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   making a context that is outgrowing the model's window visible before the provider rejects it.
 
 ### Changed
+- Builder fees are optional and **off by default**. The previous builder took 5 bp per fill, which on
+  this account was larger than the venue's own taker fee (4.32 bp) and explained over half of the
+  measured 9.3 bp per leg. Orders are now sent without a builder unless `NOFX_HL_BUILDER_ADDRESS` and
+  `NOFX_HL_BUILDER_FEE_BPS` are set (venue cap 100 bps, and the account must have approved that
+  builder). The Hyperliquid start-up gate only requires the approval when a builder is configured, and
+  the resolved routing is logged when a trader starts.
 - The default candidate board is now the venue's **volume ranking, top 10**, instead of the top
   gainers (top 5). Liquidity is the right funnel for a trend strategy — the most traded assets have
   tight books and track their underlying best — while trend and timing stay with the indicators. The

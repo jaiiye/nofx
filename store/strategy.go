@@ -1119,10 +1119,11 @@ type RiskControlConfig struct {
 	// Min AI confidence to open position (AI guided)
 	MinConfidence int `json:"min_confidence"`
 	// MinHoldMinutes is the code-enforced minimum holding period for
-	// discretionary AI exits. 0 disables the rule. Exchange-side stop-loss /
-	// take-profit and the drawdown monitor are never affected: their job is to
-	// protect the position, while this rule stops the churn of opening and
-	// closing within one or two decision cycles.
+	// discretionary AI exits. 0 disables the rule (the default); a positive value
+	// is enforced, and the strategy studio exposes it so the operator decides.
+	// Exchange-side stop-loss / take-profit and the drawdown monitor are never
+	// affected: their job is to protect the position, while this rule stops the
+	// churn of opening and closing within one or two decision cycles.
 	MinHoldMinutes int `json:"min_hold_minutes,omitempty"`
 
 	// Entry order mode. "" or "market" (default) submits the aggressive IOC

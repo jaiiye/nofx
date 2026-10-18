@@ -25,7 +25,7 @@ const (
 )
 
 func (t *HyperliquidTrader) placeOrderWithBuilderFee(order hyperliquid.CreateOrderRequest) (hyperliquid.OrderStatus, error) {
-	status, err := t.exchange.Order(t.ctx, order, defaultBuilder)
+	status, err := t.exchange.Order(t.ctx, order, builderInfo())
 	if err != nil {
 		return status, wrapBuilderFeeNotApproved(err)
 	}
@@ -727,7 +727,7 @@ func (t *HyperliquidTrader) placeXyzOrderWithTif(coin string, isBuy bool, size f
 		Type:     "order",
 		Orders:   []hyperliquid.OrderWire{orderWire},
 		Grouping: "na",
-		Builder:  defaultBuilder,
+		Builder:  builderInfo(),
 	}
 
 	body, err := t.postXyzExchangeAction(action)
@@ -966,7 +966,7 @@ func (t *HyperliquidTrader) placeXyzTriggerOrder(coin string, isBuy bool, size f
 		Type:     "order",
 		Orders:   []hyperliquid.OrderWire{orderWire},
 		Grouping: "na",
-		Builder:  defaultBuilder,
+		Builder:  builderInfo(),
 	}
 
 	// Sign the action

@@ -254,6 +254,11 @@ export interface RiskControlConfig {
   entry_order_mode?: 'market' | 'maker';
   maker_entry_timeout_sec?: number; // default 20, clamped to 5-60 by the backend
 
+  // Minimum holding period for discretionary AI exits; 0 = off (default), a
+  // positive value is enforced. Stop-loss/take-profit and the drawdown monitor
+  // are never delayed.
+  min_hold_minutes?: number;
+
   // Stock session gate: block NEW entries in stock perps while the venue shows
   // no activity (its cash market is most likely closed). Absent = enabled;
   // close/reduce are never blocked. stock_quiet_minutes default 30, clamped 5-120.

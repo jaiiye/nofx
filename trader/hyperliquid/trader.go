@@ -64,18 +64,6 @@ var xyzDexAssets = map[string]bool{
 	"XYZ100": true,
 }
 
-// defaultBuilder is the builder info for order routing.
-// Users approve this builder during the top-right Hyperliquid connect flow before
-// their generated agent wallet is saved for live trading.
-//
-// Fee is in tenths of a basis point: 50 = 5 bps = 0.05% (万5). Existing
-// approvals at the prior 0.1% cap remain valid on-chain because 0.05% is
-// still within their approved max.
-var defaultBuilder = &hyperliquid.BuilderInfo{
-	Builder: "0x891dc6f05ad47a3c1a05da55e7a7517971faaf0d",
-	Fee:     50,
-}
-
 // isXyzDexAsset checks if a symbol is an xyz dex asset.
 // Keep this delegated to the provider map so newly listed xyz markets such as
 // SAMSUNG-USDC / SK-HYNIX-USDC cannot accidentally fall through as crypto.
@@ -100,6 +88,7 @@ func absFloat(x float64) float64 {
 // NewHyperliquidTrader creates a Hyperliquid trader
 // unifiedAccount: when true, Spot USDC balance is used as collateral for Perp trading
 func NewHyperliquidTrader(privateKeyHex string, walletAddr string, testnet bool, unifiedAccount bool) (*HyperliquidTrader, error) {
+	logBuilderRouting()
 	// Remove 0x prefix from private key (if present, case-insensitive)
 	privateKeyHex = strings.TrimPrefix(strings.ToLower(privateKeyHex), "0x")
 

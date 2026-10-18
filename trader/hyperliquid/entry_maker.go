@@ -51,10 +51,9 @@ func makerSavingBps(takerRate, makerRate float64) (gross, netLow, netHigh float6
 // "the fee is X bp lower" alone over-credits passive execution: the fill itself
 // costs 0.38-0.83 bp in adverse selection.
 //
-// The builder fee is called out separately: it is charged per fill on top of the
-// venue rate and our default builder takes 5 bp, which is larger than the venue's
-// own taker fee for this account. It cancels out of the maker-vs-taker SAVING
-// (both sides pay it) but dominates the absolute cost.
+// The builder fee (if one is configured) is called out separately: it is charged
+// per fill on top of the venue rate and cancels out of the maker-vs-taker SAVING
+// (both sides pay it), but it dominates the absolute cost.
 func logMakerSaving(takerRate, makerRate, filled, avgPx, fee float64) {
 	if filled <= 0 || avgPx <= 0 {
 		return
@@ -64,7 +63,7 @@ func logMakerSaving(takerRate, makerRate, filled, avgPx, fee float64) {
 	if notional > 0 {
 		feeBps = fee / notional * 10_000
 	}
-	builderBps := float64(defaultBuilder.Fee) / 10 // Fee is in tenths of a basis point
+	builderBps := float64(BuilderFeeBps()) // 0 when no builder is configured
 	if takerRate <= 0 || makerRate <= 0 {
 		logger.Infof("  💱 Maker entry cost: %.2f bp paid (incl. %.2f bp builder fee; account fee rates unavailable for comparison)", feeBps, builderBps)
 		return

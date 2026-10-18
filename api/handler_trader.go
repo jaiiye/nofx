@@ -9,6 +9,7 @@ import (
 
 	"nofx/logger"
 	"nofx/store"
+	hyperliquidtrader "nofx/trader/hyperliquid"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -804,7 +805,9 @@ func (s *Server) handleStartTrader(c *gin.Context) {
 		traderName = fullCfg.Trader.Name
 	}
 
-	if fullCfg != nil && fullCfg.Exchange != nil && fullCfg.Exchange.ExchangeType == "hyperliquid" && !fullCfg.Exchange.HyperliquidBuilderApproved {
+	// The builder approval only matters when a builder fee is actually configured;
+	// with routing disabled there is nothing to approve.
+	if fullCfg != nil && fullCfg.Exchange != nil && fullCfg.Exchange.ExchangeType == "hyperliquid" && !fullCfg.Exchange.HyperliquidBuilderApproved && hyperliquidtrader.BuilderFeeEnabled() {
 		SafeBadRequestWithDetails(c, formatTraderStartError(
 			fmt.Sprintf("机器人「%s」的 Hyperliquid 交易授权尚未完成", traderName),
 			"请重新连接 Hyperliquid 钱包并完成交易授权后，再启动机器人",

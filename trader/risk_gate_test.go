@@ -281,9 +281,15 @@ func TestCheckMinHold(t *testing.T) {
 	trader := &AutoTrader{}
 	now := time.Now().UTC().UnixMilli()
 
-	// Disabled (0) → no opinion, regardless of age.
+	// Without a strategy config there is nothing to enforce.
 	if err := trader.checkMinHold(&store.TraderPosition{EntryTime: now}, "SOLUSDT", "LONG"); err != nil {
-		t.Fatalf("disabled rule must allow closes: %v", err)
+		t.Fatalf("missing config must allow closes: %v", err)
+	}
+
+	// 0 = off (the default): the operator opts in from the strategy studio.
+	trader.config.StrategyConfig = &store.StrategyConfig{RiskControl: store.RiskControlConfig{}}
+	if err := trader.checkMinHold(&store.TraderPosition{EntryTime: now - 5*60_000}, "SOLUSDT", "LONG"); err != nil {
+		t.Fatalf("an unset minimum hold must not block: %v", err)
 	}
 
 	trader.config.StrategyConfig = &store.StrategyConfig{RiskControl: store.RiskControlConfig{MinHoldMinutes: 60}}

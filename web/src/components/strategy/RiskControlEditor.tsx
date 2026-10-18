@@ -377,6 +377,37 @@ export function RiskControlEditor({
             </div>
           </div>
 
+          {/* Turnover is the cost multiplier that survives every signal test:
+              the short-hold bucket is the worst one in live data. Discretionary
+              exits before the minimum are ignored; protective exits are not. */}
+          <div className="p-3 rounded-lg" style={{ backgroundColor: 'rgba(255,255,255,0.02)' }}>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-medium" style={{ color: '#EAEFEF' }}>
+                {language === 'zh' ? '最短持仓' : 'Minimum hold'}
+              </span>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={0}
+                  max={1440}
+                  value={config.min_hold_minutes ?? 0}
+                  disabled={disabled}
+                  onChange={(e) =>
+                    updateField('min_hold_minutes', Math.min(1440, Math.max(0, Number(e.target.value) || 0)))
+                  }
+                  className="w-20 rounded-md px-2 py-1 text-xs outline-none disabled:opacity-50"
+                  style={{ background: '#1E2329', border: '1px solid #2B3139', color: '#EAEFEF' }}
+                />
+                <span className="text-xs" style={{ color: '#848E9C' }}>{language === 'zh' ? '分钟' : 'min'}</span>
+              </div>
+            </div>
+            <p className="text-xs" style={{ color: '#848E9C' }}>
+              {language === 'zh'
+                ? '填 0 表示关闭（默认）；填正数后，不足该时长的「主动平仓」会被忽略。止损/止盈与回撤监控不受影响——保护性出场永远立即执行。'
+                : '0 = off (default); a positive value ignores discretionary AI closes taken before it. Stop-loss, take-profit and the drawdown monitor are unaffected — protective exits always execute immediately.'}
+            </p>
+          </div>
+
           {/* Stock session gate: a stock perp quotes around the clock while its
               underlying does not, so an entry into a closed market faces an
               overnight gap that a stop cannot protect. */}

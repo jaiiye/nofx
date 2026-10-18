@@ -160,15 +160,15 @@ func TestExitDisciplineSection(t *testing.T) {
 			t.Errorf("exit condition missing: %q", want)
 		}
 	}
-	// The code-enforced note appears only when the rule is active.
+	// 0 = off (the default): the note appears only when the operator sets a value.
 	if strings.Contains(prompt, "CODE ENFORCED**: discretionary closes") {
-		t.Error("min-hold note must not appear while the rule is disabled")
+		t.Error("min-hold note must not appear while the rule is off")
 	}
 
 	cfg.RiskControl.MinHoldMinutes = 60
 	engine = NewStrategyEngine(&cfg)
 	if prompt := engine.BuildSystemPrompt(1000, "balanced"); !strings.Contains(prompt, "before 60 minutes") {
-		t.Error("min-hold note missing when the rule is enabled")
+		t.Error("min-hold note missing when the rule is set")
 	}
 
 	// Localized.
