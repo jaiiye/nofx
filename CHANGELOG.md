@@ -12,6 +12,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Holder-structure gate (**warn-only for now**): an opening order passes one more code-enforced check — a
+  long sitting on liquidation fuel inside the near window (25% or more of the long side's liquidation
+  notional within ±5% by default), a short under a squeeze cluster, or an entry running into a dominant
+  cost wall (within 1% of the price and holding 30% or more of the cost distribution) is called out before
+  the order goes anywhere. Fail-open is the contract: an unset or unknown mode, no profile, a distribution
+  too thin to read (fewer than 30 placed positions), an unrecognised action and every close all pass — a
+  data gap must never freeze trading. Only `warn` records and `block` refuses, and the live path is pinned
+  to warn: blocking stays an offline experiment until the replay (P4) shows it pays (the block branch is
+  implemented and tested so that replay can measure it). Wired into
+  `executeOpenLong/ShortWithRecord` right after the risk gate.
 - The prompt now renders a holder-structure block: every candidate and position gets six lines (snapshot
   mark price and coverage, cost POC and value area, cost walls on each side, long/short profit shares,
   the ±5% liquidation fuel and the largest cluster) plus up to five heaviest bucket rows. The header says

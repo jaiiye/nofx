@@ -126,6 +126,13 @@ func (at *AutoTrader) executeOpenLongWithRecord(ctx *kernel.Context, decision *k
 	actionRecord.Quantity = quantity
 	actionRecord.Price = marketData.CurrentPrice
 
+	// Holder structure: a narrow, fail-open objection to an entry sitting on a
+	// liquidation cascade or running into a cost wall. Warn-only until the offline
+	// replay shows that blocking pays.
+	if err := at.checkStructureGate(ctx, decision.Symbol, decision.Action); err != nil {
+		return err
+	}
+
 	// Stock session gate: never open into a closed cash market (a gap would jump
 	// straight past the stop). Closes are unaffected.
 	if err := at.checkStockSession(decision.Symbol); err != nil {
@@ -276,6 +283,13 @@ func (at *AutoTrader) executeOpenShortWithRecord(ctx *kernel.Context, decision *
 	quantity := decision.PositionSizeUSD / marketData.CurrentPrice
 	actionRecord.Quantity = quantity
 	actionRecord.Price = marketData.CurrentPrice
+
+	// Holder structure: a narrow, fail-open objection to an entry sitting on a
+	// liquidation cascade or running into a cost wall. Warn-only until the offline
+	// replay shows that blocking pays.
+	if err := at.checkStructureGate(ctx, decision.Symbol, decision.Action); err != nil {
+		return err
+	}
 
 	// Stock session gate: never open into a closed cash market (a gap would jump
 	// straight past the stop). Closes are unaffected.
