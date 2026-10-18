@@ -140,6 +140,9 @@ NOFX 项目的所有重要更改都将记录在此文件中。
   让"上下文快要超过模型窗口"在 provider 报错之前就可见。
 
 ### 变更
+- `AI_MAX_TOKENS` 不再被 compose 文件钉死：改为 `${AI_MAX_TOKENS:-8192}` 而不是字面量 `8000`。写在
+  `environment:` 下的字面量会覆盖 `.env`，所以在 `.env` 里抬高额度毫无效果，思维模型也就一直恰好在那个被钉死的
+  上限处返回空正文——现在默认值与代码自身的默认值（8192）一致，且 `.env` 优先生效。
 - Builder fee 改为可选且**默认关闭**。此前的 builder 按成交收 5 bp，在该账户上**高于交易所自身的
   taker 费率（4.32 bp）**，占实测每腿 9.3 bp 的一半以上。现在除非设置 `NOFX_HL_BUILDER_ADDRESS` 与
   `NOFX_HL_BUILDER_FEE_BPS`（上限 100 bp，且账户须已授权该 builder），订单不会附带 builder。

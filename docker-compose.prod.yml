@@ -24,7 +24,11 @@ services:
       - .env
     environment:
       - TZ=${TZ:-Asia/Shanghai}
-      - AI_MAX_TOKENS=8000
+      # Default only, so .env can raise it: a reasoning model spends this budget
+      # on its thinking before writing anything, and a cycle that runs out fails
+      # with an empty completion. Pin it to a literal here and it silently
+      # overrides AI_MAX_TOKENS in .env.
+      - AI_MAX_TOKENS=${AI_MAX_TOKENS:-8192}
     networks:
       - nofx-network
     healthcheck:

@@ -191,6 +191,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   making a context that is outgrowing the model's window visible before the provider rejects it.
 
 ### Changed
+- `AI_MAX_TOKENS` is no longer pinned in the compose files: they set `${AI_MAX_TOKENS:-8192}` instead of a
+  literal `8000`. A literal under `environment:` overrides `.env`, so raising the budget there did nothing, and
+  a thinking model kept coming back with empty completions at exactly the pinned ceiling — the default now
+  matches the code's own default (8192) and `.env` wins.
 - Builder fees are optional and **off by default**. The previous builder took 5 bp per fill, which on
   this account was larger than the venue's own taker fee (4.32 bp) and explained over half of the
   measured 9.3 bp per leg. Orders are now sent without a builder unless `NOFX_HL_BUILDER_ADDRESS` and
