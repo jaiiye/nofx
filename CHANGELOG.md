@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `indicators.enable_position_structure` (the holder-structure index) is now switchable in the strategy
+  studio's exchange-context block as **Holder Structure**, labelled with "starts a holder index". Off by
+  default and opt-in: turning it on starts collection — the background index begins reading public
+  positions per address and storing snapshots (the prompt block lands with P2). A running trader has to
+  be restarted to load the new config.
 - Holder-position index, the local replacement for a paid cost/liquidation heatmap feed: a background
   service builds "who entered where and where they get liquidated" from **public** Hyperliquid data.
   Addresses come from the trades feed that already runs (both sides of every print carry their

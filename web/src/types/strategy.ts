@@ -168,6 +168,10 @@ export interface IndicatorConfig {
   // Hyperliquid-native positioning (funding percentile, OI quadrants, taker
   // flow). Same nil=on convention as microstructure.
   enable_positioning?: boolean;
+  // Holder cost basis / liquidation fuel. The opposite convention: absent =
+  // disabled, because it runs a background index that polls the venue per
+  // address.
+  enable_position_structure?: boolean;
   ema_periods?: number[];
   rsi_periods?: number[];
   atr_periods?: number[];

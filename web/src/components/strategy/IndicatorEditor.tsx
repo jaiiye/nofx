@@ -126,6 +126,7 @@ const marketContextCards = [
   { key: 'enable_funding_rate', label: 'Funding', hint: 'perp funding context', color: '#fbbf24' },
   { key: 'enable_microstructure', label: 'Order Book', hint: 'spread / imbalance / depth / liquidity', color: '#38bdf8' },
   { key: 'enable_positioning', label: 'Positioning', hint: 'HL funding percentile / OI quadrants / taker flow', color: '#f472b6' },
+  { key: 'enable_position_structure', label: 'Holder Structure', hint: 'cost basis / liquidation fuel — starts a holder index', color: '#a3e635' },
 ] as const
 
 function parsePeriods(raw: string): number[] {
@@ -403,10 +404,14 @@ export function IndicatorEditor({ config, onChange, disabled, language }: Indica
           {marketContextCards.map(({ key, label, hint, color }) => {
             // Microstructure and positioning default to enabled when the key is
             // absent (the backend treats nil as on), so only an explicit false
-            // turns them off.
-            const enabled = key === 'enable_microstructure' || key === 'enable_positioning'
-              ? config[key] !== false
-              : Boolean(config[key])
+            // turns them off. Holder structure is the opposite: it runs a
+            // background index that polls the venue per address, so it stays off
+            // until it is explicitly turned on.
+            const enabled = key === 'enable_position_structure'
+              ? config[key] === true
+              : key === 'enable_microstructure' || key === 'enable_positioning'
+                ? config[key] !== false
+                : Boolean(config[key])
             return (
               <button
                 key={key}
