@@ -392,8 +392,14 @@ func parseFullDecisionResponse(aiResponse string, accountEquity float64, btcEthL
 
 func extractCoTTrace(response string) string {
 	if match := reReasoningTag.FindStringSubmatch(response); match != nil && len(match) > 1 {
-		logger.Infof("✓ Extracted reasoning chain using <reasoning> tag")
-		return strings.TrimSpace(match[1])
+		if reasoning := strings.TrimSpace(match[1]); reasoning != "" {
+			logger.Infof("✓ Extracted reasoning chain using <reasoning> tag")
+			return reasoning
+		}
+		// An EMPTY tag must not swallow the fallbacks below: that turned a response
+		// with text into a blank chain of thought in the UI. Drop the empty block so
+		// the raw tags do not end up displayed as the reasoning either.
+		response = reReasoningTag.ReplaceAllString(response, "")
 	}
 
 	if decisionIdx := strings.Index(response, "<decision>"); decisionIdx > 0 {

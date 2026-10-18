@@ -35,6 +35,8 @@ var (
 		"status 429",     // Rate limit / upstream gateway throttling
 		"rate_limit_error",
 		"upstream_empty_output",
+		"returned no content", // reasoning model spent the budget on thinking
+		"empty completion",
 		"status 502", // Bad Gateway
 		"status 503", // Service Unavailable
 		"status 520", // Cloudflare origin error
@@ -436,6 +438,13 @@ func (client *Client) Call(systemPrompt, userPrompt string) (string, error) {
 	result, err := client.Hooks.ParseMCPResponse(body)
 	if err != nil {
 		return "", fmt.Errorf("fail to parse AI server response: %w", err)
+	}
+
+	// A reasoning model can spend its whole completion budget on thinking and
+	// return no answer. That used to pass through as "" with no error, so the
+	// decision cycle silently stored a "wait"; reject it so the call is retried.
+	if strings.TrimSpace(result) == "" {
+		return "", fmt.Errorf("AI returned no content (empty completion) — the completion token budget may have been consumed by reasoning")
 	}
 
 	return result, nil

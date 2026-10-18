@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { DecisionRecord, DecisionAction } from '../../types'
 import { t, type Language } from '../../i18n/translations'
+import { copyWithToast } from '../../lib/clipboard'
 
 interface DecisionCardProps {
   decision: DecisionRecord
@@ -222,14 +223,11 @@ export function DecisionCard({ decision, language, onSymbolClick }: DecisionCard
   const [showInputPrompt, setShowInputPrompt] = useState(false)
   const [showCoT, setShowCoT] = useState(false)
 
-  // Copy text to clipboard
+  // The helper falls back to execCommand outside secure contexts (plain HTTP on
+  // a LAN address), where navigator.clipboard does not exist — that used to fail
+  // silently and look like a dead button.
   const copyToClipboard = async (text: string, label: string) => {
-    try {
-      await navigator.clipboard.writeText(text)
-      alert(`${label} copied!`)
-    } catch (err) {
-      console.error('Failed to copy:', err)
-    }
+    await copyWithToast(text, `${label} copied!`)
   }
 
   // Download text as file

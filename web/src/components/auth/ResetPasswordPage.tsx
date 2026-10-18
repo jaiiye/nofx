@@ -4,7 +4,7 @@ import { useLanguage } from '../../contexts/LanguageContext'
 import { t } from '../../i18n/translations'
 import { Header } from '../common/Header'
 import { ArrowLeft, KeyRound, Copy, Check } from 'lucide-react'
-import { toast } from 'sonner'
+import { copyWithToast } from '../../lib/clipboard'
 
 const RESET_PASSWORD_COMMAND = 'nofx reset-password --email you@example.com'
 
@@ -14,13 +14,11 @@ export function ResetPasswordPage() {
   const [copied, setCopied] = useState(false)
 
   const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(RESET_PASSWORD_COMMAND)
+    // The helper shows success/failure and falls back to execCommand outside
+    // secure contexts (see lib/clipboard).
+    if (await copyWithToast(RESET_PASSWORD_COMMAND, t('copy', language))) {
       setCopied(true)
-      toast.success(t('copy', language))
       setTimeout(() => setCopied(false), 2000)
-    } catch {
-      toast.error(t('copy', language))
     }
   }
 

@@ -227,6 +227,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bot uses the same model selection as the web agent.
 
 ### Fixed
+- An empty AI completion is now an error instead of a stored decision, and the default completion budget
+  is raised. A reasoning model can spend the whole (2000-token) completion budget on its thinking and
+  return no answer; `Call` returned that as `""` with no error, so the trading cycle was stored as a
+  successful "wait" with no content — 179 of 472 records on one live trader. `AI_MAX_TOKENS` now defaults
+  to 8192, and a blank completion is a retryable error, so the cycle retries instead of silently doing
+  nothing (and a cycle that still fails is recorded as failed). The chain of thought is still extracted
+  from the answer text as before; an *empty* `<reasoning>` tag now falls through to the surrounding text
+  instead of blanking it.
+- The copy buttons for the system/user prompt no longer fail silently. `navigator.clipboard` only exists
+  in a secure context (HTTPS or localhost); a self-hosted dashboard opened over plain HTTP on a LAN
+  address got `undefined` and the button did nothing. The shared clipboard helper now falls back to the
+  legacy `execCommand('copy')` path and reports a real failure instead of a no-op; the reset-password page
+  uses the same helper.
 - The pre-trade gate now says why a position size came out at zero instead of always reporting
   "position 0.00 USDT below minimum". Three different causes landed on that one check — a decision
   that did not size the trade, a margin pool with no free margin, and an order the available margin
