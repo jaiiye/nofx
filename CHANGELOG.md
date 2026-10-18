@@ -12,6 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Position structure profile: the stored buckets are distilled into **unsigned** structure quantities —
+  the cost point of control (the consensus entry price) and its value area (the contiguous range
+  covering ~70% of cost notional), the nearest significant cost cluster (magnet), the distance to the
+  point of control, the nearest cost wall on each side (price, distance, share), long cost above the
+  mark (profit overhang) and short cost below it, each side's liquidation notional inside the ±5%
+  window around the mark, and the largest forced-flow cluster with its share and distance.
+  Deliberately unsigned: every trading sign lives in one factor table (P5) and is calibrated against
+  forward returns rather than assumed. The index logs the cost POC and liquidation cluster on each
+  refresh so collection can be checked as it runs.
 - `indicators.enable_position_structure` (the holder-structure index) is now switchable in the strategy
   studio's exchange-context block as **Holder Structure**, labelled with "starts a holder index". Off by
   default and opt-in: turning it on starts collection — the background index begins reading public

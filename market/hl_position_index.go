@@ -327,6 +327,15 @@ func (idx *PositionIndex) refreshSymbol(ctx context.Context, symbol string, mids
 		return nil
 	}
 
+	// The profile is derived here so the refresh log says what the distribution
+	// actually looks like while collection is being watched; the prompt block and
+	// the factor table consume the same function.
+	profile := BuildPositionProfile(bins, coverage, markPrice, hlPositionDefaultBandPct)
+	if profile == nil {
+		idx.note(symbol, "distribution carries no notional")
+		return nil
+	}
+
 	snapshot := &PositionSnapshot{
 		MarketType: positionMarketType(symbol),
 		Symbol:     symbol,
@@ -347,8 +356,8 @@ func (idx *PositionIndex) refreshSymbol(ctx context.Context, symbol string, mids
 	idx.lastNote[symbol] = ""
 	idx.mu.Unlock()
 
-	logger.Infof("📊 Position index %s: %d addresses read (%d failed), %d positions placed, %d outside, mark %.4f",
-		symbol, fetched, failed, coverage.PositionsPlaced, coverage.PositionsOutside, markPrice)
+	logger.Infof("📊 Position index %s: %d addresses read (%d failed), %d positions placed, %d outside, mark %.4f, cost POC %.4f, liq cluster %.4f",
+		symbol, fetched, failed, coverage.PositionsPlaced, coverage.PositionsOutside, markPrice, profile.CostPOC, profile.LiqCluster)
 	return nil
 }
 
