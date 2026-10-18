@@ -281,14 +281,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   funded `xyz:MU` short was rejected locally with "xyz dex has no free margin (available 0.00 USDC)". The
   pre-check is removed and the venue's own rejection is the authority; its wrapping now names both account
   modes instead of telling unified-account users to fund a pool that does not exist.
-- An empty AI completion is now an error instead of a stored decision, and the default completion budget
-  is raised. A reasoning model can spend the whole (2000-token) completion budget on its thinking and
-  return no answer; `Call` returned that as `""` with no error, so the trading cycle was stored as a
-  successful "wait" with no content — 179 of 472 records on one live trader. `AI_MAX_TOKENS` now defaults
-  to 8192, and a blank completion is a retryable error, so the cycle retries instead of silently doing
-  nothing (and a cycle that still fails is recorded as failed). The chain of thought is still extracted
-  from the answer text as before; an *empty* `<reasoning>` tag now falls through to the surrounding text
-  instead of blanking it.
+- An empty AI completion now fails the cycle instead of being stored as a decision, and the default
+  completion budget is raised. A reasoning model can spend the whole (2000-token) completion budget on its
+  thinking and return no answer; `Call` returned that as `""` with no error, so the trading cycle was
+  stored as a successful "wait" with no content — 179 of 472 records on one live trader. `AI_MAX_TOKENS`
+  now defaults to 8192, and a blank completion returns `ErrEmptyCompletion`, which is deliberately **not
+  retryable** (the same request reproduces the empty answer, so a retry only burns a cycle): the decision
+  is recorded as a failure, and the record keeps the system/user prompts so the failure stays
+  diagnosable. The chain of thought is still extracted from the answer text as before; an *empty*
+  `<reasoning>` tag now falls through to the surrounding text instead of blanking it.
 - The copy buttons for the system/user prompt no longer fail silently. `navigator.clipboard` only exists
   in a secure context (HTTPS or localhost); a self-hosted dashboard opened over plain HTTP on a LAN
   address got `undefined` and the button did nothing. The shared clipboard helper now falls back to the

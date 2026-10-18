@@ -124,7 +124,14 @@ func GetFullDecisionWithStrategy(ctx *Context, mcpClient mcp.AIClient, engine *S
 	aiResponse, err := mcpClient.CallWithMessages(aiCtx, systemPrompt, userPrompt)
 	aiCallDuration := time.Since(aiCallStart)
 	if err != nil {
-		return nil, fmt.Errorf("AI API call failed: %w", err)
+		// Keep the prompts even when the call failed: the cycle is recorded as a
+		// failure, and those prompts are what make the failure diagnosable — an
+		// empty completion in particular only means something next to its request.
+		return &FullDecision{
+			SystemPrompt:        systemPrompt,
+			UserPrompt:          userPrompt,
+			AIRequestDurationMs: aiCallDuration.Milliseconds(),
+		}, fmt.Errorf("AI API call failed: %w", err)
 	}
 
 	// 5. Parse AI response

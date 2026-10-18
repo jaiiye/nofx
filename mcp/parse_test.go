@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,7 +13,8 @@ import (
 
 // A reasoning model can spend its whole completion budget on thinking and return
 // no answer. That used to come back as "" with no error, so the decision cycle
-// silently stored a "wait" with no content; it must be a retryable error instead.
+// silently stored a "wait" with no content. It must fail the cycle — and NOT be
+// retried: the same request with the same budget reproduces the same empty answer.
 func TestCallRejectsEmptyCompletion(t *testing.T) {
 	newClient := func(responseBody string) *Client {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -39,17 +41,17 @@ func TestCallRejectsEmptyCompletion(t *testing.T) {
 	if err == nil {
 		t.Fatal("an empty completion must be an error")
 	}
-	if !strings.Contains(err.Error(), "empty completion") {
-		t.Fatalf("error = %v, want it to name the empty completion", err)
+	if !errors.Is(err, ErrEmptyCompletion) {
+		t.Fatalf("error = %v, want ErrEmptyCompletion", err)
 	}
-	if !client.IsRetryableError(err) {
-		t.Fatalf("an empty completion must be retryable, got %v", err)
+	if client.IsRetryableError(err) {
+		t.Fatalf("an empty completion must NOT be retried, got %v", err)
 	}
 
 	// Whitespace-only content is the same failure.
 	client = newClient(`{"choices":[{"message":{"content":"   "}}]}`)
-	if _, err := client.Call("system", "user"); err == nil {
-		t.Fatal("blank content must be an error")
+	if _, err := client.Call("system", "user"); !errors.Is(err, ErrEmptyCompletion) {
+		t.Fatalf("blank content: err = %v, want ErrEmptyCompletion", err)
 	}
 
 	// A real answer passes through untouched.

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -35,8 +36,6 @@ var (
 		"status 429",     // Rate limit / upstream gateway throttling
 		"rate_limit_error",
 		"upstream_empty_output",
-		"returned no content", // reasoning model spent the budget on thinking
-		"empty completion",
 		"status 502", // Bad Gateway
 		"status 503", // Service Unavailable
 		"status 520", // Cloudflare origin error
@@ -389,6 +388,13 @@ func sleepWithContext(ctx context.Context, d time.Duration) error {
 }
 
 // Call single AI API call (fixed flow, cannot be overridden)
+// ErrEmptyCompletion is returned when the model produced no answer at all — most
+// often because a reasoning model spent the whole completion budget on its
+// thinking. It is deliberately NOT retryable: the same request with the same
+// budget reproduces the same empty answer, so a retry only burns a cycle (and the
+// provider's rate limit). The cycle is recorded as failed instead.
+var ErrEmptyCompletion = errors.New("AI returned an empty completion (the completion token budget may have been consumed by reasoning)")
+
 func (client *Client) Call(systemPrompt, userPrompt string) (string, error) {
 	// Print current AI configuration
 	client.Log.Infof("📡 [%s] Request AI Server: BaseURL: %s", client.String(), client.BaseURL)
@@ -442,9 +448,9 @@ func (client *Client) Call(systemPrompt, userPrompt string) (string, error) {
 
 	// A reasoning model can spend its whole completion budget on thinking and
 	// return no answer. That used to pass through as "" with no error, so the
-	// decision cycle silently stored a "wait"; reject it so the call is retried.
+	// decision cycle silently stored a "wait"; fail the cycle instead.
 	if strings.TrimSpace(result) == "" {
-		return "", fmt.Errorf("AI returned no content (empty completion) — the completion token budget may have been consumed by reasoning")
+		return "", ErrEmptyCompletion
 	}
 
 	return result, nil
