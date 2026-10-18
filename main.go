@@ -8,6 +8,7 @@ import (
 	"nofx/auth"
 	"nofx/config"
 	"nofx/crypto"
+	"nofx/kernel"
 	"nofx/logger"
 	"nofx/manager"
 	"nofx/market"
@@ -160,6 +161,13 @@ func main() {
 	hlFlowWatcher := market.StartHLFlow(context.Background())
 	market.SetHLFlowWatcher(hlFlowWatcher)
 	defer hlFlowWatcher.Stop()
+
+	// Index holder cost/liquidation structure from public venue positions. The
+	// trades feed above is what discovers the addresses, so this is best-effort in
+	// the same way: with nothing collected the structure block is omitted, and
+	// nothing here can block a trade.
+	positionIndex := kernel.StartPositionStructure(context.Background(), st)
+	defer positionIndex.Stop()
 
 	go func() {
 		if err := server.Start(); err != nil {

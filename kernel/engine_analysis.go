@@ -257,6 +257,7 @@ func fetchMarketDataWithStrategy(ctx *Context, engine *StrategyEngine) error {
 	// Hyperliquid-native positioning (nil flag = enabled). It costs no request
 	// beyond the funding-history baseline, which is cached per coin.
 	positioningEnabled := config.Indicators.PositioningEnabled()
+	structureEnabled := config.Indicators.PositionStructureEnabled()
 	ctx.PositioningMap = make(map[string]*market.Positioning)
 
 	// 1. First fetch data for position coins (must fetch)
@@ -333,15 +334,18 @@ func fetchMarketDataWithStrategy(ctx *Context, engine *StrategyEngine) error {
 
 	logger.Infof("📊 Successfully fetched multi-timeframe market data for %d coins", len(ctx.MarketDataMap))
 
-	// Steer the trades feed to the coins actually being analysed (positions plus
-	// surviving candidates). The watcher applies only the difference, so this is
-	// cheap to call every cycle.
+	// Steer the trades feed and the holder-position index to the coins actually
+	// being analysed (positions plus surviving candidates). Both apply only the
+	// difference, so this is cheap to call every cycle.
+	symbols := make([]string, 0, len(ctx.MarketDataMap))
+	for symbol := range ctx.MarketDataMap {
+		symbols = append(symbols, symbol)
+	}
 	if positioningEnabled {
-		symbols := make([]string, 0, len(ctx.MarketDataMap))
-		for symbol := range ctx.MarketDataMap {
-			symbols = append(symbols, symbol)
-		}
 		market.UpdateHLFlowSymbols(symbols)
+	}
+	if structureEnabled {
+		market.UpdatePositionIndexSymbols(symbols)
 	}
 
 	return nil

@@ -160,6 +160,10 @@ func (w *HLFlowWatcher) callback(symbol string) func([]hyperliquid.Trade, error)
 				continue
 			}
 			hlPositioning.flow.AddTaker(symbol, tsMs, isBuy, notional)
+			// Both sides of the print are the only way to discover which addresses
+			// hold this market: the holder-position index polls them for their
+			// cost/liquidation structure.
+			captureTradeAddresses(symbol, tr.Users, tsMs)
 
 			w.mu.Lock()
 			if tsMs > w.lastMsg[tr.Coin] {

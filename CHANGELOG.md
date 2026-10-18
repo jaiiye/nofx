@@ -12,6 +12,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Holder-position index, the local replacement for a paid cost/liquidation heatmap feed: a background
+  service builds "who entered where and where they get liquidated" from **public** Hyperliquid data.
+  Addresses come from the trades feed that already runs (both sides of every print carry their
+  addresses); positions come from `clearinghouseState` per address, where the venue reports
+  `liquidationPx` directly so no maintenance-margin maths is involved. Positions are bucketed into 40
+  buckets over a ±15% band around the mark price, weighted by notional, and stored in
+  `market_position_bins` together with a coverage block (addresses read, positions inside/outside the
+  band, weight source). Off by default (`indicators.enable_position_structure`, nil = off) because it
+  polls the venue per address; with it off nothing behaves differently. Refreshes every 5 minutes per
+  market at 8 requests/second, reads at most 600 addresses per market per refresh with a rotating
+  cursor, and expires addresses after 6 hours. This stage only collects and stores — address-level
+  history cannot be backfilled, so the clock has to start before anything derived from it can be
+  validated.
+- `provider/hyperliquid` gained a `clearinghouseState` read (any address, with a `dex` argument for
+  HIP-3), which previously existed only as ad-hoc queries inside the trader and api layers.
 - `risk_control.min_hold_minutes` is now editable in the strategy studio's risk panel. 0 = off (the
   default, unchanged); a positive value is the code-enforced minimum holding period for discretionary
   AI exits, while stop-loss / take-profit and the drawdown monitor are never delayed by it. Exposing it

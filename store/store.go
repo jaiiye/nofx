@@ -18,18 +18,19 @@ type Store struct {
 	driver *DBDriver // Database driver for abstraction (legacy)
 
 	// Sub-stores (lazy initialization)
-	user           *UserStore
-	aiModel        *AIModelStore
-	exchange       *ExchangeStore
-	trader         *TraderStore
-	decision       *DecisionStore
-	position       *PositionStore
-	strategy       *StrategyStore
-	equity         *EquityStore
-	order          *OrderStore
-	grid           *GridStore
-	aiCharge       *AIChargeStore
-	telegramConfig TelegramConfigStore
+	user            *UserStore
+	aiModel         *AIModelStore
+	exchange        *ExchangeStore
+	trader          *TraderStore
+	decision        *DecisionStore
+	position        *PositionStore
+	strategy        *StrategyStore
+	equity          *EquityStore
+	marketStructure *MarketStructureStore
+	order           *OrderStore
+	grid            *GridStore
+	aiCharge        *AIChargeStore
+	telegramConfig  TelegramConfigStore
 
 	mu sync.RWMutex
 }
@@ -152,6 +153,9 @@ func (s *Store) initTables() error {
 	if err := s.Equity().initTables(); err != nil {
 		return fmt.Errorf("failed to initialize equity tables: %w", err)
 	}
+	if err := s.MarketStructure().initTables(); err != nil {
+		return fmt.Errorf("failed to initialize market structure tables: %w", err)
+	}
 	if err := s.Order().InitTables(); err != nil {
 		return fmt.Errorf("failed to initialize order tables: %w", err)
 	}
@@ -265,6 +269,16 @@ func (s *Store) Equity() *EquityStore {
 		s.equity = NewEquityStore(s.gdb)
 	}
 	return s.equity
+}
+
+// MarketStructure gets holder-structure snapshot storage
+func (s *Store) MarketStructure() *MarketStructureStore {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.marketStructure == nil {
+		s.marketStructure = NewMarketStructureStore(s.gdb)
+	}
+	return s.marketStructure
 }
 
 // Order gets order storage

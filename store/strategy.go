@@ -996,6 +996,11 @@ type IndicatorConfig struct {
 	// convention as EnableMicrostructure so an existing config cannot silently
 	// turn the feature off on unmarshal.
 	EnablePositioning *bool `json:"enable_positioning,omitempty"`
+	// Holder cost/liquidation structure (where holders entered and where they get
+	// liquidated), built from publicly readable venue positions. Nil = disabled:
+	// unlike the two flags above, this one runs a background index that polls the
+	// venue per address, so it is opt-in rather than on for every legacy config.
+	EnablePositionStructure *bool `json:"enable_position_structure,omitempty"`
 	// EMA period configuration
 	EMAPeriods []int `json:"ema_periods,omitempty"` // default [20, 50]
 	// RSI period configuration
@@ -1047,6 +1052,13 @@ type IndicatorConfig struct {
 // metrics should be computed and rendered. Nil means enabled.
 func (c *IndicatorConfig) PositioningEnabled() bool {
 	return c.EnablePositioning == nil || *c.EnablePositioning
+}
+
+// PositionStructureEnabled reports whether the holder cost/liquidation structure
+// should be indexed and rendered. Nil means disabled: the index polls the venue
+// per address, so it is opt-in.
+func (c *IndicatorConfig) PositionStructureEnabled() bool {
+	return c.EnablePositionStructure != nil && *c.EnablePositionStructure
 }
 
 // KlineConfig K-line configuration
