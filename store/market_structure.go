@@ -106,6 +106,31 @@ func (s *MarketStructureStore) LatestAt(symbol string, at time.Time) (*PositionB
 	return &snapshot, nil
 }
 
+// LatestForSymbols returns the newest snapshot at or before the given moment for
+// each of the symbols, in one query. A symbol without a snapshot is simply absent
+// from the result, which callers read as "no structure for it".
+func (s *MarketStructureStore) LatestForSymbols(symbols []string, at time.Time) (map[string]*PositionBinsSnapshot, error) {
+	result := make(map[string]*PositionBinsSnapshot, len(symbols))
+	if len(symbols) == 0 {
+		return result, nil
+	}
+
+	var rows []*PositionBinsSnapshot
+	err := s.db.Where("symbol IN ? AND timestamp <= ?", symbols, at.UTC()).
+		Order("timestamp DESC").
+		Find(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to query position bins for %d symbols: %w", len(symbols), err)
+	}
+	// Rows arrive newest first, so the first hit per symbol is its latest.
+	for _, row := range rows {
+		if _, seen := result[row.Symbol]; !seen {
+			result[row.Symbol] = row
+		}
+	}
+	return result, nil
+}
+
 // CleanOldRecords deletes snapshots older than the given number of days.
 func (s *MarketStructureStore) CleanOldRecords(days int) (int64, error) {
 	if days <= 0 {

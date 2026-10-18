@@ -46,12 +46,16 @@ const (
 	// builds (kernel/estimate_drift_test.go measures the two against each other).
 	// The estimate is a pre-flight guard, so it is allowed to overshoot slightly —
 	// it must never undershoot.
-	promptKlineRowChars           = 50 // compact CSV row (timestamp + OHLC + volume)
-	promptIndicatorValueChars     = 9  // one formatted value inside a series
-	promptIndicatorLabelChars     = 16 // "EMA(200): " style label
-	promptGaugeChars              = 30 // ATR / ADX / DI / SUPERTREND single value
-	promptMicrostructureChars     = 170
-	promptPositioningChars        = 210
+	promptKlineRowChars       = 50 // compact CSV row (timestamp + OHLC + volume)
+	promptIndicatorValueChars = 9  // one formatted value inside a series
+	promptIndicatorLabelChars = 16 // "EMA(200): " style label
+	promptGaugeChars          = 30 // ATR / ADX / DI / SUPERTREND single value
+	promptMicrostructureChars = 170
+	promptPositioningChars    = 210
+	// The holder-structure block is a header, four reading lines and up to five
+	// bucket rows. Kept above the rendered size on purpose: the estimate must never
+	// undershoot, and kernel/estimate_drift_test.go fails if it does.
+	promptPositionProfileChars    = 1100
 	promptVenueContextChars       = 120 // OI + funding lines per coin
 	promptSystemBaseCharsEN       = 6900
 	promptSystemBaseCharsZH       = 6400
@@ -1744,6 +1748,9 @@ func (c *StrategyConfig) EstimateTokens() TokenEstimate {
 	}
 	if c.Indicators.PositioningEnabled() {
 		extrasPerCoin += promptPositioningChars
+	}
+	if c.Indicators.PositionStructureEnabled() {
+		extrasPerCoin += promptPositionProfileChars
 	}
 
 	totalMarketChars := klineChars + indicatorChars + (numCoins+positionCoins)*extrasPerCoin

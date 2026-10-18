@@ -12,6 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- The prompt now renders a holder-structure block: every candidate and position gets six lines (snapshot
+  mark price and coverage, cost POC and value area, cost walls on each side, long/short profit shares,
+  the ±5% liquidation fuel and the largest cluster) plus up to five heaviest bucket rows. The header says
+  outright that this is **unsigned** context, and the system prompt gained a structure rule behind the
+  same switch: use it for the entry zone and the invalidation level, not as a direction. The block reads
+  the snapshots the background index stored — one indexed query, never a venue call per symbol — and a
+  snapshot older than two refreshes (10 minutes) is dropped whole. `EstimateTokens` accounts for the
+  block (`promptPositionProfileChars`), with tests pinning both "the rendered block stays inside that
+  constant" and "without a profile the prompt is byte-identical".
 - Position structure profile: the stored buckets are distilled into **unsigned** structure quantities —
   the cost point of control (the consensus entry price) and its value area (the contiguous range
   covering ~70% of cost notional), the nearest significant cost cluster (magnet), the distance to the

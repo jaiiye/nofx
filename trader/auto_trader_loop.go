@@ -743,7 +743,96 @@ func (at *AutoTrader) buildTradingContext() (*kernel.Context, error) {
 		}
 	}
 
+	// 12. Holder cost/liquidation structure (opt-in). It reads the snapshots the
+	//     background holder index already stored, so this costs one indexed query
+	//     rather than a venue call per symbol.
+	if strategyConfig.Indicators.PositionStructureEnabled() {
+		symbolsToQuery := make(map[string]bool)
+		for _, coin := range candidateCoins {
+			symbolsToQuery[coin.Symbol] = true
+		}
+		for _, pos := range positionInfos {
+			symbolsToQuery[pos.Symbol] = true
+		}
+		symbols := make([]string, 0, len(symbolsToQuery))
+		for sym := range symbolsToQuery {
+			symbols = append(symbols, sym)
+		}
+
+		ctx.PositionProfileMap = at.loadPositionProfiles(symbols)
+		logger.Infof("📊 [%s] Holder structure attached for %d of %d symbols", at.name, len(ctx.PositionProfileMap), len(symbols))
+	}
+
 	return ctx, nil
+}
+
+// positionProfileMaxAgeRefreshCount is how many index refreshes a stored
+// holder-structure snapshot may be old before it is withheld from the prompt.
+// Structure that no longer describes the market is worse than no structure at
+// all, because nothing in it tells the model it has aged.
+const positionProfileMaxAgeRefreshCount = 2
+
+// loadPositionProfiles turns the newest stored holder-structure snapshot of each
+// symbol into a profile. Snapshots that are missing, unreadable, empty or older
+// than the freshness window are dropped, so the prompt section is simply omitted
+// for those symbols.
+//
+// The keys of the result are the symbols as the caller passed them, not their
+// normalized form: the prompt looks its sections up by the same symbol it renders.
+func (at *AutoTrader) loadPositionProfiles(symbols []string) map[string]*market.PositionProfile {
+	if at.store == nil || len(symbols) == 0 {
+		return nil
+	}
+
+	normalized := make([]string, 0, len(symbols))
+	for _, symbol := range symbols {
+		if name := market.Normalize(symbol); name != "" {
+			normalized = append(normalized, name)
+		}
+	}
+	now := time.Now().UTC()
+	snapshots, err := at.store.MarketStructure().LatestForSymbols(normalized, now)
+	if err != nil {
+		at.logWarnf("⚠ Failed to read holder-structure snapshots: %v", err)
+		return nil
+	}
+	if len(snapshots) == 0 {
+		return nil
+	}
+
+	maxAge := positionProfileMaxAgeRefreshCount * market.HLPositionRefreshInterval()
+	profiles := make(map[string]*market.PositionProfile, len(symbols))
+	stale := 0
+	for _, symbol := range symbols {
+		snapshot, ok := snapshots[market.Normalize(symbol)]
+		if !ok {
+			continue
+		}
+		if now.Sub(snapshot.Timestamp) > maxAge {
+			stale++
+			continue
+		}
+		var bins []market.PriceBin
+		if err := json.Unmarshal([]byte(snapshot.BinsJSON), &bins); err != nil {
+			at.logWarnf("⚠ Unreadable holder-structure snapshot for %s: %v", symbol, err)
+			continue
+		}
+		profile := market.BuildPositionProfile(bins, market.PositionCoverage{
+			AddressesSeen:    snapshot.AddressesSeen,
+			PositionsSeen:    snapshot.PositionsSeen,
+			PositionsPlaced:  snapshot.PositionsPlaced,
+			PositionsOutside: snapshot.PositionsOutside,
+			WeightSource:     snapshot.WeightSource,
+		}, snapshot.MarkPrice, snapshot.BandPct)
+		if profile == nil {
+			continue
+		}
+		profiles[symbol] = profile
+	}
+	if stale > 0 {
+		at.logWarnf("⚠ %d holder-structure snapshot(s) withheld as stale (older than %s)", stale, maxAge)
+	}
+	return profiles
 }
 
 // reconcilePositionLeverage aligns the leverage recorded on open positions with

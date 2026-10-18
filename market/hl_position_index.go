@@ -49,6 +49,11 @@ const (
 	hlPositionDefaultBinCount = 40
 )
 
+// HLPositionRefreshInterval reports how often the holder-position index
+// re-snaps a market, so consumers can tell a fresh snapshot from a stale one
+// instead of hard-coding the interval.
+func HLPositionRefreshInterval() time.Duration { return hlPositionRefreshInterval }
+
 // PositionSnapshot is one market's holder distribution at one moment.
 type PositionSnapshot struct {
 	MarketType string

@@ -7,6 +7,7 @@ import (
 	"nofx/provider/hyperliquid"
 	"nofx/provider/nofxos"
 	"nofx/store"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -667,6 +668,17 @@ func (e *StrategyEngine) writeIndicatorPlaybook(sb *strings.Builder, zh bool) {
 	}
 	addGroup(l("Execution quality", "执行质量"), execution)
 
+	// Holder structure: who is defending which price and where forced flow sits.
+	// It informs the entry zone and the invalidation level, so it is deliberately
+	// not presented as a direction of its own.
+	var structure []string
+	if ind.PositionStructureEnabled() {
+		structure = append(structure, l(
+			"Holder structure: the cost POC and value area are where holders' break-even clusters (they defend those prices), cost walls are the levels a move has to push through, and liquidation clusters inside the near window are the fuel a move ignites. Use it to choose the entry zone and the invalidation level — it does not set the direction.",
+			"持仓结构：成本 POC 与 value area 是持有者成本密集区（会被守），成本墙是行情推动必须穿过的价位，近窗内的强平簇是引爆行情的燃料。用它选入场区间与失效位——它不决定方向。"))
+	}
+	addGroup(l("Holder structure", "持仓结构"), structure)
+
 	// Positioning: what the venue's own open interest and trade flow say about
 	// who is entering or leaving. Hyperliquid exposes no account long/short
 	// ratio, so these read as the reason behind a move, not as entry triggers.
@@ -885,6 +897,7 @@ func (e *StrategyEngine) BuildUserPrompt(ctx *Context) string {
 		}
 		candidateBody.WriteString(e.formatMicrostructure(ctx, coin.Symbol))
 		candidateBody.WriteString(e.formatPositioning(ctx, coin.Symbol))
+		candidateBody.WriteString(e.formatPositionProfile(ctx, coin.Symbol))
 		candidateBody.WriteString("\n")
 	}
 	sb.WriteString(fmt.Sprintf("## Candidate Coins (%d coins)\n\n", displayedCount))
@@ -1090,6 +1103,95 @@ func stockVenueNoteText(isStock, gateEnabled, feedActive bool, age time.Duration
 	return "- ⚠️ Venue activity is cold (no recent trades) — the cash market is most likely closed, the code will refuse new entries here; do not propose opening one.\n"
 }
 
+// positionStructureMaxRows caps how many buckets the prompt prints. The whole
+// distribution is stored; the prompt gets the heaviest buckets, which are the
+// ones a decision can act on.
+const positionStructureMaxRows = 5
+
+// formatPositionProfile writes the holder cost/liquidation structure for one
+// symbol: the levels holders defend, where their cost sits relative to price, and
+// the liquidation fuel inside the near window. It is structure, not a direction —
+// nothing here is signed, and the header says so.
+//
+// The reading belongs to the stored snapshot, so the header carries its mark
+// price and coverage: the model reads current candles beside it and has to be able
+// to tell the two apart. Returns an empty string when there is no profile, which
+// is what a disabled feature, an uncollected market and a stale snapshot all look
+// like.
+func (e *StrategyEngine) formatPositionProfile(ctx *Context, symbol string) string {
+	if ctx == nil || ctx.PositionProfileMap == nil {
+		return ""
+	}
+	p, ok := ctx.PositionProfileMap[symbol]
+	if !ok || p == nil {
+		return ""
+	}
+
+	zh := e.GetLanguage() == LangChinese
+	pick := func(en, cn string) string {
+		if zh {
+			return cn
+		}
+		return en
+	}
+
+	var sb strings.Builder
+	sb.WriteString(pick("**HOLDER STRUCTURE (cost basis + liquidation fuel, unsigned context)**\n",
+		"**持仓结构（成本 + 强平燃料，无方向上下文）**\n"))
+	sb.WriteString(fmt.Sprintf(pick("- Snapshot: mark %.4f, %d addresses, %d positions placed (%d outside the band), notional-weighted\n",
+		"- 快照：标记价 %.4f，%d 个地址，%d 个仓位落在带内（带外 %d），按名义价值加权\n"),
+		p.MarkPrice, p.Coverage.AddressesSeen, p.Coverage.PositionsPlaced, p.Coverage.PositionsOutside))
+	sb.WriteString(fmt.Sprintf(pick("- Cost POC %.4f (%+.2f%% vs mark), value area %.4f–%.4f (%.0f%% of cost)\n",
+		"- 成本 POC %.4f（相对标记价 %+.2f%%），value area %.4f–%.4f（含 %.0f%% 成本）\n"),
+		p.CostPOC, p.DistanceToCostPOCPct, p.ValueAreaLow, p.ValueAreaHigh, p.ValueAreaSharePct))
+	if p.CostWallAbove > 0 || p.CostWallBelow > 0 {
+		sb.WriteString(fmt.Sprintf(pick("- Cost walls: %.4f above (%+.2f%%, %.1f%% of cost) / %.4f below (%+.2f%%, %.1f%%)\n",
+			"- 成本墙：上方 %.4f（%+.2f%%，占成本 %.1f%%）/ 下方 %.4f（%+.2f%%，%.1f%%）\n"),
+			p.CostWallAbove, p.CostWallAboveDistancePct, p.CostWallAboveSharePct,
+			p.CostWallBelow, p.CostWallBelowDistancePct, p.CostWallBelowSharePct))
+	}
+	sb.WriteString(fmt.Sprintf(pick("- In profit: long %.1f%% of long cost above the mark, short %.1f%% of short cost below it\n",
+		"- 盈盘：多头成本的 %.1f%% 在现价上方，空头成本的 %.1f%% 在现价下方\n"),
+		p.LongCostAboveMarkPct, p.ShortCostBelowMarkPct))
+	sb.WriteString(fmt.Sprintf(pick("- Liquidation fuel within ±%.0f%%: long %.1f%% of long liq below it, short %.1f%% of short liq above it; largest cluster %.4f (%+.2f%%, %.1f%%)\n",
+		"- ±%.0f%% 内的强平燃料：多头 %.1f%%（在下方），空头 %.1f%%（在上方）；最大簇 %.4f（%+.2f%%，%.1f%%）\n"),
+		market.PositionFuelWindowPct, p.LongLiqWithinDownPct, p.ShortLiqWithinUpPct,
+		p.LiqCluster, p.LiqClusterDistancePct, p.LiqClusterSharePct))
+
+	if rows := topPositionProfileBins(p.Bins, positionStructureMaxRows); len(rows) > 0 {
+		sb.WriteString(pick("| Zone | Long cost | Short cost | Long liq | Short liq |\n| --- | ---: | ---: | ---: | ---: |\n",
+			"| 价格区间 | 多头成本 | 空头成本 | 多头强平 | 空头强平 |\n| --- | ---: | ---: | ---: | ---: |\n"))
+		for _, row := range rows {
+			sb.WriteString(fmt.Sprintf("| %.4f–%.4f | %s | %s | %s | %s |\n",
+				row.Lo, row.Hi, formatUSDCompact(row.LongCost), formatUSDCompact(row.ShortCost),
+				formatUSDCompact(row.LongLiq), formatUSDCompact(row.ShortLiq)))
+		}
+	}
+	sb.WriteString("\n")
+	return sb.String()
+}
+
+// topPositionProfileBins returns the heaviest buckets, heaviest first: the printed
+// table should show the structure that matters rather than the whole band.
+func topPositionProfileBins(bins []market.PriceBin, limit int) []market.PriceBin {
+	if limit <= 0 || len(bins) == 0 {
+		return nil
+	}
+	ranked := make([]market.PriceBin, len(bins))
+	copy(ranked, bins)
+	sort.SliceStable(ranked, func(i, j int) bool {
+		return positionBinWeight(ranked[i]) > positionBinWeight(ranked[j])
+	})
+	if len(ranked) > limit {
+		ranked = ranked[:limit]
+	}
+	return ranked
+}
+
+func positionBinWeight(bin market.PriceBin) float64 {
+	return bin.LongCost + bin.ShortCost + bin.LongLiq + bin.ShortLiq
+}
+
 // formatUSDCompact renders a notional amount compactly (12.3K / 1.24M / 850).
 func formatUSDCompact(v float64) string {
 	abs := math.Abs(v)
@@ -1211,6 +1313,7 @@ func (e *StrategyEngine) formatPositionInfo(index int, pos PositionInfo, ctx *Co
 		}
 		sb.WriteString(e.formatMicrostructure(ctx, pos.Symbol))
 		sb.WriteString(e.formatPositioning(ctx, pos.Symbol))
+		sb.WriteString(e.formatPositionProfile(ctx, pos.Symbol))
 		sb.WriteString("\n")
 	}
 

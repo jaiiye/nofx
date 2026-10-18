@@ -105,15 +105,16 @@ type Context struct {
 	// Hyperliquid-native positioning per symbol (funding percentile, OI
 	// quadrants, taker flow). Derived from venue data only; see
 	// market.HyperliquidPositioning.
-	PositioningMap     map[string]*market.Positioning `json:"-"`
-	OITopDataMap       map[string]*OITopData          `json:"-"`
-	QuantDataMap       map[string]*QuantData          `json:"-"`
-	OIRankingData      *nofxos.OIRankingData          `json:"-"` // Market-wide OI ranking data
-	NetFlowRankingData *nofxos.NetFlowRankingData     `json:"-"` // Market-wide fund flow ranking data
-	PriceRankingData   *nofxos.PriceRankingData       `json:"-"` // Market-wide price gainers/losers
-	BTCETHLeverage     int                            `json:"-"`
-	AltcoinLeverage    int                            `json:"-"`
-	Timeframes         []string                       `json:"-"`
+	PositioningMap     map[string]*market.Positioning     `json:"-"`
+	PositionProfileMap map[string]*market.PositionProfile `json:"-"` // holder cost/liquidation structure per symbol
+	OITopDataMap       map[string]*OITopData              `json:"-"`
+	QuantDataMap       map[string]*QuantData              `json:"-"`
+	OIRankingData      *nofxos.OIRankingData              `json:"-"` // Market-wide OI ranking data
+	NetFlowRankingData *nofxos.NetFlowRankingData         `json:"-"` // Market-wide fund flow ranking data
+	PriceRankingData   *nofxos.PriceRankingData           `json:"-"` // Market-wide price gainers/losers
+	BTCETHLeverage     int                                `json:"-"`
+	AltcoinLeverage    int                                `json:"-"`
+	Timeframes         []string                           `json:"-"`
 	// GoCtx is an optional stdlib context used to cancel the LLM call and
 	// its retry backoff. Nil means context.Background().
 	GoCtx context.Context `json:"-"`
