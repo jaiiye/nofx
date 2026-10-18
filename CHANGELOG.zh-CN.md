@@ -12,6 +12,16 @@ NOFX 项目的所有重要更改都将记录在此文件中。
 ## [未发布]
 
 ### 新增
+- `AI_EXTRA_BODY_JSON`：把原始 JSON 原样合并进每一次 chat-completions 请求体，用于 nofx 没有对应字段的
+  厂商开关——首当其冲是思维模型的思考开关（`{"thinking": false}`，或 Anthropic 形态的
+  `{"thinking": {"type": "disabled"}}`，或 `{"reasoning_effort": "none"}`）。思维模型可能把整份完成额度花在
+  思考上、返回空正文，从而让该轮决策判失败；此前唯一的杠杆就是额度本身，而"思考就是比你愿意付的任何额度都长"
+  时它无能为力。两条请求体构造路径都会合并（`BuildMCPRequestBody`、`BuildRequestBodyFromRequest`），显式值
+  优先，非法 JSON 只记日志丢弃、不会让进程起不来。
+- AI 用量不再丢弃两个拆分：`reasoning_tokens`（`usage.completion_tokens_details`）与 `cached_tokens`
+  （`usage.prompt_tokens_details`），缓冲与 SSE 两条路径都解析。额度被思考吃光的完成现在在解析处就点名
+  （"empty content: N of M completion tokens went to reasoning"），而不是只在下游表现为"空完成"；缓存命中也会
+  记日志——否则无从得知每轮约 48k token 的 prompt 里有多少是命中厂商提示词缓存来的。
 - 持仓结构门（默认**只告警**）：开仓前多一道窄门——多头撞上下方近窗的强平燃料堆积（默认 ≥25% 的多头强平
   名义落在 ±5% 内）、空头撞上上方挤空燃料、或进场直接顶到主导成本墙（距离 ≤1% 且占成本 ≥30%）时记录
   反对意见。严格 **fail-open**：模式未设/未知、没有剖面、分布太薄（落带仓位 <30）、动作不认识、以及所有

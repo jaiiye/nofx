@@ -12,6 +12,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `AI_EXTRA_BODY_JSON`: raw JSON merged verbatim into every chat-completions body, for the provider knobs
+  nofx has no field for — a thinking model's reasoning switch above all (`{"thinking": false}`, or the
+  Anthropic-shaped `{"thinking": {"type": "disabled"}}`, or `{"reasoning_effort": "none"}`). A reasoning model
+  can spend the entire completion budget on its thinking and return an empty content, which fails the decision
+  cycle; until now the only lever was the budget itself, which cannot help when the thinking is simply longer
+  than any budget you will pay for. Merged into both body paths (`BuildMCPRequestBody`,
+  `BuildRequestBodyFromRequest`), overrides win, and a malformed value is logged and dropped rather than
+  failing startup.
+- AI usage now keeps the two splits it was discarding: `reasoning_tokens`
+  (`usage.completion_tokens_details`) and `cached_tokens` (`usage.prompt_tokens_details`), parsed on both the
+  buffered and the SSE path. A completion whose budget went to reasoning now says so at parse time ("empty
+  content: N of M completion tokens went to reasoning") instead of only surfacing as "empty completion"
+  downstream, and cache hits are logged — the only way to see how much of the ~48k-token per-cycle prompt the
+  provider is serving from its prompt cache.
 - Holder-structure gate (**warn-only for now**): an opening order passes one more code-enforced check — a
   long sitting on liquidation fuel inside the near window (25% or more of the long side's liquidation
   notional within ±5% by default), a short under a squeeze cluster, or an entry running into a dominant

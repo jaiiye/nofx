@@ -1,9 +1,11 @@
 package mcp
 
 import (
+	"encoding/json"
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"nofx/logger"
@@ -23,6 +25,15 @@ type Config struct {
 	MaxContext  int // Model's max context window in tokens (0 = no limit)
 	Temperature float64
 	UseFullURL  bool
+
+	// ExtraBody holds raw request-body overrides merged verbatim into every
+	// chat-completions body. It exists for the provider knobs nofx has no field
+	// for — chiefly a thinking model's reasoning switch (`thinking: false`,
+	// `reasoning_effort: "none"`). A model that spends the whole completion
+	// budget on its reasoning returns an empty content, which fails the decision
+	// cycle; there is otherwise no way to turn that off. Set via
+	// AI_EXTRA_BODY_JSON, e.g. {"thinking": false}.
+	ExtraBody map[string]any
 
 	// Retry configuration
 	MaxRetries      int
@@ -46,6 +57,7 @@ func DefaultConfig() *Config {
 		// model then returned an empty content and the cycle produced nothing.
 		MaxTokens:       getEnvInt("AI_MAX_TOKENS", 8192),
 		Temperature:     MCPClientTemperature,
+		ExtraBody:       getEnvJSON("AI_EXTRA_BODY_JSON"),
 		MaxRetries:      MaxRetryTimes,
 		RetryWaitBase:   2 * time.Second,
 		Timeout:         DefaultTimeout,
@@ -73,4 +85,21 @@ func getEnvString(key string, defaultValue string) string {
 		return val
 	}
 	return defaultValue
+}
+
+// getEnvJSON parses a JSON object from an environment variable. A malformed
+// value is dropped with a warning instead of failing startup: extra body
+// overrides are opt-in provider knobs, and losing them must not take the
+// process down.
+func getEnvJSON(key string) map[string]any {
+	val := strings.TrimSpace(os.Getenv(key))
+	if val == "" {
+		return nil
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(val), &parsed); err != nil {
+		logger.Warnf("⚠️  %s is not a valid JSON object, ignoring it: %v", key, err)
+		return nil
+	}
+	return parsed
 }

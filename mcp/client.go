@@ -53,6 +53,16 @@ type TokenUsage struct {
 	PromptTokens     int
 	CompletionTokens int
 	TotalTokens      int
+
+	// ReasoningTokens is the share of CompletionTokens the model spent on its own
+	// thinking (usage.completion_tokens_details.reasoning_tokens). It is billed
+	// as output, and it is the reason a reasoning model can return an empty
+	// content with a fully consumed completion budget.
+	ReasoningTokens int
+	// CachedTokens is the share of PromptTokens served from the provider's prompt
+	// cache (usage.prompt_tokens_details.cached_tokens), billed at a fraction of
+	// the input price. 0 means no cache hit, or a provider that does not report it.
+	CachedTokens int
 }
 
 // Channel returns the payment channel category for telemetry.
@@ -74,6 +84,10 @@ type Client struct {
 	Model      string
 	UseFullURL bool // Whether to use full URL (without appending /chat/completions)
 	MaxTokens  int  // Maximum tokens for AI response
+
+	// ExtraBody holds raw request-body overrides merged verbatim into every
+	// request (see Config.ExtraBody).
+	ExtraBody map[string]any
 
 	HTTPClient *http.Client // Exported for sub-packages
 	Log        Logger       // Exported for sub-packages
@@ -128,6 +142,7 @@ func NewClient(opts ...ClientOption) AIClient {
 		Model:      cfg.Model,
 		MaxTokens:  cfg.MaxTokens,
 		UseFullURL: cfg.UseFullURL,
+		ExtraBody:  cfg.ExtraBody,
 		HTTPClient: cfg.HTTPClient,
 		Log:        cfg.Logger,
 		Cfg:        cfg,
@@ -229,6 +244,21 @@ func (client *Client) SetAuthHeader(reqHeader http.Header) {
 	reqHeader.Set("Authorization", fmt.Sprintf("Bearer %s", client.APIKey))
 }
 
+// applyExtraBody merges operator-supplied body overrides into a built request
+// body. Overrides win, so an explicit value here beats the built-in default.
+//
+// It is the escape hatch for provider knobs nofx has no field for: a thinking
+// model that spends its whole completion budget on reasoning returns an empty
+// content and fails the cycle, and the only way to switch that off is a body
+// parameter the request struct does not carry (`thinking: false`,
+// `reasoning_effort: "none"`). Configured via AI_EXTRA_BODY_JSON.
+func applyExtraBody(body map[string]any, extraBody map[string]any) map[string]any {
+	for key, value := range extraBody {
+		body[key] = value
+	}
+	return body
+}
+
 func (client *Client) BuildMCPRequestBody(systemPrompt, userPrompt string) map[string]any {
 	// Build messages array
 	messages := []map[string]string{}
@@ -268,7 +298,7 @@ func (client *Client) BuildMCPRequestBody(systemPrompt, userPrompt string) map[s
 	} else {
 		requestBody["max_tokens"] = client.MaxTokens
 	}
-	return requestBody
+	return applyExtraBody(requestBody, client.ExtraBody)
 }
 
 // MarshalRequestBody can be used to marshal the request body and can be overridden
@@ -300,9 +330,15 @@ func (client *Client) ParseMCPResponseFull(body []byte) (*LLMResponse, error) {
 			} `json:"message"`
 		} `json:"choices"`
 		Usage struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
-			TotalTokens      int `json:"total_tokens"`
+			PromptTokens        int `json:"prompt_tokens"`
+			CompletionTokens    int `json:"completion_tokens"`
+			TotalTokens         int `json:"total_tokens"`
+			PromptTokensDetails struct {
+				CachedTokens int `json:"cached_tokens"`
+			} `json:"prompt_tokens_details"`
+			CompletionTokensDetails struct {
+				ReasoningTokens int `json:"reasoning_tokens"`
+			} `json:"completion_tokens_details"`
 		} `json:"usage"`
 	}
 
@@ -314,18 +350,33 @@ func (client *Client) ParseMCPResponseFull(body []byte) (*LLMResponse, error) {
 		return nil, fmt.Errorf("API returned empty response")
 	}
 
-	// Report token usage if callback is set
-	if TokenUsageCallback != nil && result.Usage.TotalTokens > 0 {
-		TokenUsageCallback(TokenUsage{
-			Provider:         client.Provider,
-			Model:            client.Model,
-			PromptTokens:     result.Usage.PromptTokens,
-			CompletionTokens: result.Usage.CompletionTokens,
-			TotalTokens:      result.Usage.TotalTokens,
-		})
+	msg := result.Choices[0].Message
+	usage := TokenUsage{
+		Provider:         client.Provider,
+		Model:            client.Model,
+		PromptTokens:     result.Usage.PromptTokens,
+		CompletionTokens: result.Usage.CompletionTokens,
+		TotalTokens:      result.Usage.TotalTokens,
+		ReasoningTokens:  result.Usage.CompletionTokensDetails.ReasoningTokens,
+		CachedTokens:     result.Usage.PromptTokensDetails.CachedTokens,
 	}
 
-	msg := result.Choices[0].Message
+	// Report token usage if callback is set
+	if TokenUsageCallback != nil && usage.TotalTokens > 0 {
+		TokenUsageCallback(usage)
+	}
+
+	// Name the empty-content failure at the layer that can see the cause: the
+	// reasoning split only exists in usage, and downstream the cycle only knows
+	// "empty completion".
+	if strings.TrimSpace(msg.Content) == "" && usage.ReasoningTokens > 0 {
+		client.Log.Warnf("⚠️  [%s] empty content: %d of %d completion tokens went to reasoning (raise AI_MAX_TOKENS or disable thinking)",
+			client.String(), usage.ReasoningTokens, usage.CompletionTokens)
+	}
+	if usage.CachedTokens > 0 {
+		client.Log.Debugf("[%s] prompt cache hit: %d of %d input tokens", client.String(), usage.CachedTokens, usage.PromptTokens)
+	}
+
 	return &LLMResponse{
 		Content:          msg.Content,
 		ReasoningContent: msg.ReasoningContent,
@@ -682,7 +733,7 @@ func (client *Client) BuildRequestBodyFromRequest(req *Request) map[string]any {
 		requestBody["stream"] = true
 	}
 
-	return requestBody
+	return applyExtraBody(requestBody, client.ExtraBody)
 }
 
 // CallWithRequestStream streams the LLM response via SSE (Server-Sent Events).
@@ -795,9 +846,15 @@ func ParseSSEStream(body io.Reader, onChunk func(string), onLine func()) (string
 				FinishReason *string `json:"finish_reason"`
 			} `json:"choices"`
 			Usage *struct {
-				PromptTokens     int `json:"prompt_tokens"`
-				CompletionTokens int `json:"completion_tokens"`
-				TotalTokens      int `json:"total_tokens"`
+				PromptTokens        int `json:"prompt_tokens"`
+				CompletionTokens    int `json:"completion_tokens"`
+				TotalTokens         int `json:"total_tokens"`
+				PromptTokensDetails struct {
+					CachedTokens int `json:"cached_tokens"`
+				} `json:"prompt_tokens_details"`
+				CompletionTokensDetails struct {
+					ReasoningTokens int `json:"reasoning_tokens"`
+				} `json:"completion_tokens_details"`
 			} `json:"usage,omitempty"`
 		}
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
@@ -809,6 +866,8 @@ func ParseSSEStream(body io.Reader, onChunk func(string), onLine func()) (string
 				PromptTokens:     chunk.Usage.PromptTokens,
 				CompletionTokens: chunk.Usage.CompletionTokens,
 				TotalTokens:      chunk.Usage.TotalTokens,
+				ReasoningTokens:  chunk.Usage.CompletionTokensDetails.ReasoningTokens,
+				CachedTokens:     chunk.Usage.PromptTokensDetails.CachedTokens,
 			}
 		}
 
