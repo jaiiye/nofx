@@ -18,9 +18,9 @@ func TestWrapXyzInsufficientMargin(t *testing.T) {
 	}
 	msg := got.Error()
 	for _, want := range []string{
-		"Insufficient margin",  // original venue detail preserved
-		"own USDC margin pool", // explains the separate pool
-		"transfer USDC into the xyz dex",
+		"Insufficient margin",      // original venue detail preserved
+		"single USDC balance",      // unified/portfolio accounts
+		"separate xyz dex balance", // manual/standard accounts
 		"xyz:SILVER",
 	} {
 		if !strings.Contains(msg, want) {
@@ -39,7 +39,7 @@ func TestWrapXyzInsufficientMargin(t *testing.T) {
 
 	// Case-insensitive match: the venue has varied the capitalisation before.
 	lower := errors.New("order rejected: insufficient margin")
-	if !strings.Contains(wrapXyzInsufficientMargin(lower, "xyz:GOLD").Error(), "own USDC margin pool") {
+	if !strings.Contains(wrapXyzInsufficientMargin(lower, "xyz:GOLD").Error(), "single USDC balance") {
 		t.Fatal("lowercase 'insufficient margin' must also be wrapped")
 	}
 }

@@ -678,16 +678,14 @@ func (t *HyperliquidTrader) placeXyzOrderWithTif(coin string, isBuy bool, size f
 		return err
 	}
 
-	// Pre-flight (opens only): the xyz dex (HIP-3) settles against its own
-	// USDC pool, so a funded main perp account can still be rejected here.
-	// Catch the empty-pool case with an actionable message instead of sending
-	// a doomed order — and never block a reduce/close, which frees margin.
-	if !reduceOnly {
-		if xyzBal, balErr := t.getXYZDexBalance(); balErr == nil && xyzBal.Withdrawable <= 0 {
-			return fmt.Errorf("xyz dex has no free margin (available %.2f USDC, equity %.2f USDC): the xyz perp dex keeps its own USDC pool, separate from the main perp account — transfer USDC into the xyz dex before opening %s",
-				xyzBal.Withdrawable, xyzBal.AccountValue, coin)
-		}
-	}
+	// No pre-flight margin check here. Where the collateral lives is an
+	// account-abstraction-mode question: unified (the default) and portfolio
+	// accounts trade xyz assets from their single USDC balance and the venue
+	// reports the per-dex state as meaningless (zero), while manual/standard
+	// accounts keep a separate balance per dex. A zero withdrawable is therefore
+	// NOT evidence of missing margin — reading it that way blocked funded orders
+	// on unified accounts. The venue's own rejection is the authority, and it is
+	// wrapped below with mode-aware guidance.
 
 	// Round size to correct precision
 	szDecimals := t.getXyzSzDecimals(coin)
@@ -865,15 +863,17 @@ func (t *HyperliquidTrader) postXyzExchangeAction(action any) ([]byte, error) {
 	return body, nil
 }
 
-// wrapXyzInsufficientMargin turns the venue's raw "insufficient margin"
-// rejection into guidance: on the xyz dex that message almost always means the
-// dex's own USDC pool needs a deposit, not that the account is empty.
+// wrapXyzInsufficientMargin explains the venue's raw "insufficient margin"
+// rejection on a HIP-3 asset. Where the collateral lives depends on the account's
+// abstraction mode, so the message names both instead of asserting one: unified
+// and portfolio-margin accounts trade xyz assets from their single USDC balance,
+// while manual/standard accounts keep a separate balance per DEX.
 func wrapXyzInsufficientMargin(err error, coin string) error {
 	if err == nil {
 		return nil
 	}
 	if strings.Contains(strings.ToLower(err.Error()), "insufficient margin") {
-		return fmt.Errorf("%w — the xyz dex (HIP-3) keeps its own USDC margin pool, separate from the main perp account; transfer USDC into the xyz dex or reduce the order size for %s", err, coin)
+		return fmt.Errorf("%w — check the account's abstraction mode: unified/portfolio accounts trade xyz assets from their single USDC balance, while standard-mode accounts keep a separate xyz dex balance that must be funded first (alternatively reduce the order size for %s)", err, coin)
 	}
 	return err
 }

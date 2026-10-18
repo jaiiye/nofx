@@ -275,6 +275,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bot uses the same model selection as the web agent.
 
 ### Fixed
+- The xyz pre-flight margin check no longer blocks orders on unified accounts. It read the HIP-3 dex's
+  own balance and treated `withdrawable == 0` as "no margin", but the venue reports that per-dex state as
+  meaningless on unified/portfolio accounts, where the collateral is the single USDC balance — so a fully
+  funded `xyz:MU` short was rejected locally with "xyz dex has no free margin (available 0.00 USDC)". The
+  pre-check is removed and the venue's own rejection is the authority; its wrapping now names both account
+  modes instead of telling unified-account users to fund a pool that does not exist.
 - An empty AI completion is now an error instead of a stored decision, and the default completion budget
   is raised. A reasoning model can spend the whole (2000-token) completion budget on its thinking and
   return no answer; `Call` returned that as `""` with no error, so the trading cycle was stored as a
