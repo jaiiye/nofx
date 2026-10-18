@@ -140,3 +140,32 @@ func TestWaitForMakerFillHonoursTimeoutWithoutIdentifiers(t *testing.T) {
 		t.Fatalf("wait took %v, want it bounded by the timeout", elapsed)
 	}
 }
+
+// A maker fill saves less than the fee difference alone suggests: the passive fill
+// itself carries adverse selection. Reporting only the gross number over-credits
+// the execution mode, so both are computed and reported.
+func TestMakerSavingBps(t *testing.T) {
+	// The account's measured rates: 4.32 bp taker, 1.44 bp maker.
+	gross, netLow, netHigh := makerSavingBps(0.000432, 0.000144)
+	if math.Abs(gross-2.88) > 1e-9 {
+		t.Fatalf("gross saving = %v bp, want 2.88", gross)
+	}
+	if math.Abs(netLow-2.05) > 1e-9 || math.Abs(netHigh-2.50) > 1e-9 {
+		t.Fatalf("net saving = %v-%v bp, want 2.05-2.50 (gross minus 0.38-0.83)", netLow, netHigh)
+	}
+	if netLow > netHigh {
+		t.Fatalf("net range inverted: %v > %v", netLow, netHigh)
+	}
+
+	// When the maker rate is worse than taker, the "saving" is a cost and must
+	// stay negative — the adverse-selection term must not turn it positive.
+	gross, netLow, _ = makerSavingBps(0.0004, 0.0005)
+	if gross > 0 || netLow > 0 {
+		t.Fatalf("maker worse than taker: gross %v netLow %v, want negative", gross, netLow)
+	}
+
+	// Unknown rates contribute nothing.
+	if gross, _, _ := makerSavingBps(0, 0); gross != 0 {
+		t.Fatalf("zero rates: gross = %v, want 0", gross)
+	}
+}

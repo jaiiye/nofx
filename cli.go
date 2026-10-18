@@ -53,6 +53,9 @@ func runCLISubcommand(args []string) bool {
 	case "sweep":
 		runSweep(args[1:])
 		return true
+	case "trade-report":
+		runTradeReport(args[1:])
+		return true
 	default:
 		return false
 	}

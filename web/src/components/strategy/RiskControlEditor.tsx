@@ -436,6 +436,54 @@ export function RiskControlEditor({
               />
             </div>
           </div>
+
+          {/* Three correlated names are one bet with three sets of fees. The cap
+              counts a same-side cluster as one bet and refuses the entry that
+              would exceed it. */}
+          <div className="p-3 rounded-lg" style={{ backgroundColor: 'rgba(255,255,255,0.02)' }}>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-medium" style={{ color: '#EAEFEF' }}>
+                {language === 'zh' ? '相关性集中度' : 'Correlated exposure'}
+              </span>
+              <span className="text-[11px]" style={{ color: '#848E9C' }}>
+                {language === 'zh' ? '同向 + 高相关 = 一注' : 'same side + high ρ = one bet'}
+              </span>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-xs" style={{ color: '#848E9C' }}>
+                {language === 'zh' ? '每簇上限' : 'Per-cluster cap'}
+              </span>
+              <input
+                type="number"
+                min={-1}
+                max={3}
+                value={config.max_correlated_positions ?? 2}
+                disabled={disabled}
+                onChange={(e) => updateField('max_correlated_positions', Math.min(3, Math.max(-1, Number(e.target.value) || 0)))}
+                className="w-16 rounded-md px-2 py-1 text-xs outline-none disabled:opacity-50"
+                style={{ background: '#1E2329', border: '1px solid #2B3139', color: '#EAEFEF' }}
+              />
+              <span className="text-xs" style={{ color: '#848E9C' }}>ρ ≥</span>
+              <input
+                type="number"
+                step={0.05}
+                min={0.5}
+                max={0.99}
+                value={config.correlation_threshold ?? 0.8}
+                disabled={disabled}
+                onChange={(e) =>
+                  updateField('correlation_threshold', Math.min(0.99, Math.max(0.5, Number(e.target.value) || 0.8)))
+                }
+                className="w-20 rounded-md px-2 py-1 text-xs outline-none disabled:opacity-50"
+                style={{ background: '#1E2329', border: '1px solid #2B3139', color: '#EAEFEF' }}
+              />
+            </div>
+            <p className="text-xs mt-1" style={{ color: '#848E9C' }}>
+              {language === 'zh'
+                ? '在决策上下文的收盘 K 线上计算（无额外请求）；数据不足时放行。上限填 -1 可关闭该检查。'
+                : 'Measured on the closed bars already in the decision context (no extra request); fails open without enough history. Set the cap to -1 to disable.'}
+            </p>
+          </div>
         </div>
       </div>
     </div>

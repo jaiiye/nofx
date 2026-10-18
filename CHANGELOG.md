@@ -12,7 +12,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Code-enforced stock session gate: new entries in stock perps are skipped while the venue shows no
+- `nofx trade-report`: a trade-quality report over closed positions — gross vs net per trade, fees as
+  a share of notional, profit factor for both, and a breakdown by holding time (<30m, 30m-2h, 2-12h,
+  12-24h, 1-3d, >3d, unknown) plus AI-initiated vs protective closes. It also builds a random-entry
+  baseline on the same price paths with the SAME holding duration and fees and places the strategy's
+  mean net return in that distribution, so a strategy that is merely long in an up market cannot look
+  skilful. AI-close attribution uses the successful close decisions recorded near each exit (the
+  position row records "sync" for both kinds). History routes HIP-3 (xyz) symbols to the venue's candle
+  snapshot, so stock/commodity trades get a baseline too.
+- Maker entries now report what they actually saved: the fee paid against the taker alternative, and
+  the net saving after adverse selection (0.38-0.83 bp/leg, measured across six Hyperliquid windows).
+  For an account at 4.32/1.44 bp that is ~2.9 bp gross but ~2.05-2.50 bp net — quoting the fee
+  difference alone over-credits passive execution, and a timeout fallback still pays taker on the
+  remainder. The builder fee is reported separately because it is charged per fill on top of the venue
+  rate: our default builder takes 5 bp, which is *larger* than this account's venue taker fee (4.32 bp)
+  and accounts for over half of the measured 9.3 bp/leg — it cancels out of the maker-vs-taker saving
+  but dominates the absolute cost.
+- Code-enforced correlated-exposure cap: same-side positions whose primary-timeframe returns correlate
+  at rho >= 0.8 count as ONE bet, and an entry is refused when the cluster would exceed
+  `risk_control.max_correlated_positions` (default 2, negative disables; `correlation_threshold`
+  default 0.8, clamped 0.5-0.99). Three correlated names are one bet with three sets of fees, so
+  `MaxPositions=3` otherwise overstates how independent the book is. It reads the closed bars already
+  in the decision context (no extra request), fails open when a symbol lacks enough history, and is
+  editable in the risk editor.
+- Strategy studio controls for the stock session gate:- Code-enforced stock session gate: new entries in stock perps are skipped while the venue shows no
   activity, which is what a closed cash market looks like on Hyperliquid — a stock perp quotes around
   the clock while its underlying does not, so an entry taken then faces an overnight gap that a stop
   cannot protect. The signal is the venue itself, via `risk_control.stock_quiet_minutes` (default 30,

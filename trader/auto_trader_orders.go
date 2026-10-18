@@ -59,13 +59,16 @@ func (at *AutoTrader) trackSuccessfulClose(order *connector.OrderResult) {
 	at.successfulClosesInCycle++
 }
 
-// executeDecisionWithRecord executes AI decision and records detailed information
-func (at *AutoTrader) executeDecisionWithRecord(decision *kernel.Decision, actionRecord *store.DecisionAction) error {
+// executeDecisionWithRecord executes AI decision and records detailed information.
+// The decision context is passed through so execution-side guards (correlated
+// exposure) can read the same closed bars the decision was based on, without
+// fetching anything again.
+func (at *AutoTrader) executeDecisionWithRecord(ctx *kernel.Context, decision *kernel.Decision, actionRecord *store.DecisionAction) error {
 	switch decision.Action {
 	case "open_long":
-		return at.executeOpenLongWithRecord(decision, actionRecord)
+		return at.executeOpenLongWithRecord(ctx, decision, actionRecord)
 	case "open_short":
-		return at.executeOpenShortWithRecord(decision, actionRecord)
+		return at.executeOpenShortWithRecord(ctx, decision, actionRecord)
 	case "close_long":
 		return at.executeCloseLongWithRecord(decision, actionRecord)
 	case "close_short":
@@ -79,7 +82,7 @@ func (at *AutoTrader) executeDecisionWithRecord(decision *kernel.Decision, actio
 }
 
 // executeOpenLongWithRecord executes open long position and records detailed information
-func (at *AutoTrader) executeOpenLongWithRecord(decision *kernel.Decision, actionRecord *store.DecisionAction) error {
+func (at *AutoTrader) executeOpenLongWithRecord(ctx *kernel.Context, decision *kernel.Decision, actionRecord *store.DecisionAction) error {
 	logger.Infof("  📈 Open long: %s", decision.Symbol)
 
 	// ⚠️ Get current positions for multiple checks
@@ -126,6 +129,12 @@ func (at *AutoTrader) executeOpenLongWithRecord(decision *kernel.Decision, actio
 	// Stock session gate: never open into a closed cash market (a gap would jump
 	// straight past the stop). Closes are unaffected.
 	if err := at.checkStockSession(decision.Symbol); err != nil {
+		return err
+	}
+
+	// Correlated-exposure cap: same-side names that move together are one bet, so
+	// the book cannot be diversified by adding a highly correlated position.
+	if err := at.checkCorrelatedExposure(ctx, decision.Symbol, decision.Action); err != nil {
 		return err
 	}
 
@@ -224,7 +233,7 @@ func (at *AutoTrader) executeOpenLongWithRecord(decision *kernel.Decision, actio
 }
 
 // executeOpenShortWithRecord executes open short position and records detailed information
-func (at *AutoTrader) executeOpenShortWithRecord(decision *kernel.Decision, actionRecord *store.DecisionAction) error {
+func (at *AutoTrader) executeOpenShortWithRecord(ctx *kernel.Context, decision *kernel.Decision, actionRecord *store.DecisionAction) error {
 	logger.Infof("  📉 Open short: %s", decision.Symbol)
 
 	// ⚠️ Get current positions for multiple checks
@@ -271,6 +280,12 @@ func (at *AutoTrader) executeOpenShortWithRecord(decision *kernel.Decision, acti
 	// Stock session gate: never open into a closed cash market (a gap would jump
 	// straight past the stop). Closes are unaffected.
 	if err := at.checkStockSession(decision.Symbol); err != nil {
+		return err
+	}
+
+	// Correlated-exposure cap: same-side names that move together are one bet, so
+	// the book cannot be diversified by adding a highly correlated position.
+	if err := at.checkCorrelatedExposure(ctx, decision.Symbol, decision.Action); err != nil {
 		return err
 	}
 

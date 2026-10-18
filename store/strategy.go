@@ -80,6 +80,13 @@ const (
 	DefaultStockQuietMinutes = 30
 	MinStockQuietMinutes     = 5
 	MaxStockQuietMinutes     = 120
+	// Correlated-exposure cap. Positions on the same side whose primary-timeframe
+	// returns correlate at or above the threshold count as ONE bet: three names at
+	// rho >= 0.8 are one bet with three fees, not three independent trades.
+	DefaultMaxCorrelatedPositions = 2
+	DefaultCorrelationThreshold   = 0.8
+	MinCorrelationThreshold       = 0.5
+	MaxCorrelationThreshold       = 0.99
 )
 
 // NormalizeEntryOrderMode maps any stored value onto a mode the order path
@@ -194,6 +201,10 @@ func (c *StrategyConfig) ClampLimits() {
 	c.RiskControl.EntryOrderMode = NormalizeEntryOrderMode(c.RiskControl.EntryOrderMode)
 	c.RiskControl.MakerEntryTimeoutSec = NormalizeMakerEntryTimeoutSec(c.RiskControl.MakerEntryTimeoutSec)
 	c.RiskControl.StockQuietMinutes = NormalizeStockQuietMinutes(c.RiskControl.StockQuietMinutes)
+	c.RiskControl.CorrelationThreshold = NormalizeCorrelationThreshold(c.RiskControl.CorrelationThreshold)
+	if c.RiskControl.MaxCorrelatedPositions > MaxPositions {
+		c.RiskControl.MaxCorrelatedPositions = MaxPositions
+	}
 
 	// Clamp leverage limits to the same bounds as the manual config UI.
 	if c.RiskControl.BTCETHMaxLeverage < MinLeverage {
@@ -1132,6 +1143,13 @@ type RiskControlConfig struct {
 	// new entries are blocked. 0 = default, clamped to [5, 120].
 	StockQuietMinutes int `json:"stock_quiet_minutes,omitempty"`
 
+	// Correlated exposure cap (CODE ENFORCED): same-side positions above the
+	// correlation threshold count as one bet. 0 = the default cap, negative
+	// disables the check. The correlation is measured on the primary timeframe's
+	// closed bars, so it costs no extra request.
+	MaxCorrelatedPositions int     `json:"max_correlated_positions,omitempty"`
+	CorrelationThreshold   float64 `json:"correlation_threshold,omitempty"` // 0 = default 0.8
+
 	// Drawdown profit-protection monitor (CODE ENFORCED). Nil enabled flag
 	// and zero thresholds mean "keep the historical defaults" so configs
 	// stored before these fields existed keep monitoring active.
@@ -1157,6 +1175,39 @@ func (r RiskControlConfig) MakerEntry() (bool, time.Duration) {
 func (r RiskControlConfig) StockEntryGate() (bool, int) {
 	enabled := r.BlockColdStockEntries == nil || *r.BlockColdStockEntries
 	return enabled, NormalizeStockQuietMinutes(r.StockQuietMinutes)
+}
+
+// NormalizeCorrelationThreshold clamps the cluster threshold into a range where
+// "correlated" still means something (below 0.5 almost everything clusters;
+// above 0.99 only identical series do).
+func NormalizeCorrelationThreshold(v float64) float64 {
+	if v <= 0 {
+		return DefaultCorrelationThreshold
+	}
+	if v < MinCorrelationThreshold {
+		return MinCorrelationThreshold
+	}
+	if v > MaxCorrelationThreshold {
+		return MaxCorrelationThreshold
+	}
+	return v
+}
+
+// CorrelatedExposureCap reports whether the same-side cluster cap is active, the
+// maximum number of positions allowed in one cluster, and the correlation
+// threshold that defines a cluster. A negative cap disables the check.
+func (r RiskControlConfig) CorrelatedExposureCap() (enabled bool, cap int, threshold float64) {
+	if r.MaxCorrelatedPositions < 0 {
+		return false, 0, 0
+	}
+	cap = r.MaxCorrelatedPositions
+	if cap == 0 {
+		cap = DefaultMaxCorrelatedPositions
+	}
+	if cap > MaxPositions {
+		cap = MaxPositions
+	}
+	return true, cap, NormalizeCorrelationThreshold(r.CorrelationThreshold)
 }
 
 // NewStrategyStore creates a new StrategyStore

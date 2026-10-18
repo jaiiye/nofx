@@ -259,4 +259,10 @@ export interface RiskControlConfig {
   // close/reduce are never blocked. stock_quiet_minutes default 30, clamped 5-120.
   block_cold_stock_entries?: boolean;
   stock_quiet_minutes?: number;
+
+  // Correlated-exposure cap (code enforced): same-side positions whose returns
+  // correlate at or above the threshold count as one bet. 0 = default cap (2),
+  // negative disables; correlation_threshold default 0.8, clamped 0.5-0.99.
+  max_correlated_positions?: number;
+  correlation_threshold?: number;
 }

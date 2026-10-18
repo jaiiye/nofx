@@ -6,12 +6,64 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"nofx/provider/hyperliquid"
 )
 
 const (
 	binanceFuturesKlinesURL = "https://fapi.binance.com/fapi/v1/klines"
 	binanceMaxKlineLimit    = 1500
 )
+
+// GetKlinesRangeAuto fetches closed candles for a symbol, routing HIP-3 (xyz)
+// assets to the venue's own candle snapshot and everything else to Binance.
+// Analyses that compare a trade with a random-entry baseline need the price path
+// of the venue the trade actually happened on — Binance has no stock/commodity
+// history at all.
+func GetKlinesRangeAuto(symbol, timeframe string, start, end time.Time) ([]Kline, error) {
+	if hyperliquid.IsXYZAsset(symbol) {
+		return getKlinesFromHyperliquidRange(symbol, timeframe, start, end)
+	}
+	return GetKlinesRange(symbol, timeframe, start, end)
+}
+
+// hyperliquidSnapshotLimit caps the bar count requested from the venue: its
+// candle snapshot takes a count rather than a range.
+const hyperliquidSnapshotLimit = 1000
+
+// getKlinesFromHyperliquidRange requests enough recent candles to cover the
+// window, then keeps only bars that closed inside it.
+func getKlinesFromHyperliquidRange(symbol, timeframe string, start, end time.Time) ([]Kline, error) {
+	if !end.After(start) {
+		return nil, fmt.Errorf("end time must be after start time")
+	}
+	dur, err := TFDuration(timeframe)
+	if err != nil {
+		return nil, err
+	}
+
+	bars := int(end.Sub(start)/dur) + 10
+	if bars < 10 {
+		bars = 10
+	}
+	if bars > hyperliquidSnapshotLimit {
+		bars = hyperliquidSnapshotLimit
+	}
+
+	klines, err := getKlinesFromHyperliquid(symbol, timeframe, bars)
+	if err != nil {
+		return nil, err
+	}
+
+	startMs, endMs := start.UnixMilli(), end.UnixMilli()
+	out := make([]Kline, 0, len(klines))
+	for _, k := range klines {
+		if k.OpenTime >= startMs && k.CloseTime <= endMs {
+			out = append(out, k)
+		}
+	}
+	return out, nil
+}
 
 // GetKlinesRange fetches K-line series within specified time range (closed interval), returns data sorted by time in ascending order.
 func GetKlinesRange(symbol string, timeframe string, start, end time.Time) ([]Kline, error) {
