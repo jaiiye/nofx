@@ -205,6 +205,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   making a context that is outgrowing the model's window visible before the provider rejects it.
 
 ### Changed
+- The prompt is materially smaller and its numbers are now trustworthy. `prompt_display_bars` defaults to 20
+  instead of 40 (studio default too), so every series prints half as many points while the candidate board
+  stays at 10. Forty points of every series for every candidate is what made a live model misattribute values
+  between coins — it read BTC's 0th-percentile funding as "100th" and quoted an imbalance of -0.69 against the
+  prompt's +0.66. The analysis window itself is unchanged; only what is printed shrinks.
+- Profit protection is now measured on the **price move**, not on leverage-multiplied margin, and its defaults
+  are 2% / 30% (were 5% / 40%). On 5x the old basis fired at a 1% price move and closed winners around 0.5R
+  while the ATR stop let losers run a full R — the structural source of the observed 0.62 payoff ratio.
+  Configs that stored an explicit threshold now mean price %, and the prompt prints the live values instead of
+  hardcoded numbers.
+- Multi-timeframe precedence is explicit: the longer timeframe's EMA structure decides which side is allowed
+  and the primary timeframe only times the entry; when they disagree, no new position may be opened against
+  the longer timeframe. Previously the model resolved that conflict ad hoc every cycle.
 - `AI_MAX_TOKENS` is no longer pinned in the compose files: they set `${AI_MAX_TOKENS:-8192}` instead of a
   literal `8000`. A literal under `environment:` overrides `.env`, so raising the budget there did nothing, and
   a thinking model kept coming back with empty completions at exactly the pinned ceiling — the default now
@@ -293,6 +306,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bot uses the same model selection as the web agent.
 
 ### Fixed
+- Prompt bugs that misled the model. The microstructure line no longer appends "thin books and wide spreads
+  argue against market chasing" to every coin — a 100/100 deep book was being labelled thin, so the warning is
+  now conditional on liquidity < 60 or spread > 5 bps. `current_price` and the indicator series use
+  magnitude-based precision instead of `%.4f`, which had collapsed PUMP to `0.0045` against its true
+  `0.004503` (a 0.07% error the size of its whole 1h ATR). The literal `%%` in the sizing guidance and the
+  orphan "Step 2" are gone. `risk_usd` is now defined (`position_size_usd × |entry − stop_loss| / entry`,
+  at most 1% of equity) and the example no longer shows risk exceeding notional. The hardcoded performance
+  verdict ("NEEDS IMPROVEMENT - improve win/loss ratio, optimize TP/SL") — which pre-diagnosed the problem for
+  the model every cycle — is removed; the statistics speak for themselves.
 - The xyz pre-flight margin check no longer blocks orders on unified accounts. It read the HIP-3 dex's
   own balance and treated `withdrawable == 0` as "no margin", but the venue reports that per-dex state as
   meaningless on unified/portfolio accounts, where the collateral is the single USDC balance — so a fully

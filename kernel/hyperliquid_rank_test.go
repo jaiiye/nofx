@@ -12,8 +12,8 @@ func TestClampHyperRankLimit(t *testing.T) {
 	if got := clampHyperRankLimit(0); got != store.DefaultHyperRankLimit {
 		t.Fatalf("clamp 0 = %d, want %d", got, store.DefaultHyperRankLimit)
 	}
-	if got := clampHyperRankLimit(99); got != 10 {
-		t.Fatalf("clamp 99 = %d, want 10", got)
+	if got := clampHyperRankLimit(99); got != store.MaxCandidateCoins {
+		t.Fatalf("clamp 99 = %d, want %d", got, store.MaxCandidateCoins)
 	}
 	if got := clampHyperRankLimit(3); got != 3 {
 		t.Fatalf("clamp 3 = %d, want 3", got)

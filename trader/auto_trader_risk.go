@@ -67,19 +67,19 @@ func (at *AutoTrader) checkDailyLossHalt(record *store.DecisionRecord) bool {
 type drawdownSettings struct {
 	enabled        bool
 	interval       time.Duration
-	minProfitPct   float64 // start monitoring above this profit (%)
+	minProfitPct   float64 // start monitoring above this profit (price move %)
 	closeThreshold float64 // close when profit drops this far from peak (%)
 }
 
 // drawdownMonitorSettings resolves the monitor settings from the strategy
-// config. Nil enabled flag and zero thresholds keep the historical defaults,
-// so configs stored before these fields existed stay active and unchanged.
+// config. A nil enabled flag and zero thresholds keep the defaults below, so
+// configs stored before these fields existed stay active and unchanged.
 func (at *AutoTrader) drawdownMonitorSettings() drawdownSettings {
 	s := drawdownSettings{
 		enabled:        true,
 		interval:       time.Minute,
-		minProfitPct:   5.0,
-		closeThreshold: 40.0,
+		minProfitPct:   2.0,
+		closeThreshold: 30.0,
 	}
 	sc := at.GetStrategyConfig()
 	if sc == nil {
@@ -178,17 +178,16 @@ func (at *AutoTrader) checkPositionDrawdown(settings drawdownSettings) {
 			continue
 		}
 
-		// Calculate current P&L percentage
-		leverage := 10 // Default value
-		if lev, ok := pos["leverage"].(float64); ok {
-			leverage = int(lev)
-		}
-
+		// Profit in PRICE terms, deliberately not multiplied by leverage. The
+		// thresholds are documented and configured as price percentages; the old
+		// margin basis (price × leverage) made a 5% threshold fire at a 1% move on
+		// 5x, so winners were closed around 0.5R while the ATR stop let losers run a
+		// full R — the structural source of a 0.62 payoff ratio.
 		var currentPnLPct float64
 		if side == "long" {
-			currentPnLPct = ((markPrice - entryPrice) / entryPrice) * float64(leverage) * 100
+			currentPnLPct = (markPrice - entryPrice) / entryPrice * 100
 		} else {
-			currentPnLPct = ((entryPrice - markPrice) / entryPrice) * float64(leverage) * 100
+			currentPnLPct = (entryPrice - markPrice) / entryPrice * 100
 		}
 
 		// Construct unique position identifier (distinguish long/short)

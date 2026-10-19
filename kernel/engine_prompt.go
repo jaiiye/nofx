@@ -124,7 +124,7 @@ func (e *StrategyEngine) BuildSystemPrompt(accountEquity float64, variant string
 
 	// 6b. Exit discipline: the entry playbook above says how to get in; this
 	//     says when getting out is allowed at all.
-	writeExitDiscipline(&sb, zh, riskControl.MinHoldMinutes)
+	writeExitDiscipline(&sb, zh, riskControl.MinHoldMinutes, riskControl.MinProfitThresholdPct, riskControl.DrawdownCloseThresholdPct)
 
 	// 7. Output format — schema spec stays in English (this is a parser
 	//    contract; reasoning copy is localized below).
@@ -385,17 +385,17 @@ func writeHardConstraints(sb *strings.Builder, accountEquity float64, riskContro
 	if zh {
 		sb.WriteString("## 仓位大小指引\n")
 		sb.WriteString("根据置信度和上面的单仓最大价值算出 `position_size_usd`:\n")
-		sb.WriteString("- 高置信 (≥85): 用最大价值的 80-100%%\n")
-		sb.WriteString("- 中置信 (70-84): 用最大价值的 50-80%%\n")
-		sb.WriteString("- 低置信 (60-69): 用最大价值的 30-50%%\n")
+		sb.WriteString("- 高置信 (≥85): 用最大价值的 80-100%\n")
+		sb.WriteString("- 中置信 (70-84): 用最大价值的 50-80%\n")
+		sb.WriteString("- 低置信 (60-69): 用最大价值的 30-50%\n")
 		sb.WriteString(fmt.Sprintf("- 示例: 权益 %.0f × %.1fx = 最大 %.0f USDT\n", accountEquity, exampleRatio, accountEquity*exampleRatio))
 		sb.WriteString("- **不要**直接拿 available_balance 当 position_size_usd, 用上面的单仓最大价值!\n\n")
 	} else {
 		sb.WriteString("## Position Sizing Guidance\n")
 		sb.WriteString("Calculate `position_size_usd` from your confidence and the Position Value Limits above:\n")
-		sb.WriteString("- High confidence (≥85): use 80-100%% of the position value limit\n")
-		sb.WriteString("- Medium confidence (70-84): use 50-80%% of the position value limit\n")
-		sb.WriteString("- Low confidence (60-69): use 30-50%% of the position value limit\n")
+		sb.WriteString("- High confidence (≥85): use 80-100% of the position value limit\n")
+		sb.WriteString("- Medium confidence (70-84): use 50-80% of the position value limit\n")
+		sb.WriteString("- Low confidence (60-69): use 30-50% of the position value limit\n")
 		sb.WriteString(fmt.Sprintf("- Example: equity %.0f × %.1fx = max %.0f USDT\n", accountEquity, exampleRatio, accountEquity*exampleRatio))
 		sb.WriteString("- **DO NOT** just use available_balance as position_size_usd. Use the Position Value Limit!\n\n")
 	}
@@ -419,9 +419,9 @@ func writeOutputFormat(sb *strings.Builder, accountEquity float64, riskControl s
 	sb.WriteString("</reasoning>\n\n")
 	sb.WriteString("<decision>\n")
 	if zh {
-		sb.WriteString("步骤 2: JSON 决策数组\n\n")
+		sb.WriteString("JSON 决策数组\n\n")
 	} else {
-		sb.WriteString("Step 2: JSON decision array\n\n")
+		sb.WriteString("JSON decision array\n\n")
 	}
 	sb.WriteString("```json\n[\n")
 
@@ -435,12 +435,12 @@ func writeOutputFormat(sb *strings.Builder, accountEquity float64, riskControl s
 		}
 		ratio := singleSymbolPositionRatio(btcEthPosValueRatio, altcoinPosValueRatio) // same combined cap as the hard constraints
 		size := accountEquity * ratio
-		sb.WriteString(fmt.Sprintf("  {\"symbol\": \"%s\", \"action\": \"open_long\", \"leverage\": %d, \"position_size_usd\": %.0f, \"stop_loss\": 0, \"take_profit\": 0, \"confidence\": 85, \"risk_usd\": 0},\n", primarySymbol, lev, size))
+		sb.WriteString(fmt.Sprintf("  {\"symbol\": \"%s\", \"action\": \"open_long\", \"leverage\": %d, \"position_size_usd\": %.0f, \"stop_loss\": 0, \"take_profit\": 0, \"confidence\": 85, \"risk_usd\": %.0f},\n", primarySymbol, lev, size, size*0.02))
 		sb.WriteString(fmt.Sprintf("  {\"symbol\": \"%s\", \"action\": \"wait\"}\n", primarySymbol))
 	} else {
 		examplePositionSize := accountEquity * btcEthPosValueRatio
-		sb.WriteString(fmt.Sprintf("  {\"symbol\": \"BTCUSDT\", \"action\": \"open_short\", \"leverage\": %d, \"position_size_usd\": %.0f, \"stop_loss\": 97000, \"take_profit\": 91000, \"confidence\": 85, \"risk_usd\": 300},\n",
-			riskControl.BTCETHMaxLeverage, examplePositionSize))
+		sb.WriteString(fmt.Sprintf("  {\"symbol\": \"BTCUSDT\", \"action\": \"open_short\", \"leverage\": %d, \"position_size_usd\": %.0f, \"stop_loss\": 97000, \"take_profit\": 91000, \"confidence\": 85, \"risk_usd\": %.0f},\n",
+			riskControl.BTCETHMaxLeverage, examplePositionSize, examplePositionSize*0.02))
 		sb.WriteString("  {\"symbol\": \"ETHUSDT\", \"action\": \"close_long\"}\n")
 	}
 	sb.WriteString("]\n```\n")
@@ -451,6 +451,7 @@ func writeOutputFormat(sb *strings.Builder, accountEquity float64, riskControl s
 		sb.WriteString("- `action`: open_long | open_short | close_long | close_short | hold | wait\n")
 		sb.WriteString(fmt.Sprintf("- `confidence`: 0-100 (开仓建议 ≥ %d)\n", riskControl.MinConfidence))
 		sb.WriteString("- 开仓时必填: leverage, position_size_usd, stop_loss, take_profit, confidence, risk_usd\n")
+		sb.WriteString("- `risk_usd`: 止损触发时的最大亏损 = position_size_usd × |entry − stop_loss| / entry, 必须由你给出的 stop_loss 算出, 不要凭空填; 单笔不应超过权益的 1%\n")
 		sb.WriteString("- **重要**: 所有数值必须是算好的数字, 不能是公式/表达式 (例如写 `27.76`, 不要写 `3000 * 0.01`)\n")
 		if singleSymbol {
 			sb.WriteString(fmt.Sprintf("- **本策略只交易 %s**, JSON 中的 `symbol` 必须**完全等于** `%s`, 不要写成 `%s` 去掉后缀或加 USDT 的变体。\n", primarySymbol, primarySymbol, primarySymbol))
@@ -461,6 +462,7 @@ func writeOutputFormat(sb *strings.Builder, accountEquity float64, riskControl s
 		sb.WriteString("- `action`: open_long | open_short | close_long | close_short | hold | wait\n")
 		sb.WriteString(fmt.Sprintf("- `confidence`: 0-100 (opening recommended ≥ %d)\n", riskControl.MinConfidence))
 		sb.WriteString("- Required when opening: leverage, position_size_usd, stop_loss, take_profit, confidence, risk_usd\n")
+		sb.WriteString("- `risk_usd`: the loss if the stop is hit = position_size_usd × |entry − stop_loss| / entry. Derive it from the stop you actually give, never guess it; one trade should risk at most 1% of equity.\n")
 		sb.WriteString("- **IMPORTANT**: all numeric values must be calculated numbers, NOT formulas/expressions (e.g. use `27.76`, not `3000 * 0.01`)\n")
 		if singleSymbol {
 			sb.WriteString(fmt.Sprintf("- **This strategy trades only %s.** The JSON `symbol` MUST match `%s` exactly — do not add USDT/USDC suffix variants.\n", primarySymbol, primarySymbol))
@@ -611,6 +613,16 @@ func (e *StrategyEngine) writeIndicatorPlaybook(sb *strings.Builder, zh bool) {
 			"Price above the EMA set = bullish structure, below = bearish; a cross against your position argues for reducing.",
 			"价格位于 EMA 组之上为多头结构，之下为空头结构；EMA 反向交叉应减仓。"))
 	}
+	// Multi-timeframe precedence: without an explicit rule the model resolves a
+	// 1h/4h conflict ad hoc every cycle (a live run did exactly that — entered a
+	// long with the higher timeframe against it and "sized modestly").
+	if ind.EnableEMA && ind.Klines.EnableMultiTimeframe &&
+		ind.Klines.PrimaryTimeframe != "" && ind.Klines.LongerTimeframe != "" {
+		primary, longer := ind.Klines.PrimaryTimeframe, ind.Klines.LongerTimeframe
+		gate = append(gate, l(
+			fmt.Sprintf("Timeframe precedence: the %s EMA structure decides which side is allowed; %s only times the entry. When they disagree (price on the other side of the %s EMA), do NOT open against %s — manage existing positions instead.", longer, primary, longer, longer),
+			fmt.Sprintf("时间框架优先级：%s 的 EMA 结构决定允许的方向，%s 只负责入场时机。两者冲突时（价格位于 %s EMA 的另一侧），禁止开与 %s 反向的新仓——只管理已有仓位。", longer, primary, longer, longer)))
+	}
 	addGroup(l("Trend gate — decides side / stand-aside", "趋势判断 — 决定方向 / 观望"), gate)
 
 	var momentum []string
@@ -715,12 +727,24 @@ func (e *StrategyEngine) writeIndicatorPlaybook(sb *strings.Builder, zh bool) {
 // model improvises exits: a live run showed 81% of exits were discretionary and
 // taken before either level was touched, on moves far smaller than the planned
 // risk — churn that paid round-trip fees for noise.
-func writeExitDiscipline(sb *strings.Builder, zh bool, minHoldMinutes int) {
+//
+// The profit-protection numbers are printed from the live config: the section
+// used to hardcode 2%/30% while the monitor's own defaults were 5%/40% and its
+// PnL was leverage-multiplied, so the prompt described a mechanism that did not
+// exist.
+func writeExitDiscipline(sb *strings.Builder, zh bool, minHoldMinutes int, minProfitPct, givebackPct float64) {
+	if minProfitPct <= 0 {
+		minProfitPct = 2.0
+	}
+	if givebackPct <= 0 {
+		givebackPct = 30.0
+	}
+
 	if zh {
 		sb.WriteString("# 🚪 出场纪律（仅在下列条件之一成立时平仓）\n\n")
 		sb.WriteString("1. 触发止损或止盈（交易所端自动执行）\n")
 		sb.WriteString("2. 趋势结构反转: Supertrend 翻转, 或主时间帧收盘跌破/站上 EMA50, 或 ADX 跌破 20（趋势消失）\n")
-		sb.WriteString("3. 利润保护: 浮盈 ≥2% 后从峰值回吐 30%（由代码监控执行）\n\n")
+		sb.WriteString(fmt.Sprintf("3. 利润保护: 价格浮盈 ≥%.1f%% 后，从峰值回吐 %.1f%%（按价格变动计算，由代码监控执行）\n\n", minProfitPct, givebackPct))
 		sb.WriteString("其余情况保持持仓：浮亏但未触及止损、指标间分歧、行情震荡都不构成平仓理由。\n")
 		sb.WriteString("不要在多个决策周期内反复开平同一标的——每次往返都支付双边手续费。\n")
 		if minHoldMinutes > 0 {
@@ -733,7 +757,7 @@ func writeExitDiscipline(sb *strings.Builder, zh bool, minHoldMinutes int) {
 	sb.WriteString("# 🚪 Exit Discipline (close only when one of these holds)\n\n")
 	sb.WriteString("1. Stop-loss or take-profit is hit (executed exchange-side)\n")
 	sb.WriteString("2. The trend structure reverses: Supertrend flips, or the primary timeframe closes back through EMA50, or ADX drops below 20 (trend gone)\n")
-	sb.WriteString("3. Profit protection: after a peak of ≥2%, giving back 30% of it (enforced by the monitor)\n\n")
+	sb.WriteString(fmt.Sprintf("3. Profit protection: after a peak price gain of ≥%.1f%%, giving back %.1f%% of it (measured on the price move, enforced by the monitor)\n\n", minProfitPct, givebackPct))
 	sb.WriteString("Otherwise hold: an unrealized loss that has not reached the stop, disagreement between indicators, or choppy price action are not reasons to close.\n")
 	sb.WriteString("Do not open and close the same symbol across consecutive cycles — every round trip pays fees on both sides.\n")
 	if minHoldMinutes > 0 {
@@ -812,17 +836,6 @@ func (e *StrategyEngine) BuildUserPrompt(ctx *Context) string {
 				ctx.TradingStats.AvgWin,
 				ctx.TradingStats.AvgLoss,
 				ctx.TradingStats.MaxDrawdownPct))
-
-			// Performance hints based on profit factor, sharpe, and drawdown
-			if ctx.TradingStats.ProfitFactor >= 1.5 && ctx.TradingStats.SharpeRatio >= 1 {
-				sb.WriteString("表现: 良好 - 保持当前策略\n")
-			} else if ctx.TradingStats.ProfitFactor < 1 {
-				sb.WriteString("表现: 需改进 - 提高盈亏比，优化止盈止损\n")
-			} else if ctx.TradingStats.MaxDrawdownPct > 30 {
-				sb.WriteString("表现: 风险偏高 - 减少仓位，控制回撤\n")
-			} else {
-				sb.WriteString("表现: 正常 - 有优化空间\n")
-			}
 		} else {
 			sb.WriteString("## Historical Trading Statistics\n")
 			sb.WriteString(fmt.Sprintf("Total Trades: %d | Profit Factor: %.2f | Sharpe: %.2f | Win/Loss Ratio: %.2f\n",
@@ -835,17 +848,6 @@ func (e *StrategyEngine) BuildUserPrompt(ctx *Context) string {
 				ctx.TradingStats.AvgWin,
 				ctx.TradingStats.AvgLoss,
 				ctx.TradingStats.MaxDrawdownPct))
-
-			// Performance hints based on profit factor, sharpe, and drawdown
-			if ctx.TradingStats.ProfitFactor >= 1.5 && ctx.TradingStats.SharpeRatio >= 1 {
-				sb.WriteString("Performance: GOOD - maintain current strategy\n")
-			} else if ctx.TradingStats.ProfitFactor < 1 {
-				sb.WriteString("Performance: NEEDS IMPROVEMENT - improve win/loss ratio, optimize TP/SL\n")
-			} else if ctx.TradingStats.MaxDrawdownPct > 30 {
-				sb.WriteString("Performance: HIGH RISK - reduce position size, control drawdown\n")
-			} else {
-				sb.WriteString("Performance: NORMAL - room for optimization\n")
-			}
 		}
 		sb.WriteString("\n")
 	}
@@ -945,8 +947,15 @@ func (e *StrategyEngine) formatMicrostructure(ctx *Context, symbol string) strin
 
 	var sb strings.Builder
 	sb.WriteString("**MICROSTRUCTURE (decision-time order book)**\n")
-	sb.WriteString(fmt.Sprintf("- Spread %.1f bps | Imbalance %+.2f (%s) | Top-10 depth: bid %.0f / ask %.0f USDT | Liquidity %d/100 (thin books and wide spreads argue against market chasing)\n",
-		m.SpreadBps, m.Imbalance, m.ImbalanceSide, m.BidDepthUSD, m.AskDepthUSD, m.LiquidityScore))
+	// The warning used to be appended unconditionally, so a 100/100 deep book was
+	// labelled thin and the model learned to ignore the line. Only say it when the
+	// book actually argues against a market order.
+	quality := ""
+	if m.LiquidityScore < 60 || m.SpreadBps > 5 {
+		quality = " (thin book / wide spread — do not chase with market orders)"
+	}
+	sb.WriteString(fmt.Sprintf("- Spread %.1f bps | Imbalance %+.2f (%s) | Top-10 depth: bid %.0f / ask %.0f USDT | Liquidity %d/100%s\n",
+		m.SpreadBps, m.Imbalance, m.ImbalanceSide, m.BidDepthUSD, m.AskDepthUSD, m.LiquidityScore, quality))
 	if len(m.SupportLevels) > 0 || len(m.ResistanceLevels) > 0 {
 		sb.WriteString("- Largest resting bids (support): " + formatFloatSlice(m.SupportLevels) +
 			" | largest resting asks (resistance): " + formatFloatSlice(m.ResistanceLevels) + "\n")
@@ -1398,7 +1407,7 @@ func (e *StrategyEngine) formatMarketData(data *market.Data, fullKlines bool) st
 	// configured-period series printed below (e.g. EMA(30) when the strategy
 	// set ema_periods=[30, 100]), so the model saw two different values for
 	// the "same" indicator.
-	sb.WriteString(fmt.Sprintf("current_price = %.4f\n\n", data.CurrentPrice))
+	sb.WriteString(fmt.Sprintf("current_price = %s\n\n", formatPriceDynamic(data.CurrentPrice)))
 
 	if indicators.EnableOI || indicators.EnableFundingRate {
 		sb.WriteString(fmt.Sprintf("Additional data for %s:\n\n", data.Symbol))
@@ -1664,19 +1673,33 @@ func (e *StrategyEngine) formatTimeframeSeriesData(sb *strings.Builder, data *ma
 	sb.WriteString("\n")
 }
 
+// formatPriceDynamic renders a price or price-dimension indicator with enough
+// significant digits for its magnitude. A fixed %.4f collapsed sub-cent assets
+// onto the same four digits (PUMP 0.004503 printed as 0.0045 — a 0.07% error,
+// the size of its whole 1h ATR), leaving that coin's indicator block unusable.
+func formatPriceDynamic(v float64) string {
+	abs := v
+	if abs < 0 {
+		abs = -abs
+	}
+	switch {
+	case abs == 0:
+		return "0"
+	case abs < 0.0001:
+		return strconv.FormatFloat(v, 'f', 8, 64)
+	case abs < 0.01:
+		return strconv.FormatFloat(v, 'f', 6, 64)
+	case abs < 100:
+		return strconv.FormatFloat(v, 'f', 4, 64)
+	default:
+		return strconv.FormatFloat(v, 'f', 2, 64)
+	}
+}
+
 // formatCompactPrice renders a price without padding, with enough
 // significant digits for low-priced coins.
 func formatCompactPrice(v float64) string {
-	switch {
-	case v == 0:
-		return "0"
-	case math.Abs(v) >= 1:
-		return strconv.FormatFloat(v, 'f', 4, 64)
-	case math.Abs(v) >= 0.01:
-		return strconv.FormatFloat(v, 'f', 5, 64)
-	default:
-		return strconv.FormatFloat(v, 'f', 8, 64)
-	}
+	return formatPriceDynamic(v)
 }
 
 // formatSeriesTail prints only the most recent values of a series (see
@@ -1799,7 +1822,7 @@ func formatFlowValue(v float64) string {
 func formatFloatSlice(values []float64) string {
 	strValues := make([]string, len(values))
 	for i, v := range values {
-		strValues[i] = fmt.Sprintf("%.4f", v)
+		strValues[i] = formatPriceDynamic(v)
 	}
 	return "[" + strings.Join(strValues, ", ") + "]"
 }

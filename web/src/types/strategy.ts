@@ -218,7 +218,7 @@ export interface KlineConfig {
   // 新增：支持选择多个时间周期
   selected_timeframes?: string[];
   // 展示上限：prompt 中每个时间周期最多打印多少根 K 线/多少个指标值
-  // （分析窗口仍是 primary_count，仅影响 prompt 体积）。0/未填 = 默认 40。
+  // （分析窗口仍是 primary_count，仅影响 prompt 体积）。0/未填 = 默认 20。
   prompt_display_bars?: number;
 }
 

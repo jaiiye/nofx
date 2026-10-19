@@ -12,6 +12,9 @@ import (
 
 // Hard limits to prevent token explosion in AI requests
 const (
+	// MaxCandidateCoins bounds the candidate board. Ten coins x two timeframes
+	// of full series is the single largest prompt block, so the per-series
+	// display cap (DefaultPromptDisplayBars) is what keeps that block in check.
 	MaxCandidateCoins = 10
 	MaxPositions      = 3
 	MaxTimeframes     = 4
@@ -40,8 +43,10 @@ const (
 	MaxConfidence      = 100
 	// DefaultPromptDisplayBars is how many bars / indicator values the prompt
 	// prints per timeframe when the config does not say. The analysis window can
-	// be far longer; only this much of it reaches the model.
-	DefaultPromptDisplayBars = 40
+	// be far longer; only this much of it reaches the model. Twenty is enough to
+	// read slope and a fresh cross without printing forty points of every series
+	// for every candidate.
+	DefaultPromptDisplayBars = 20
 	// Token-estimate costs, calibrated against the prompt the engine actually
 	// builds (kernel/estimate_drift_test.go measures the two against each other).
 	// The estimate is a pre-flight guard, so it is allowed to overshoot slightly —
@@ -166,6 +171,9 @@ func (c *StrategyConfig) ClampLimits() {
 	}
 	if c.CoinSource.OILowLimit > MaxCandidateCoins {
 		c.CoinSource.OILowLimit = MaxCandidateCoins
+	}
+	if c.CoinSource.HyperRankLimit > MaxCandidateCoins {
+		c.CoinSource.HyperRankLimit = MaxCandidateCoins
 	}
 
 	// Fill protection defaults (zero fields -> DefaultProtectionConfig)
@@ -1172,8 +1180,8 @@ type RiskControlConfig struct {
 	// stored before these fields existed keep monitoring active.
 	DrawdownMonitoringEnabled *bool   `json:"drawdown_monitoring_enabled,omitempty"`  // nil = enabled
 	DrawdownCheckIntervalSec  int     `json:"drawdown_check_interval_sec,omitempty"`  // 0 = default 60, clamped to [15, 300]
-	MinProfitThresholdPct     float64 `json:"min_profit_threshold_pct,omitempty"`     // 0 = default 5.0 (%)
-	DrawdownCloseThresholdPct float64 `json:"drawdown_close_threshold_pct,omitempty"` // 0 = default 40.0 (% of peak profit)
+	MinProfitThresholdPct     float64 `json:"min_profit_threshold_pct,omitempty"`     // 0 = default 2.0 (price move %)
+	DrawdownCloseThresholdPct float64 `json:"drawdown_close_threshold_pct,omitempty"` // 0 = default 30.0 (% of peak profit)
 }
 
 // MakerEntry reports whether opening orders should be attempted as passive
@@ -1323,8 +1331,8 @@ func GetDefaultStrategyConfig(lang string) StrategyConfig {
 			MinConfidence:                75,  // Min 75% confidence (AI guided)
 
 			DrawdownCheckIntervalSec:  60,
-			MinProfitThresholdPct:     5.0,
-			DrawdownCloseThresholdPct: 40.0,
+			MinProfitThresholdPct:     2.0,  // price %, not margin (CODE ENFORCED)
+			DrawdownCloseThresholdPct: 30.0, // % of peak profit given back
 			// DrawdownMonitoringEnabled stays nil (= enabled) in defaults.
 		},
 	}

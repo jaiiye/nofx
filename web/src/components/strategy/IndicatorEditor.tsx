@@ -293,8 +293,8 @@ export function IndicatorEditor({ config, onChange, disabled, language }: Indica
               {t(language, '展示上限', 'Display cap')}
               <input
                 type="number"
-                key={`display-${config.klines.prompt_display_bars ?? 40}`}
-                defaultValue={config.klines.prompt_display_bars ?? 40}
+                key={`display-${config.klines.prompt_display_bars ?? 20}`}
+                defaultValue={config.klines.prompt_display_bars ?? 20}
                 disabled={disabled}
                 min={5}
                 max={200}
@@ -304,7 +304,7 @@ export function IndicatorEditor({ config, onChange, disabled, language }: Indica
                   update({
                     klines: {
                       ...config.klines,
-                      prompt_display_bars: Number.isFinite(parsed) && parsed >= 5 ? parsed : 40,
+                      prompt_display_bars: Number.isFinite(parsed) && parsed >= 5 ? parsed : 20,
                     },
                   })
                 }}

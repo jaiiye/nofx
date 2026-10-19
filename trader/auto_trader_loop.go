@@ -549,10 +549,14 @@ func (at *AutoTrader) buildTradingContext() (*kernel.Context, error) {
 			updateTime = at.positionFirstSeenTime[posKey]
 		}
 
-		// Get peak profit rate for this position
+		// Get peak profit rate for this position. The cache stores the PRICE move
+		// (the drawdown monitor's thresholds are price percentages); PnL% in the
+		// prompt and the UI is measured against margin, so scale it to the same
+		// unit here — otherwise the model sees a peak below the current PnL.
 		at.peakPnLCacheMutex.RLock()
 		peakPnlPct := at.peakPnLCache[posKey]
 		at.peakPnLCacheMutex.RUnlock()
+		peakPnlPct *= float64(leverage)
 
 		positionInfos = append(positionInfos, kernel.PositionInfo{
 			Symbol:           symbol,

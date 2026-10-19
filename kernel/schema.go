@@ -304,10 +304,10 @@ var TradingRules = struct {
 	ExitSignals: map[string]BilingualRuleDef{
 		"TrailingStop": {
 			Value:    0.30,
-			DescZH:   "当盈亏从峰值回撤30%时平仓止盈",
-			DescEN:   "Close position when PnL pulls back 30% from peak",
-			ReasonZH: "锁定大部分利润，避免盈利回吐。例如：峰值+5%，回撤到+3.5%时平仓",
-			ReasonEN: "Lock in most profits, avoid profit giveback. E.g., Peak +5%, close at +3.5%",
+			DescZH:   "当浮盈（价格口径）从峰值回撤30%时平仓止盈",
+			DescEN:   "Close when the price-based profit pulls back 30% from its peak",
+			ReasonZH: "锁定大部分利润，避免盈利回吐。例如：价格峰值 +3%，回撤到 +2.1% 时平仓",
+			ReasonEN: "Lock in most of the profit and avoid giving it back. E.g. peak +3% price move, close at +2.1%",
 		},
 		"StopLoss": {
 			Value:    -0.05,

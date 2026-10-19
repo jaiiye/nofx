@@ -622,8 +622,8 @@ func clampHyperRankLimit(limit int) int {
 	if limit <= 0 {
 		return store.DefaultHyperRankLimit
 	}
-	if limit > 10 {
-		return 10
+	if limit > store.MaxCandidateCoins {
+		return store.MaxCandidateCoins
 	}
 	return limit
 }
