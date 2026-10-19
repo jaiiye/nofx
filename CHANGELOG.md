@@ -12,6 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- The playbook now carries a closed list of **entry archetypes** — pullback continuation and high-base
+  continuation for longs, failed-bounce and breakdown-retest for shorts, each with its explicit invalidation
+  condition — plus an **extension guard**: no first touch of a move already more than 1.5x ATR away from EMA50,
+  with vertical repricing (an extreme 4h RSI or price outside the 4h band) treated the same way. Both are
+  phrased with the configured timeframe names and emitted only when the indicators they reference are enabled.
+  A live run had no such list, so the model invented a thesis every cycle — it opened a long with the higher
+  timeframe against it and justified it as "a 1h vs 4h tension, so I size modestly".
+- Decisions gain `trigger_level`: a `wait`/`hold` must now name the price that has to break or hold, so a
+  no-trade cycle stays actionable and reviewable instead of being an empty record.
 - `AI_EXTRA_BODY_JSON`: raw JSON merged verbatim into every chat-completions body, for the provider knobs
   nofx has no field for — a thinking model's reasoning switch above all (`{"thinking": false}`, or the
   Anthropic-shaped `{"thinking": {"type": "disabled"}}`, or `{"reasoning_effort": "none"}`). A reasoning model

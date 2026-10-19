@@ -442,6 +442,7 @@ func writeOutputFormat(sb *strings.Builder, accountEquity float64, riskControl s
 		sb.WriteString(fmt.Sprintf("  {\"symbol\": \"BTCUSDT\", \"action\": \"open_short\", \"leverage\": %d, \"position_size_usd\": %.0f, \"stop_loss\": 97000, \"take_profit\": 91000, \"confidence\": 85, \"risk_usd\": %.0f},\n",
 			riskControl.BTCETHMaxLeverage, examplePositionSize, examplePositionSize*0.02))
 		sb.WriteString("  {\"symbol\": \"ETHUSDT\", \"action\": \"close_long\"}\n")
+		sb.WriteString("  {\"symbol\": \"SOLUSDT\", \"action\": \"wait\", \"trigger_level\": 105.5, \"reasoning\": \"waiting for a reclaim of 105.5 before considering the long\"}\n")
 	}
 	sb.WriteString("]\n```\n")
 	sb.WriteString("</decision>\n\n")
@@ -452,6 +453,7 @@ func writeOutputFormat(sb *strings.Builder, accountEquity float64, riskControl s
 		sb.WriteString(fmt.Sprintf("- `confidence`: 0-100 (开仓建议 ≥ %d)\n", riskControl.MinConfidence))
 		sb.WriteString("- 开仓时必填: leverage, position_size_usd, stop_loss, take_profit, confidence, risk_usd\n")
 		sb.WriteString("- `risk_usd`: 止损触发时的最大亏损 = position_size_usd × |entry − stop_loss| / entry, 必须由你给出的 stop_loss 算出, 不要凭空填; 单笔不应超过权益的 1%\n")
+		sb.WriteString("- `wait` / `hold`: 必须给出 `trigger_level`（需要突破或失守的价位），并在 `reasoning` 中写明是向上突破还是向下失守；说不出具体触发位就不要输出 wait\n")
 		sb.WriteString("- **重要**: 所有数值必须是算好的数字, 不能是公式/表达式 (例如写 `27.76`, 不要写 `3000 * 0.01`)\n")
 		if singleSymbol {
 			sb.WriteString(fmt.Sprintf("- **本策略只交易 %s**, JSON 中的 `symbol` 必须**完全等于** `%s`, 不要写成 `%s` 去掉后缀或加 USDT 的变体。\n", primarySymbol, primarySymbol, primarySymbol))
@@ -463,6 +465,7 @@ func writeOutputFormat(sb *strings.Builder, accountEquity float64, riskControl s
 		sb.WriteString(fmt.Sprintf("- `confidence`: 0-100 (opening recommended ≥ %d)\n", riskControl.MinConfidence))
 		sb.WriteString("- Required when opening: leverage, position_size_usd, stop_loss, take_profit, confidence, risk_usd\n")
 		sb.WriteString("- `risk_usd`: the loss if the stop is hit = position_size_usd × |entry − stop_loss| / entry. Derive it from the stop you actually give, never guess it; one trade should risk at most 1% of equity.\n")
+		sb.WriteString("- `wait` / `hold`: must carry `trigger_level`, the price that has to break or hold, and `reasoning` must say which direction. If you cannot name a concrete level, do not output wait.\n")
 		sb.WriteString("- **IMPORTANT**: all numeric values must be calculated numbers, NOT formulas/expressions (e.g. use `27.76`, not `3000 * 0.01`)\n")
 		if singleSymbol {
 			sb.WriteString(fmt.Sprintf("- **This strategy trades only %s.** The JSON `symbol` MUST match `%s` exactly — do not add USDT/USDC suffix variants.\n", primarySymbol, primarySymbol))
@@ -644,7 +647,46 @@ func (e *StrategyEngine) writeIndicatorPlaybook(sb *strings.Builder, zh bool) {
 			"Bollinger Bands time entries: in an uptrend a pullback toward the middle/lower band is an entry zone (mirror for shorts); a squeeze (narrowing bands) precedes expansion — only trade the breakout in the trend gate's direction.",
 			"布林带用于择时：上升趋势中回调至中轨/下轨是入场区（做空镜像）；带宽收窄（挤压）预示变盘——只顺势交易突破方向。"))
 	}
+	// Extension guard: ATR and EMA together are what make "too far from the
+	// mean" measurable, so it only appears when both are enabled.
+	if ind.EnableATR && ind.EnableEMA {
+		vertical := ""
+		if ind.EnableRSI || ind.EnableBOLL {
+			vertical = l(
+				" A vertical repricing — an extreme 4h RSI or price outside the 4h band — is the same case.",
+				" 垂直拉升（4h RSI 极值或价格跑到 4h 布林带外）按同一种情况处理。")
+		}
+		timing = append(timing, l(
+			"Do not take the first touch of a move already more than 1.5x ATR away from EMA50: wait for a pullback into the band or a tight base followed by a reclaim."+vertical,
+			"已经离 EMA50 超过 1.5 倍 ATR 的行情，不要做第一次触碰：等回踩进入带内，或等窄幅整理后重新站稳。"+vertical))
+	}
 	addGroup(l("Entry timing", "入场时机"), timing)
+
+	// Entry archetypes: a closed list of named setups, each with its own
+	// invalidation. Without one the model invents a new thesis every cycle — a
+	// live run opened a long with the higher timeframe against it and justified
+	// it as "a 1h vs 4h tension, so I size modestly".
+	var archetypes []string
+	if ind.EnableEMA {
+		primary, longer := ind.Klines.PrimaryTimeframe, ind.Klines.LongerTimeframe
+		if primary == "" {
+			primary = "primary"
+		}
+		if !ind.Klines.EnableMultiTimeframe || longer == "" {
+			longer = primary
+		}
+		archetypes = append(archetypes,
+			l(fmt.Sprintf("Pullback continuation (long): %s trend up, %s structure intact, and a pullback into EMA20/EMA50 or the prior breakout zone holds and turns up. Invalidated by a %s close back through that zone.", longer, primary, primary),
+				fmt.Sprintf("回踩延续（多）：%s 趋势向上、%s 结构完好，回踩 EMA20/EMA50 或前突破区后企稳转强。失效条件：%s 收盘重新跌穿该区域。", longer, primary, primary)),
+			l(fmt.Sprintf("High-base continuation (long): a strong move, then at least three tight %s candles holding above the breakout level, then a reclaim of local resistance. Invalidated by a close back inside the base.", primary),
+				fmt.Sprintf("高位整理延续（多）：一段强势拉升后，在突破位上方出现至少三根 %s 窄幅整理，随后收复局部阻力。失效条件：收盘跌回整理区内部。", primary)),
+			l(fmt.Sprintf("Failed-bounce short: %s trend down, %s structure weak, and a bounce into EMA20/EMA50 or the prior breakdown zone fails. Invalidated by a %s close back above that zone.", longer, primary, primary),
+				fmt.Sprintf("反弹失败（空）：%s 趋势向下、%s 结构偏弱，反弹到 EMA20/EMA50 或前破位区后失败。失效条件：%s 收盘重新站上该区域。", longer, primary, primary)),
+			l(fmt.Sprintf("Breakdown-retest short: %s or %s breaks support, retests it weakly, and follows through. Invalidated by a reclaim of the broken level.", primary, longer),
+				fmt.Sprintf("破位回测（空）：%s 或 %s 跌破支撑、弱势回测后继续走低。失效条件：重新收回被跌破的价位。", primary, longer)),
+		)
+	}
+	addGroup(l("Entry archetypes — every new position must be one of these", "入场范式 — 新开仓必须属于以下之一"), archetypes)
 
 	var risk []string
 	if ind.EnableATR {

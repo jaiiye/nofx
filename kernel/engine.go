@@ -142,6 +142,11 @@ type Decision struct {
 	Confidence int     `json:"confidence,omitempty"` // Confidence level (0-100)
 	RiskUSD    float64 `json:"risk_usd,omitempty"`   // Maximum USD risk
 	Reasoning  string  `json:"reasoning"`
+
+	// TriggerLevel is the price a wait/hold is waiting on: the level that must
+	// break or hold before the next entry is valid. Recorded so a no-trade cycle
+	// stays actionable (and reviewable) instead of just "nothing happened".
+	TriggerLevel float64 `json:"trigger_level,omitempty"`
 }
 
 // FullDecision AI's complete decision (including chain of thought)

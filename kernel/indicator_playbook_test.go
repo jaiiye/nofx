@@ -177,3 +177,69 @@ func TestExitDisciplineSection(t *testing.T) {
 		t.Error("zh exit discipline missing")
 	}
 }
+
+// Named entry archetypes and the extension guard close the space the model used
+// to improvise in: a live run opened a long with the higher timeframe against it
+// and justified it as "a 1h vs 4h tension, so I size modestly".
+func TestIndicatorPlaybookEntryArchetypesAndExtension(t *testing.T) {
+	cfg := store.GetDefaultStrategyConfig("en")
+	cfg.Indicators.EnableEMA = true
+	cfg.Indicators.EnableATR = true
+	cfg.Indicators.EnableBOLL = true
+	cfg.Indicators.Klines.EnableMultiTimeframe = true
+	cfg.Indicators.Klines.PrimaryTimeframe = "1h"
+	cfg.Indicators.Klines.LongerTimeframe = "4h"
+	prompt := NewStrategyEngine(&cfg).BuildSystemPrompt(1000, "balanced")
+
+	for _, want := range []string{
+		"Entry archetypes",
+		"Pullback continuation (long)",
+		"High-base continuation (long)",
+		"Failed-bounce short",
+		"Breakdown-retest short",
+		"1.5x ATR away from EMA50",
+		"4h trend up, 1h structure intact",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+
+	// Both blocks are phrased in terms of EMA, so EMA off must silence them —
+	// the playbook may never reference data the model does not receive.
+	off := store.GetDefaultStrategyConfig("en")
+	off.Indicators.EnableEMA = false
+	off.Indicators.EnableATR = true
+	offPrompt := NewStrategyEngine(&off).BuildSystemPrompt(1000, "balanced")
+	for _, bad := range []string{"Entry archetypes", "Pullback continuation", "1.5x ATR away from EMA50"} {
+		if strings.Contains(offPrompt, bad) {
+			t.Errorf("emitted without EMA: %q", bad)
+		}
+	}
+
+	// Localized.
+	zhCfg := store.GetDefaultStrategyConfig("zh")
+	zhCfg.Indicators.EnableEMA = true
+	zhCfg.Indicators.EnableATR = true
+	zhCfg.Indicators.Klines.EnableMultiTimeframe = true
+	zhCfg.Indicators.Klines.PrimaryTimeframe = "1h"
+	zhCfg.Indicators.Klines.LongerTimeframe = "4h"
+	zh := NewStrategyEngine(&zhCfg).BuildSystemPrompt(1000, "balanced")
+	for _, want := range []string{"入场范式", "回踩延续（多）", "破位回测（空）", "1.5 倍 ATR"} {
+		if !strings.Contains(zh, want) {
+			t.Errorf("zh missing %q", want)
+		}
+	}
+}
+
+// A no-trade cycle must name the level it is waiting on, otherwise the record
+// says nothing and the next cycle starts from zero.
+func TestOutputFormatRequiresWaitTriggerLevel(t *testing.T) {
+	for _, lang := range []string{"en", "zh"} {
+		cfg := store.GetDefaultStrategyConfig(lang)
+		prompt := NewStrategyEngine(&cfg).BuildSystemPrompt(1000, "balanced")
+		if !strings.Contains(prompt, "trigger_level") {
+			t.Errorf("%s: trigger_level not defined in the output format", lang)
+		}
+	}
+}
