@@ -243,3 +243,64 @@ func TestOutputFormatRequiresWaitTriggerLevel(t *testing.T) {
 		}
 	}
 }
+
+// The confidence floor is enforced by the risk gate now, so the prompt must say
+// so and start its sizing tiers at that floor — the old tiers invited 60-79,
+// which the backend accepted because nothing checked confidence at all.
+func TestHardConstraintsConfidenceFloorAndSizingTiers(t *testing.T) {
+	cfg := store.GetDefaultStrategyConfig("en")
+	cfg.RiskControl.MinConfidence = 80
+	prompt := NewStrategyEngine(&cfg).BuildSystemPrompt(1000, "balanced")
+
+	if !strings.Contains(prompt, "Confidence floor: opens below 80 are rejected") {
+		t.Error("confidence floor is not described as code-enforced")
+	}
+	for _, want := range []string{
+		"Confidence ≥90: use 80-100%",
+		"Confidence 85-89: use 50-80%",
+		"Confidence 80-84: use 30-50%",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("sizing tier missing or not derived from MinConfidence: %q", want)
+		}
+	}
+	if strings.Contains(prompt, "Confidence 75-79") {
+		t.Error("a sizing tier below the enforced floor must not be offered")
+	}
+
+	// The product minimum applies when the config leaves it unset.
+	zero := store.GetDefaultStrategyConfig("en")
+	zero.RiskControl.MinConfidence = 0
+	p := NewStrategyEngine(&zero).BuildSystemPrompt(1000, "balanced")
+	if !strings.Contains(p, "Confidence floor: opens below 50 are rejected") {
+		t.Error("unset MinConfidence must resolve to the product minimum (50)")
+	}
+}
+
+// The model already received profit factor and Sharpe but never the win rate,
+// and nothing told it that crypto prices and venue positioning come from
+// different markets.
+func TestPromptShowsWinRateAndDataSources(t *testing.T) {
+	cfg, ctx := syntheticPromptContext()
+	ctx.TradingStats = &TradingStats{
+		TotalTrades: 25, WinRate: 21, ProfitFactor: 0.16, SharpeRatio: -0.71,
+		AvgWin: 0.53, AvgLoss: 0.86, MaxDrawdownPct: 0.2,
+	}
+	prompt := NewStrategyEngine(cfg).BuildUserPrompt(ctx)
+	if !strings.Contains(prompt, "Win Rate: 21%") {
+		t.Error("win rate missing from the trading statistics block")
+	}
+
+	system := NewStrategyEngine(cfg).BuildSystemPrompt(1000, "balanced")
+	for _, want := range []string{"Data sources", "Binance USDT market", "USDC-native positioning"} {
+		if !strings.Contains(system, want) {
+			t.Errorf("data-source note missing %q", want)
+		}
+	}
+
+	zhCfg := store.GetDefaultStrategyConfig("zh")
+	zhSystem := NewStrategyEngine(&zhCfg).BuildSystemPrompt(1000, "balanced")
+	if !strings.Contains(zhSystem, "数据来源") || !strings.Contains(zhSystem, "Binance USDT") {
+		t.Error("zh data-source note missing")
+	}
+}

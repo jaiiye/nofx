@@ -41,6 +41,22 @@ func (e *StrategyEngine) BuildSystemPrompt(accountEquity float64, variant string
 	// 0. Data Dictionary & Schema (ensure AI understands all fields)
 	sb.WriteString(GetSchemaPrompt(lang))
 	sb.WriteString("\n\n")
+
+	// 0b. Data provenance. For crypto assets the price series and the venue
+	// context come from different markets; without this note the model reads them
+	// as one feed (e.g. treating a Binance OI delta as if it belonged to the
+	// Hyperliquid book it is actually trading against).
+	if zh {
+		sb.WriteString("## 数据来源\n\n")
+		sb.WriteString("- 加密资产的 K 线与指标来自 Binance USDT 市场；xyz（美股/商品/指数）资产来自 Hyperliquid 原生。\n")
+		sb.WriteString("- 持仓量、资金费率、盘口与主动成交来自 Hyperliquid（USDC 计价）。\n")
+		sb.WriteString("- 不要把 USDT 代理的 K 线与 USDC 原生的持仓数据当成同一市场的绝对值；跨市场只比较方向与变化率。\n\n")
+	} else {
+		sb.WriteString("## Data sources\n\n")
+		sb.WriteString("- For crypto assets the K-lines and indicators come from the Binance USDT market; xyz assets (US equities/commodities/indices) come from Hyperliquid natively.\n")
+		sb.WriteString("- Open interest, funding, the order book and taker flow come from Hyperliquid (USDC-denominated).\n")
+		sb.WriteString("- Do not treat USDT-proxied K-lines and USDC-native positioning as absolute values from one market; compare direction and rate of change across the two.\n\n")
+	}
 	sb.WriteString("---\n\n")
 
 	// 1. Role definition (editable; falls back to a generic intro in the
@@ -342,13 +358,32 @@ func writeHardConstraints(sb *strings.Builder, accountEquity float64, riskContro
 		}
 	}
 
+	minConfidence := riskControl.MinConfidence
+	if minConfidence < store.MinConfidence {
+		minConfidence = store.MinConfidence
+	} else if minConfidence > store.MaxConfidence {
+		minConfidence = store.MaxConfidence
+	}
+	// Sizing tiers start at the enforced floor, so no bracket can ever invite an
+	// order the backend would reject.
+	highTier := minConfidence + 10
+	if highTier > store.MaxConfidence {
+		highTier = store.MaxConfidence
+	}
+	midLow, midHigh := minConfidence+5, minConfidence+9
+	if midHigh > store.MaxConfidence {
+		midHigh = store.MaxConfidence
+	}
+
 	if zh {
 		sb.WriteString(fmt.Sprintf("- 最大保证金占用: ≤%.0f%%\n", riskControl.MaxMarginUsage*100))
-		sb.WriteString(fmt.Sprintf("- 最小下单金额: ≥%.0f USDT\n\n", riskControl.MinPositionSize))
+		sb.WriteString(fmt.Sprintf("- 最小下单金额: ≥%.0f USDT\n", riskControl.MinPositionSize))
+		sb.WriteString(fmt.Sprintf("- 最小置信度: 低于 %d 的开仓会被拒绝\n\n", minConfidence))
 		sb.WriteString("## AI 建议 (推荐遵循):\n")
 	} else {
 		sb.WriteString(fmt.Sprintf("- Max Margin Usage: ≤%.0f%%\n", riskControl.MaxMarginUsage*100))
-		sb.WriteString(fmt.Sprintf("- Min Position Size: ≥%.0f USDT\n\n", riskControl.MinPositionSize))
+		sb.WriteString(fmt.Sprintf("- Min Position Size: ≥%.0f USDT\n", riskControl.MinPositionSize))
+		sb.WriteString(fmt.Sprintf("- Confidence floor: opens below %d are rejected\n\n", minConfidence))
 		sb.WriteString("## AI GUIDED (recommended):\n")
 	}
 
@@ -370,11 +405,9 @@ func writeHardConstraints(sb *strings.Builder, accountEquity float64, riskContro
 		}
 	}
 	if zh {
-		sb.WriteString(fmt.Sprintf("- 风险回报比: ≥1:%.1f (take_profit / stop_loss)\n", riskControl.MinRiskRewardRatio))
-		sb.WriteString(fmt.Sprintf("- 最小置信度: ≥%d 才开仓\n\n", riskControl.MinConfidence))
+		sb.WriteString(fmt.Sprintf("- 风险回报比: ≥1:%.1f (take_profit / stop_loss)\n\n", riskControl.MinRiskRewardRatio))
 	} else {
-		sb.WriteString(fmt.Sprintf("- Risk-Reward Ratio: ≥1:%.1f (take_profit / stop_loss)\n", riskControl.MinRiskRewardRatio))
-		sb.WriteString(fmt.Sprintf("- Min Confidence: ≥%d to open position\n\n", riskControl.MinConfidence))
+		sb.WriteString(fmt.Sprintf("- Risk-Reward Ratio: ≥1:%.1f (take_profit / stop_loss)\n\n", riskControl.MinRiskRewardRatio))
 	}
 
 	// Position sizing guidance
@@ -385,17 +418,17 @@ func writeHardConstraints(sb *strings.Builder, accountEquity float64, riskContro
 	if zh {
 		sb.WriteString("## 仓位大小指引\n")
 		sb.WriteString("根据置信度和上面的单仓最大价值算出 `position_size_usd`:\n")
-		sb.WriteString("- 高置信 (≥85): 用最大价值的 80-100%\n")
-		sb.WriteString("- 中置信 (70-84): 用最大价值的 50-80%\n")
-		sb.WriteString("- 低置信 (60-69): 用最大价值的 30-50%\n")
+		sb.WriteString(fmt.Sprintf("- 置信度 ≥%d: 用最大价值的 80-100%%\n", highTier))
+		sb.WriteString(fmt.Sprintf("- 置信度 %d-%d: 用最大价值的 50-80%%\n", midLow, midHigh))
+		sb.WriteString(fmt.Sprintf("- 置信度 %d-%d: 用最大价值的 30-50%%\n", minConfidence, midLow-1))
 		sb.WriteString(fmt.Sprintf("- 示例: 权益 %.0f × %.1fx = 最大 %.0f USDT\n", accountEquity, exampleRatio, accountEquity*exampleRatio))
 		sb.WriteString("- **不要**直接拿 available_balance 当 position_size_usd, 用上面的单仓最大价值!\n\n")
 	} else {
 		sb.WriteString("## Position Sizing Guidance\n")
 		sb.WriteString("Calculate `position_size_usd` from your confidence and the Position Value Limits above:\n")
-		sb.WriteString("- High confidence (≥85): use 80-100% of the position value limit\n")
-		sb.WriteString("- Medium confidence (70-84): use 50-80% of the position value limit\n")
-		sb.WriteString("- Low confidence (60-69): use 30-50% of the position value limit\n")
+		sb.WriteString(fmt.Sprintf("- Confidence ≥%d: use 80-100%% of the position value limit\n", highTier))
+		sb.WriteString(fmt.Sprintf("- Confidence %d-%d: use 50-80%% of the position value limit\n", midLow, midHigh))
+		sb.WriteString(fmt.Sprintf("- Confidence %d-%d: use 30-50%% of the position value limit\n", minConfidence, midLow-1))
 		sb.WriteString(fmt.Sprintf("- Example: equity %.0f × %.1fx = max %.0f USDT\n", accountEquity, exampleRatio, accountEquity*exampleRatio))
 		sb.WriteString("- **DO NOT** just use available_balance as position_size_usd. Use the Position Value Limit!\n\n")
 	}
@@ -868,8 +901,9 @@ func (e *StrategyEngine) BuildUserPrompt(ctx *Context) string {
 
 		if lang == LangChinese {
 			sb.WriteString("## 历史交易统计\n")
-			sb.WriteString(fmt.Sprintf("总交易: %d 笔 | 盈利因子: %.2f | 夏普比率: %.2f | 盈亏比: %.2f\n",
+			sb.WriteString(fmt.Sprintf("总交易: %d 笔 | 胜率: %.0f%% | 盈利因子: %.2f | 夏普比率: %.2f | 盈亏比: %.2f\n",
 				ctx.TradingStats.TotalTrades,
+				ctx.TradingStats.WinRate,
 				ctx.TradingStats.ProfitFactor,
 				ctx.TradingStats.SharpeRatio,
 				winLossRatio))
@@ -880,8 +914,9 @@ func (e *StrategyEngine) BuildUserPrompt(ctx *Context) string {
 				ctx.TradingStats.MaxDrawdownPct))
 		} else {
 			sb.WriteString("## Historical Trading Statistics\n")
-			sb.WriteString(fmt.Sprintf("Total Trades: %d | Profit Factor: %.2f | Sharpe: %.2f | Win/Loss Ratio: %.2f\n",
+			sb.WriteString(fmt.Sprintf("Total Trades: %d | Win Rate: %.0f%% | Profit Factor: %.2f | Sharpe: %.2f | Win/Loss Ratio: %.2f\n",
 				ctx.TradingStats.TotalTrades,
+				ctx.TradingStats.WinRate,
 				ctx.TradingStats.ProfitFactor,
 				ctx.TradingStats.SharpeRatio,
 				winLossRatio))

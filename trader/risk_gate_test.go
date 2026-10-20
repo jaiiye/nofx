@@ -27,7 +27,7 @@ func baseRiskConfig() *store.StrategyConfig {
 }
 
 func TestEvaluateRiskGateNilConfigAllows(t *testing.T) {
-	res := EvaluateRiskGate(RiskGateInput{Action: "open_long", Symbol: "SOLUSDT", PositionSizeUSD: 500, Leverage: 10})
+	res := EvaluateRiskGate(RiskGateInput{Action: "open_long", Confidence: 85, Symbol: "SOLUSDT", PositionSizeUSD: 500, Leverage: 10})
 	if !res.Allowed {
 		t.Fatalf("nil config should allow, got reject: %s", res.Reason)
 	}
@@ -37,7 +37,7 @@ func TestEvaluateRiskGateNilConfigAllows(t *testing.T) {
 }
 
 func TestEvaluateRiskGateMaxPositions(t *testing.T) {
-	in := RiskGateInput{Action: "open_long", Symbol: "SOLUSDT", PositionSizeUSD: 100, Leverage: 10,
+	in := RiskGateInput{Action: "open_long", Confidence: 85, Symbol: "SOLUSDT", PositionSizeUSD: 100, Leverage: 10,
 		PositionCount: 3, Equity: 1000, AvailableBalance: 1000, Config: baseRiskConfig()}
 	res := EvaluateRiskGate(in)
 	if res.Allowed {
@@ -46,7 +46,7 @@ func TestEvaluateRiskGateMaxPositions(t *testing.T) {
 }
 
 func TestEvaluateRiskGateDuplicatePosition(t *testing.T) {
-	in := RiskGateInput{Action: "open_short", Symbol: "SOLUSDT", PositionSizeUSD: 100, Leverage: 10,
+	in := RiskGateInput{Action: "open_short", Confidence: 85, Symbol: "SOLUSDT", PositionSizeUSD: 100, Leverage: 10,
 		PositionCount: 1, HasSamePosition: true, Equity: 1000, AvailableBalance: 1000, Config: baseRiskConfig()}
 	res := EvaluateRiskGate(in)
 	if res.Allowed {
@@ -55,7 +55,7 @@ func TestEvaluateRiskGateDuplicatePosition(t *testing.T) {
 }
 
 func TestEvaluateRiskGatePositionValueCap(t *testing.T) {
-	in := RiskGateInput{Action: "open_long", Symbol: "SOLUSDT", PositionSizeUSD: 5000, Leverage: 10,
+	in := RiskGateInput{Action: "open_long", Confidence: 85, Symbol: "SOLUSDT", PositionSizeUSD: 5000, Leverage: 10,
 		Equity: 1000, AvailableBalance: 100000, Config: baseRiskConfig()}
 	res := EvaluateRiskGate(in)
 	if !res.Allowed {
@@ -67,7 +67,7 @@ func TestEvaluateRiskGatePositionValueCap(t *testing.T) {
 }
 
 func TestEvaluateRiskGateMinSizeReject(t *testing.T) {
-	in := RiskGateInput{Action: "open_long", Symbol: "SOLUSDT", PositionSizeUSD: 5, Leverage: 10,
+	in := RiskGateInput{Action: "open_long", Confidence: 85, Symbol: "SOLUSDT", PositionSizeUSD: 5, Leverage: 10,
 		Equity: 1000, AvailableBalance: 1000, Config: baseRiskConfig()}
 	res := EvaluateRiskGate(in)
 	if res.Allowed {
@@ -78,7 +78,7 @@ func TestEvaluateRiskGateMinSizeReject(t *testing.T) {
 func TestEvaluateRiskGateMaxMarginUsage(t *testing.T) {
 	cfg := baseRiskConfig()
 	cfg.RiskControl.MaxMarginUsage = 0.9
-	in := RiskGateInput{Action: "open_long", Symbol: "SOLUSDT", PositionSizeUSD: 950, Leverage: 1,
+	in := RiskGateInput{Action: "open_long", Confidence: 85, Symbol: "SOLUSDT", PositionSizeUSD: 950, Leverage: 1,
 		Equity: 1000, AvailableBalance: 100000, Config: cfg}
 	res := EvaluateRiskGate(in)
 	if res.Allowed {
@@ -87,7 +87,7 @@ func TestEvaluateRiskGateMaxMarginUsage(t *testing.T) {
 }
 
 func TestEvaluateRiskGateLeverageClamp(t *testing.T) {
-	in := RiskGateInput{Action: "open_long", Symbol: "BTCUSDT", PositionSizeUSD: 100, Leverage: 20,
+	in := RiskGateInput{Action: "open_long", Confidence: 85, Symbol: "BTCUSDT", PositionSizeUSD: 100, Leverage: 20,
 		Equity: 100000, AvailableBalance: 100000, Config: baseRiskConfig()}
 	res := EvaluateRiskGate(in)
 	if !res.Allowed {
@@ -103,7 +103,7 @@ func TestEvaluateRiskGateBalanceSufficiency(t *testing.T) {
 	// constraint here. Raise the leverage cap so the clamp doesn't interfere.
 	cfg := baseRiskConfig()
 	cfg.RiskControl.BTCETHMaxLeverage = 20
-	in := RiskGateInput{Action: "open_long", Symbol: "BTCUSDT", PositionSizeUSD: 10000, Leverage: 10,
+	in := RiskGateInput{Action: "open_long", Confidence: 85, Symbol: "BTCUSDT", PositionSizeUSD: 10000, Leverage: 10,
 		Equity: 100000, AvailableBalance: 100, Config: cfg}
 	res := EvaluateRiskGate(in)
 	if !res.Allowed {
@@ -121,7 +121,7 @@ func TestEvaluateRiskGateUsesProvidedFeeRate(t *testing.T) {
 	cfg.RiskControl.AltcoinMaxLeverage = 20
 	cfg.RiskControl.MaxMarginUsage = 1.0
 	const feeRate = 0.01
-	in := RiskGateInput{Action: "open_long", Symbol: "SOLUSDT", PositionSizeUSD: 1e9, Leverage: 20,
+	in := RiskGateInput{Action: "open_long", Confidence: 85, Symbol: "SOLUSDT", PositionSizeUSD: 1e9, Leverage: 20,
 		Equity: 1e6, AvailableBalance: 100, TakerFeeRate: feeRate, Config: cfg}
 	res := EvaluateRiskGate(in)
 	if !res.Allowed {
@@ -225,13 +225,13 @@ func TestEvaluateRiskGateMarginUsageZeroValueStillEnforced(t *testing.T) {
 	cfg := baseRiskConfig()
 	cfg.RiskControl.MaxMarginUsage = 0 // previously skipped the whole check
 
-	allowed := RiskGateInput{Action: "open_long", Symbol: "SOLUSDT", PositionSizeUSD: 800, Leverage: 1,
+	allowed := RiskGateInput{Action: "open_long", Confidence: 85, Symbol: "SOLUSDT", PositionSizeUSD: 800, Leverage: 1,
 		Equity: 1000, AvailableBalance: 100000, Config: cfg}
 	if res := EvaluateRiskGate(allowed); !res.Allowed {
 		t.Fatalf("80%% projected margin should be allowed under the 90%% default, got: %s", res.Reason)
 	}
 
-	rejected := RiskGateInput{Action: "open_long", Symbol: "SOLUSDT", PositionSizeUSD: 950, Leverage: 1,
+	rejected := RiskGateInput{Action: "open_long", Confidence: 85, Symbol: "SOLUSDT", PositionSizeUSD: 950, Leverage: 1,
 		Equity: 1000, AvailableBalance: 100000, Config: cfg}
 	if res := EvaluateRiskGate(rejected); res.Allowed {
 		t.Fatal("95% projected margin must be rejected under the 90% default")
@@ -243,7 +243,7 @@ func TestEvaluateRiskGateMarginUsageEditableValue(t *testing.T) {
 	cfg := baseRiskConfig()
 	cfg.RiskControl.MaxMarginUsage = 0.3 // user set 30%
 
-	in := RiskGateInput{Action: "open_long", Symbol: "SOLUSDT", PositionSizeUSD: 400, Leverage: 1,
+	in := RiskGateInput{Action: "open_long", Confidence: 85, Symbol: "SOLUSDT", PositionSizeUSD: 400, Leverage: 1,
 		Equity: 1000, AvailableBalance: 100000, Config: cfg}
 	res := EvaluateRiskGate(in)
 	if res.Allowed {
@@ -322,7 +322,7 @@ func TestRiskGateExplainsWhySizeIsZero(t *testing.T) {
 
 	// 1. The decision did not size the trade.
 	res := EvaluateRiskGate(RiskGateInput{
-		Action: "open_long", Symbol: "xyz:CL", PositionSizeUSD: 0, Leverage: 3,
+		Action: "open_long", Confidence: 85, Symbol: "xyz:CL", PositionSizeUSD: 0, Leverage: 3,
 		Equity: 150, AvailableBalance: 150, Config: cfg,
 	})
 	if res.Allowed || !strings.Contains(res.Reason, "did not specify a position size") {
@@ -332,7 +332,7 @@ func TestRiskGateExplainsWhySizeIsZero(t *testing.T) {
 	// 2. Zero available margin on an xyz symbol: the message must not assert a
 	// separate pool (unified accounts do not have one), it must name both modes.
 	res = EvaluateRiskGate(RiskGateInput{
-		Action: "open_long", Symbol: "xyz:CL", PositionSizeUSD: 90, Leverage: 3,
+		Action: "open_long", Confidence: 85, Symbol: "xyz:CL", PositionSizeUSD: 90, Leverage: 3,
 		Equity: 150, AvailableBalance: 0, Config: cfg,
 	})
 	if res.Allowed {
@@ -346,7 +346,7 @@ func TestRiskGateExplainsWhySizeIsZero(t *testing.T) {
 
 	// 3. A crypto symbol with no margin says so without the xyz wording.
 	res = EvaluateRiskGate(RiskGateInput{
-		Action: "open_long", Symbol: "SOLUSDT", PositionSizeUSD: 90, Leverage: 3,
+		Action: "open_long", Confidence: 85, Symbol: "SOLUSDT", PositionSizeUSD: 90, Leverage: 3,
 		Equity: 150, AvailableBalance: 0, Config: cfg,
 	})
 	if res.Allowed || !strings.Contains(res.Reason, "no available margin") || strings.Contains(res.Reason, "xyz dex") {
@@ -355,7 +355,7 @@ func TestRiskGateExplainsWhySizeIsZero(t *testing.T) {
 
 	// 4. Margin exists but reduces the order below the minimum: explain the cut.
 	res = EvaluateRiskGate(RiskGateInput{
-		Action: "open_long", Symbol: "SOLUSDT", PositionSizeUSD: 90, Leverage: 10,
+		Action: "open_long", Confidence: 85, Symbol: "SOLUSDT", PositionSizeUSD: 90, Leverage: 10,
 		Equity: 150, AvailableBalance: 1, Config: cfg,
 	})
 	if res.Allowed || !strings.Contains(res.Reason, "reduced to") {
@@ -364,7 +364,7 @@ func TestRiskGateExplainsWhySizeIsZero(t *testing.T) {
 
 	// 5. The plain case keeps its original wording.
 	res = EvaluateRiskGate(RiskGateInput{
-		Action: "open_long", Symbol: "SOLUSDT", PositionSizeUSD: 5, Leverage: 3,
+		Action: "open_long", Confidence: 85, Symbol: "SOLUSDT", PositionSizeUSD: 5, Leverage: 3,
 		Equity: 150, AvailableBalance: 150, Config: cfg,
 	})
 	if res.Allowed || !strings.Contains(res.Reason, "below minimum") {
@@ -409,5 +409,30 @@ func TestAccountPoolForXYZDexRespectsAccountMode(t *testing.T) {
 	// Crypto symbols never use the dex pool.
 	if equity, available := accountEquityAndAvailableFor(standard, "BTCUSDT"); equity != 150.55 || available != 150.55 {
 		t.Fatalf("crypto: equity/available = %v/%v, want the main balance", equity, available)
+	}
+}
+
+// Confidence was documented as a floor for as long as the prompt has existed,
+// but nothing enforced it: Decision.Confidence was only copied into the record,
+// so a model could open at any confidence as long as size and R:R passed.
+func TestEvaluateRiskGateConfidenceFloor(t *testing.T) {
+	cfg := baseRiskConfig() // MinConfidence 0 -> product minimum (50)
+	if res := EvaluateRiskGate(RiskGateInput{Action: "open_long", Symbol: "SOLUSDT", Confidence: 49,
+		PositionSizeUSD: 100, Leverage: 5, Equity: 1000, AvailableBalance: 1000, Config: cfg}); res.Allowed {
+		t.Fatal("49 must be rejected under the 50 product minimum")
+	}
+	if res := EvaluateRiskGate(RiskGateInput{Action: "open_long", Symbol: "SOLUSDT", Confidence: 50,
+		PositionSizeUSD: 100, Leverage: 5, Equity: 1000, AvailableBalance: 1000, Config: cfg}); !res.Allowed {
+		t.Fatalf("50 should pass the product minimum, got: %s", res.Reason)
+	}
+
+	cfg.RiskControl.MinConfidence = 80
+	if res := EvaluateRiskGate(RiskGateInput{Action: "open_short", Symbol: "SOLUSDT", Confidence: 79,
+		PositionSizeUSD: 100, Leverage: 5, Equity: 1000, AvailableBalance: 1000, Config: cfg}); res.Allowed {
+		t.Fatal("79 must be rejected under an explicit 80 floor")
+	}
+	if res := EvaluateRiskGate(RiskGateInput{Action: "open_short", Symbol: "SOLUSDT", Confidence: 80,
+		PositionSizeUSD: 100, Leverage: 5, Equity: 1000, AvailableBalance: 1000, Config: cfg}); !res.Allowed {
+		t.Fatalf("80 should pass an explicit 80 floor, got: %s", res.Reason)
 	}
 }

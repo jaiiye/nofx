@@ -214,6 +214,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   making a context that is outgrowing the model's window visible before the provider rejects it.
 
 ### Changed
+- Prompt accuracy: the trading-statistics block now prints the win rate next to profit factor and Sharpe (the
+  value was already computed and passed in, just never rendered), and a "Data sources" section states that
+  crypto K-lines are Binance USDT proxies while open interest, funding and taker flow are Hyperliquid
+  USDC-native, so the model does not read the two as one market.
 - The prompt is materially smaller and its numbers are now trustworthy. `prompt_display_bars` defaults to 20
   instead of 40 (studio default too), so every series prints half as many points while the candidate board
   stays at 10. Forty points of every series for every candidate is what made a live model misattribute values
@@ -315,6 +319,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bot uses the same model selection as the web agent.
 
 ### Fixed
+- `min_confidence` is now actually enforced. The prompt had always claimed a minimum confidence was required,
+  but nothing checked it: `Decision.Confidence` was only copied into the decision record, so a model could open
+  at any confidence as long as size, R:R and margin passed. The pre-trade risk gate now rejects opens below the
+  configured floor (a zero config resolves to the product minimum of 50 rather than "off"), the prompt presents
+  the floor as code-enforced, and its position-sizing tiers are derived from it — the old 60-69 / 70-84
+  brackets are gone, so no bracket can invite an order the backend would reject.
 - Prompt bugs that misled the model. The microstructure line no longer appends "thin books and wide spreads
   argue against market chasing" to every coin — a 100/100 deep book was being labelled thin, so the warning is
   now conditional on liquidity < 60 or spread > 5 bps. `current_price` and the indicator series use

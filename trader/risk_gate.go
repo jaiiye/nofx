@@ -19,6 +19,10 @@ type RiskGateInput struct {
 	PositionSizeUSD float64 // requested notional, before adjustments
 	Leverage        int
 	Price           float64
+	// Confidence is the model's own confidence for this opening decision. The
+	// gate rejects it below the configured MinConfidence floor, so an opening
+	// decision that omits it (zero value) is rejected as well.
+	Confidence int
 
 	PositionCount int
 	// SuccessfulClosesInCycle counts positions successfully closed earlier in
@@ -45,10 +49,10 @@ type RiskGateResult struct {
 }
 
 // EvaluateRiskGate applies the code-enforced sizing and leverage limits that
-// guard every opening order. Checks run in this order: max positions →
-// duplicate position → leverage clamp → position-value cap → balance
-// sufficiency (auto-reduce) → minimum size → max margin usage. It is a pure
-// function so it can be unit-tested and reused by the backtester.
+// guard every opening order. Checks run in this order: confidence floor →
+// max positions → duplicate position → leverage clamp → position-value cap →
+// balance sufficiency (auto-reduce) → minimum size → max margin usage. It is a
+// pure function so it can be unit-tested and reused by the backtester.
 func EvaluateRiskGate(in RiskGateInput) RiskGateResult {
 	res := RiskGateResult{
 		Allowed:          true,
@@ -59,6 +63,21 @@ func EvaluateRiskGate(in RiskGateInput) RiskGateResult {
 		return res // no strategy config: don't second-guess the decision
 	}
 	rc := in.Config.RiskControl
+
+	// Confidence floor. The prompt has always claimed a minimum confidence was
+	// required, but nothing enforced it: Decision.Confidence was only copied into
+	// the record, so the model could open at any confidence as long as size and
+	// R:R passed. The floor is normalized here (a zero config means the product
+	// minimum, not "off"), so the gate stays authoritative for legacy configs too.
+	minConfidence := rc.MinConfidence
+	if minConfidence < store.MinConfidence {
+		minConfidence = store.MinConfidence
+	} else if minConfidence > store.MaxConfidence {
+		minConfidence = store.MaxConfidence
+	}
+	if in.Confidence < minConfidence {
+		return riskReject(fmt.Sprintf("confidence %d is below the configured minimum of %d — no position opened", in.Confidence, minConfidence))
+	}
 
 	// 1. Max concurrent positions, judged by the expected net count: closes
 	// executed earlier in this cycle may not be reflected in PositionCount
@@ -207,6 +226,7 @@ func (at *AutoTrader) checkOpenRiskGate(decision *kernel.Decision, positions []m
 		Symbol:                  decision.Symbol,
 		PositionSizeUSD:         decision.PositionSizeUSD,
 		Leverage:                decision.Leverage,
+		Confidence:              decision.Confidence,
 		PositionCount:           len(positions),
 		SuccessfulClosesInCycle: at.successfulClosesInCycle,
 		HasSamePosition:         hasPosition(positions, decision.Symbol, decision.Action),
