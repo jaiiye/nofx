@@ -319,6 +319,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bot uses the same model selection as the web agent.
 
 ### Fixed
+- JSON parse failures are now explained from the parser's own error instead of a hand-rolled scan of the
+  document. The old validator looked for "~" and thousand separators across the raw text, so a valid decision
+  whose reasoning said "extended ~3x ATR above EMA50" was rejected. Parsing is the authority now: a valid array
+  always parses, and only a real failure is annotated — a range symbol, expression or separator by inspecting
+  the bytes around the offending offset, and a wrong field type by naming the field (`decision field
+  "confidence" must be int, got string`). One parse instead of two; the string-stripping pass is gone.
 - `min_confidence` is now actually enforced. The prompt had always claimed a minimum confidence was required,
   but nothing checked it: `Decision.Confidence` was only copied into the decision record, so a model could open
   at any confidence as long as size, R:R and margin passed. The pre-trade risk gate now rejects opens below the

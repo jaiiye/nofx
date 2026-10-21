@@ -169,3 +169,43 @@ func TestNormalizeMinRewardRatio(t *testing.T) {
 		t.Fatalf("explicit → %.1f, want 4.5", got)
 	}
 }
+
+// Parsing is the authority on whether the payload is JSON, so prose operators
+// inside strings are not errors. A live cycle on 2026-10-19 was rejected because
+// one reasoning string said "extended ~3x ATR above EMA50"; the old validator
+// scanned the raw text and mistook it for a numeric range.
+func TestParseDecisionArrayIgnoresStrings(t *testing.T) {
+	valid := `[{"symbol":"BTCUSDT","action":"wait","trigger_level":83000,` +
+		`"reasoning":"extended ~3x ATR above EMA50; between 5,000 and 6,000 is noise"},` +
+		`{"symbol":"ETHUSDT","action":"wait","trigger_level":2450,"reasoning":"he said \"~5x\" and 1,234 in prose"}]`
+	decisions, err := parseDecisionArray(valid, "")
+	if err != nil {
+		t.Fatalf("prose in reasoning must not fail parsing: %v", err)
+	}
+	if len(decisions) != 2 || decisions[0].TriggerLevel != 83000 || decisions[1].TriggerLevel != 2450 {
+		t.Fatalf("unexpected decisions: %+v", decisions)
+	}
+
+	// A real range in a numeric field still fails, and the hint names it.
+	if _, err := parseDecisionArray(`[{"symbol":"BTCUSDT","stop_loss":100~105}]`, ""); err == nil ||
+		!strings.Contains(err.Error(), "range symbol") {
+		t.Fatalf("numeric range must be rejected with a hint, got: %v", err)
+	}
+
+	// A real thousand separator still fails, and the hint names it.
+	if _, err := parseDecisionArray(`[{"symbol":"BTCUSDT","position_size_usd":1,000}]`, ""); err == nil ||
+		!strings.Contains(err.Error(), "thousand separator") {
+		t.Fatalf("thousand separator must be rejected with a hint, got: %v", err)
+	}
+
+	// A quoted number is a type error, and the field is named.
+	if _, err := parseDecisionArray(`[{"symbol":"BTCUSDT","confidence":"85"}]`, ""); err == nil ||
+		!strings.Contains(err.Error(), `"confidence"`) {
+		t.Fatalf("quoted number must name the field, got: %v", err)
+	}
+
+	// Structure guards still apply.
+	if _, err := parseDecisionArray(`{"symbol":"BTCUSDT"}`, ""); err == nil {
+		t.Fatal("a bare object must still be rejected")
+	}
+}

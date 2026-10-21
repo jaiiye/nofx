@@ -3,6 +3,7 @@ package kernel
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"nofx/logger"
 	"nofx/market"
@@ -441,20 +442,8 @@ func extractDecisions(response string) ([]Decision, error) {
 		logger.Infof("⚠️  <decision> tag not found, searching JSON in full text")
 	}
 
-	jsonPart = fixMissingQuotes(jsonPart)
-
 	if m := reJSONFence.FindStringSubmatch(jsonPart); m != nil && len(m) > 1 {
-		jsonContent := strings.TrimSpace(m[1])
-		jsonContent = compactArrayOpen(jsonContent)
-		jsonContent = fixMissingQuotes(jsonContent)
-		if err := validateJSONFormat(jsonContent); err != nil {
-			return nil, fmt.Errorf("JSON format validation failed: %w\nJSON content: %s\nFull response:\n%s", err, jsonContent, response)
-		}
-		var decisions []Decision
-		if err := json.Unmarshal([]byte(jsonContent), &decisions); err != nil {
-			return nil, fmt.Errorf("JSON parsing failed: %w\nJSON content: %s", err, jsonContent)
-		}
-		return decisions, nil
+		return parseDecisionArray(m[1], response)
 	}
 
 	jsonContent := strings.TrimSpace(reJSONArray.FindString(jsonPart))
@@ -475,19 +464,7 @@ func extractDecisions(response string) ([]Decision, error) {
 		return []Decision{fallbackDecision}, nil
 	}
 
-	jsonContent = compactArrayOpen(jsonContent)
-	jsonContent = fixMissingQuotes(jsonContent)
-
-	if err := validateJSONFormat(jsonContent); err != nil {
-		return nil, fmt.Errorf("JSON format validation failed: %w\nJSON content: %s\nFull response:\n%s", err, jsonContent, response)
-	}
-
-	var decisions []Decision
-	if err := json.Unmarshal([]byte(jsonContent), &decisions); err != nil {
-		return nil, fmt.Errorf("JSON parsing failed: %w\nJSON content: %s", err, jsonContent)
-	}
-
-	return decisions, nil
+	return parseDecisionArray(jsonContent, response)
 }
 
 func fixMissingQuotes(jsonStr string) string {
@@ -514,32 +491,90 @@ func fixMissingQuotes(jsonStr string) string {
 	return jsonStr
 }
 
-func validateJSONFormat(jsonStr string) error {
-	trimmed := strings.TrimSpace(jsonStr)
+// parseDecisionArray is the single place where model output becomes decisions:
+// a structural guard, then one json.Unmarshal. The parser is the authority on
+// what is JSON, so nothing scans the document on the happy path — a valid array
+// containing "~" or "5,000" inside a reasoning string parses like any other.
+// The diagnostics below only run once a parse has actually failed.
+func parseDecisionArray(jsonContent, fullResponse string) ([]Decision, error) {
+	jsonContent = strings.TrimSpace(jsonContent)
+	jsonContent = compactArrayOpen(jsonContent)
+	jsonContent = fixMissingQuotes(jsonContent)
 
-	if !reArrayHead.MatchString(trimmed) {
-		if strings.HasPrefix(trimmed, "[") && !strings.Contains(trimmed[:min(20, len(trimmed))], "{") {
-			return fmt.Errorf("not a valid decision array (must contain objects {}), actual content: %s", trimmed[:min(50, len(trimmed))])
+	if !reArrayHead.MatchString(jsonContent) {
+		if strings.HasPrefix(jsonContent, "[") && !strings.Contains(jsonContent[:min(20, len(jsonContent))], "{") {
+			return nil, fmt.Errorf("not a valid decision array (must contain objects {}), actual content: %s\nFull response:\n%s",
+				jsonContent[:min(50, len(jsonContent))], fullResponse)
 		}
-		return fmt.Errorf("JSON must start with [{ (whitespace allowed), actual: %s", trimmed[:min(20, len(trimmed))])
+		return nil, fmt.Errorf("JSON must start with [{ (whitespace allowed), actual: %s\nFull response:\n%s",
+			jsonContent[:min(20, len(jsonContent))], fullResponse)
 	}
 
-	if strings.Contains(jsonStr, "~") {
-		return fmt.Errorf("JSON cannot contain range symbol ~, all numbers must be precise single values")
+	var decisions []Decision
+	if err := json.Unmarshal([]byte(jsonContent), &decisions); err != nil {
+		return nil, fmt.Errorf("%s\nJSON content: %s\nFull response:\n%s",
+			explainJSONParseError(jsonContent, err), jsonContent, fullResponse)
 	}
-
-	for i := 0; i < len(jsonStr)-4; i++ {
-		if jsonStr[i] >= '0' && jsonStr[i] <= '9' &&
-			jsonStr[i+1] == ',' &&
-			jsonStr[i+2] >= '0' && jsonStr[i+2] <= '9' &&
-			jsonStr[i+3] >= '0' && jsonStr[i+3] <= '9' &&
-			jsonStr[i+4] >= '0' && jsonStr[i+4] <= '9' {
-			return fmt.Errorf("JSON numbers cannot contain thousand separator comma, found: %s", jsonStr[i:min(i+10, len(jsonStr))])
-		}
-	}
-
-	return nil
+	return decisions, nil
 }
+
+// explainJSONParseError turns encoding/json's failure into an actionable message
+// by inspecting the offending bytes only — never the whole document, and never
+// the inside of a string (a valid document produces no error at all).
+func explainJSONParseError(jsonContent string, err error) string {
+	var typeErr *json.UnmarshalTypeError
+	if errors.As(err, &typeErr) {
+		field := typeErr.Field
+		if field == "" {
+			field = "(element)"
+		}
+		return fmt.Sprintf("decision field %q must be %s, got %s — write a bare number, not a string or an expression",
+			field, typeErr.Type, typeErr.Value)
+	}
+
+	var syntaxErr *json.SyntaxError
+	if errors.As(err, &syntaxErr) && syntaxErr.Offset > 0 {
+		// Offset is the 1-based position just past the offending byte.
+		off := int(syntaxErr.Offset) - 1
+		if off >= 0 && off < len(jsonContent) {
+			return fmt.Sprintf("invalid JSON at byte %d near %q%s: %v",
+				syntaxErr.Offset, excerptAround(jsonContent, off), jsonSyntaxHint(jsonContent, off), err)
+		}
+	}
+	return fmt.Sprintf("invalid JSON: %v", err)
+}
+
+func excerptAround(s string, off int) string {
+	start := off - 20
+	if start < 0 {
+		start = 0
+	}
+	end := off + 20
+	if end > len(s) {
+		end = len(s)
+	}
+	return s[start:end]
+}
+
+// jsonSyntaxHint names the two failure modes the model actually produces, using
+// the bytes around the error only.
+func jsonSyntaxHint(s string, off int) string {
+	switch s[off] {
+	case '~':
+		return " (range symbol: give one precise value)"
+	case '*', '/':
+		return " (expression: compute the value yourself)"
+	}
+	// A thousand separator makes the parser land on the first digit after the
+	// comma — {"x":1,000} fails at '0' looking for the next object key.
+	if off >= 2 && isASCIIDigit(s[off]) && s[off-1] == ',' && isASCIIDigit(s[off-2]) &&
+		off+2 < len(s) && isASCIIDigit(s[off+1]) && isASCIIDigit(s[off+2]) {
+		return " (thousand separator: write 1000, not 1,000)"
+	}
+	return ""
+}
+
+func isASCIIDigit(b byte) bool { return b >= '0' && b <= '9' }
 
 func min(a, b int) int {
 	if a < b {
