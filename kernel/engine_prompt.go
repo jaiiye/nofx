@@ -1025,17 +1025,17 @@ func (e *StrategyEngine) BuildUserPrompt(ctx *Context) string {
 
 	// OI Ranking data (market-wide open interest changes)
 	if ctx.OIRankingData != nil {
-		sb.WriteString(nofxos.FormatOIRankingForAI(ctx.OIRankingData, nofxosLang))
+		sb.WriteString(e.formatOIRanking(ctx.OIRankingData))
 	}
 
-	// NetFlow Ranking data (market-wide fund flow)
+	// Taker flow ranking (market-wide buy/sell imbalance)
 	if ctx.NetFlowRankingData != nil {
 		sb.WriteString(nofxos.FormatNetFlowRankingForAI(ctx.NetFlowRankingData, nofxosLang))
 	}
 
 	// Price Ranking data (market-wide gainers/losers)
 	if ctx.PriceRankingData != nil {
-		sb.WriteString(nofxos.FormatPriceRankingForAI(ctx.PriceRankingData, nofxosLang))
+		sb.WriteString(e.formatPriceRanking(ctx.PriceRankingData))
 	}
 
 	sb.WriteString("---\n\n")
@@ -2078,6 +2078,87 @@ func longShortRatio(netLong, netShort float64) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+// formatOIRanking renders the local market-wide open-interest ranking.
+func (e *StrategyEngine) formatOIRanking(data *market.OIRankingData) string {
+	if data == nil || (len(data.Top) == 0 && len(data.Low) == 0) {
+		return ""
+	}
+	zh := e.GetLanguage() == LangChinese
+
+	var sb strings.Builder
+	if zh {
+		sb.WriteString(fmt.Sprintf("## 持仓量变化排行 (%s)\n\n", data.Duration))
+		sb.WriteString("### 持仓增加榜\n| 排名 | 币种 | OI变化% | 价格 | 持仓(USD) |\n|---|---|---|---|---|\n")
+		for _, item := range data.Top {
+			sb.WriteString(fmt.Sprintf("| %d | %s | %+.2f%% | %.6g | %s |\n",
+				item.Rank, item.Symbol, item.OIDeltaPct, item.Price, formatUSDCompact(item.OIUSD)))
+		}
+		sb.WriteString("\n### 持仓减少榜\n| 排名 | 币种 | OI变化% | 价格 | 持仓(USD) |\n|---|---|---|---|---|\n")
+		for _, item := range data.Low {
+			sb.WriteString(fmt.Sprintf("| %d | %s | %+.2f%% | %.6g | %s |\n",
+				item.Rank, item.Symbol, item.OIDeltaPct, item.Price, formatUSDCompact(item.OIUSD)))
+		}
+		sb.WriteString("\n**解读**: OI增+价涨=多头主导 | OI增+价跌=空头主导 | OI减+价涨=空头平仓 | OI减+价跌=多头平仓\n\n")
+	} else {
+		sb.WriteString(fmt.Sprintf("## Open Interest Changes (%s)\n\n", data.Duration))
+		sb.WriteString("### OI Increase Ranking\n| Rank | Symbol | OI Change % | Price | OI (USD) |\n|---|---|---|---|---|\n")
+		for _, item := range data.Top {
+			sb.WriteString(fmt.Sprintf("| %d | %s | %+.2f%% | %.6g | %s |\n",
+				item.Rank, item.Symbol, item.OIDeltaPct, item.Price, formatUSDCompact(item.OIUSD)))
+		}
+		sb.WriteString("\n### OI Decrease Ranking\n| Rank | Symbol | OI Change % | Price | OI (USD) |\n|---|---|---|---|---|\n")
+		for _, item := range data.Low {
+			sb.WriteString(fmt.Sprintf("| %d | %s | %+.2f%% | %.6g | %s |\n",
+				item.Rank, item.Symbol, item.OIDeltaPct, item.Price, formatUSDCompact(item.OIUSD)))
+		}
+		sb.WriteString("\n**Key**: OI up + price up = bulls dominant | OI up + price down = bears dominant | OI down + price up = short covering | OI down + price down = long liquidation\n\n")
+	}
+	return sb.String()
+}
+
+// formatPriceRanking renders the local market-wide gainers/losers.
+func (e *StrategyEngine) formatPriceRanking(data *market.PriceRankingData) string {
+	if data == nil || len(data.Durations) == 0 {
+		return ""
+	}
+	zh := e.GetLanguage() == LangChinese
+
+	var sb strings.Builder
+	if zh {
+		sb.WriteString("## 涨跌幅排行\n\n")
+	} else {
+		sb.WriteString("## Price Gainers/Losers\n\n")
+	}
+	for _, duration := range []string{"1h", "4h", "24h"} {
+		bucket, ok := data.Durations[duration]
+		if !ok || bucket == nil {
+			continue
+		}
+		if zh {
+			sb.WriteString(fmt.Sprintf("### %s 涨跌幅\n\n", duration))
+			sb.WriteString("**涨幅榜**\n| 币种 | 涨跌幅 | 价格 | 持仓(USD) |\n|---|---|---|---|\n")
+		} else {
+			sb.WriteString(fmt.Sprintf("### %s Price Change\n\n", duration))
+			sb.WriteString("**Top Gainers**\n| Symbol | Change | Price | OI (USD) |\n|---|---|---|---|\n")
+		}
+		for _, item := range bucket.Top {
+			sb.WriteString(fmt.Sprintf("| %s | %+.2f%% | %.6g | %s |\n",
+				item.Symbol, item.ChangePct, item.Price, formatUSDCompact(item.OIUSD)))
+		}
+		if zh {
+			sb.WriteString("\n**跌幅榜**\n| 币种 | 涨跌幅 | 价格 | 持仓(USD) |\n|---|---|---|---|\n")
+		} else {
+			sb.WriteString("\n**Top Losers**\n| Symbol | Change | Price | OI (USD) |\n|---|---|---|---|\n")
+		}
+		for _, item := range bucket.Low {
+			sb.WriteString(fmt.Sprintf("| %s | %+.2f%% | %.6g | %s |\n",
+				item.Symbol, item.ChangePct, item.Price, formatUSDCompact(item.OIUSD)))
+		}
+		sb.WriteString("\n")
+	}
+	return sb.String()
 }
 
 func formatFlowValue(v float64) string {

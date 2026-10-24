@@ -23,7 +23,7 @@ func TestTickers(t *testing.T) {
 			t.Errorf("category = %q", r.URL.Query().Get("category"))
 		}
 		_, _ = w.Write([]byte(`{"retCode":0,"retMsg":"OK","result":{"category":"linear","list":[
-			{"symbol":"BTCUSDT","lastPrice":"63000","markPrice":"63010","indexPrice":"62990","openInterest":"1000.5","openInterestValue":"63000000","fundingRate":"0.0001","nextFundingTime":"1700000000000"},
+			{"symbol":"BTCUSDT","lastPrice":"63000","markPrice":"63010","indexPrice":"62990","price24hPcnt":"-0.0123","turnover24h":"3100000000","openInterest":"1000.5","openInterestValue":"63000000","fundingRate":"0.0001","nextFundingTime":"1700000000000"},
 			{"symbol":"ETHUSDT","lastPrice":"2500","markPrice":"2501","indexPrice":"2500","openInterest":"5000","openInterestValue":"12500000","fundingRate":"-0.0002","nextFundingTime":"1700000000000"}
 		]},"time":1699990000000}`))
 	})
@@ -41,6 +41,9 @@ func TestTickers(t *testing.T) {
 	}
 	if btc.FundingRate != 0.0001 || btc.NextFundingTimeMs != 1700000000000 {
 		t.Fatalf("funding = %+v", btc)
+	}
+	if btc.Change24hPct != -1.23 || btc.Turnover24h != 3_100_000_000 {
+		t.Fatalf("24h context = %+v", btc)
 	}
 }
 

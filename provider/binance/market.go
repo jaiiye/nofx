@@ -2,6 +2,7 @@ package binance
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -124,6 +125,107 @@ func (c *Client) FundingRateHistory(ctx context.Context, symbol string, limit in
 			FundingRate: parseFloat(item.FundingRate),
 			FundingTime: item.FundingTime,
 		})
+	}
+	return points, nil
+}
+
+// OIPoint is one historical open-interest observation.
+type OIPoint struct {
+	TimestampMs int64
+	OIBase      float64
+	OIUSD       float64
+}
+
+// PricePoint is one historical candle close.
+type PricePoint struct {
+	TimestampMs int64
+	Close       float64
+}
+
+// OpenInterestHist returns historical open interest (5m..1d periods, last 30
+// days). It is free and keyless, and lets a freshly started process derive OI
+// deltas without waiting an hour for its own snapshots.
+func (c *Client) OpenInterestHist(ctx context.Context, symbol, period string, limit int) ([]OIPoint, error) {
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	if symbol == "" {
+		return nil, fmt.Errorf("symbol is required")
+	}
+	if period == "" {
+		period = "1h"
+	}
+	if limit <= 0 || limit > 500 {
+		limit = 500
+	}
+
+	params := url.Values{
+		"symbol": {symbol},
+		"period": {period},
+		"limit":  {strconv.Itoa(limit)},
+	}
+	var raw []struct {
+		Symbol               string `json:"symbol"`
+		SumOpenInterest      string `json:"sumOpenInterest"`
+		SumOpenInterestValue string `json:"sumOpenInterestValue"`
+		Timestamp            int64  `json:"timestamp"`
+	}
+	if err := c.getJSON(ctx, "/futures/data/openInterestHist", params, &raw); err != nil {
+		return nil, err
+	}
+
+	points := make([]OIPoint, 0, len(raw))
+	for _, item := range raw {
+		if item.Timestamp <= 0 {
+			continue
+		}
+		points = append(points, OIPoint{
+			TimestampMs: item.Timestamp,
+			OIBase:      parseFloat(item.SumOpenInterest),
+			OIUSD:       parseFloat(item.SumOpenInterestValue),
+		})
+	}
+	return points, nil
+}
+
+// PriceHistory returns candle closes for a symbol. Used to seed the local price
+// ranking history on startup.
+func (c *Client) PriceHistory(ctx context.Context, symbol, interval string, limit int) ([]PricePoint, error) {
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	if symbol == "" {
+		return nil, fmt.Errorf("symbol is required")
+	}
+	if interval == "" {
+		interval = "1h"
+	}
+	if limit <= 0 || limit > 1000 {
+		limit = 1000
+	}
+
+	params := url.Values{
+		"symbol":   {symbol},
+		"interval": {interval},
+		"limit":    {strconv.Itoa(limit)},
+	}
+	var raw [][]json.RawMessage
+	if err := c.getJSON(ctx, "/fapi/v1/klines", params, &raw); err != nil {
+		return nil, err
+	}
+
+	points := make([]PricePoint, 0, len(raw))
+	for _, row := range raw {
+		if len(row) < 5 {
+			continue
+		}
+		var openTime int64
+		if err := json.Unmarshal(row[0], &openTime); err != nil || openTime <= 0 {
+			continue
+		}
+		var closePrice string
+		if err := json.Unmarshal(row[4], &closePrice); err != nil {
+			continue
+		}
+		if price := parseFloat(closePrice); price > 0 {
+			points = append(points, PricePoint{TimestampMs: openTime, Close: price})
+		}
 	}
 	return points, nil
 }

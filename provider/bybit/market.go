@@ -17,6 +17,8 @@ type Ticker struct {
 	LastPrice         float64
 	MarkPrice         float64
 	IndexPrice        float64
+	Change24hPct      float64 // venue's price24hPcnt, already a percentage
+	Turnover24h       float64 // quote-currency turnover over 24h
 	OpenInterest      float64
 	OpenInterestValue float64
 	FundingRate       float64
@@ -47,6 +49,8 @@ func (c *Client) Tickers(ctx context.Context) (map[string]Ticker, error) {
 			LastPrice         string `json:"lastPrice"`
 			MarkPrice         string `json:"markPrice"`
 			IndexPrice        string `json:"indexPrice"`
+			Price24hPcnt      string `json:"price24hPcnt"`
+			Turnover24h       string `json:"turnover24h"`
 			OpenInterest      string `json:"openInterest"`
 			OpenInterestValue string `json:"openInterestValue"`
 			FundingRate       string `json:"fundingRate"`
@@ -68,6 +72,8 @@ func (c *Client) Tickers(ctx context.Context) (map[string]Ticker, error) {
 			LastPrice:         parseFloat(item.LastPrice),
 			MarkPrice:         parseFloat(item.MarkPrice),
 			IndexPrice:        parseFloat(item.IndexPrice),
+			Change24hPct:      parseFloat(item.Price24hPcnt) * 100,
+			Turnover24h:       parseFloat(item.Turnover24h),
 			OpenInterest:      parseFloat(item.OpenInterest),
 			OpenInterestValue: parseFloat(item.OpenInterestValue),
 			FundingRate:       parseFloat(item.FundingRate),

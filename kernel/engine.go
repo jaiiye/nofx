@@ -15,8 +15,13 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
+
+// ai500AliasOnce keeps the deprecation notice for the old source name to one log
+// line per process.
+var ai500AliasOnce sync.Once
 
 // ============================================================================
 // Type Definitions
@@ -114,9 +119,9 @@ type Context struct {
 	LiquidationMap     map[string]*market.LiquidationReading `json:"-"`
 	OITopDataMap       map[string]*OITopData                 `json:"-"`
 	QuantDataMap       map[string]*QuantData                 `json:"-"`
-	OIRankingData      *nofxos.OIRankingData                 `json:"-"` // Market-wide OI ranking data
-	NetFlowRankingData *nofxos.NetFlowRankingData            `json:"-"` // Market-wide fund flow ranking data
-	PriceRankingData   *nofxos.PriceRankingData              `json:"-"` // Market-wide price gainers/losers
+	OIRankingData      *market.OIRankingData                 `json:"-"` // Market-wide OI ranking data
+	NetFlowRankingData *nofxos.NetFlowRankingData            `json:"-"` // Market-wide taker-flow ranking data
+	PriceRankingData   *market.PriceRankingData              `json:"-"` // Market-wide price gainers/losers
 	BTCETHLeverage     int                                   `json:"-"`
 	AltcoinLeverage    int                                   `json:"-"`
 	Timeframes         []string                              `json:"-"`
@@ -310,24 +315,22 @@ func (e *StrategyEngine) GetCandidateCoins() ([]CandidateCoin, error) {
 
 		return e.filterExcludedCoins(candidates), nil
 
-	case "ai500":
-		// Check use_ai500 flag; if false, fall back to static coins
-		if !coinSource.UseAI500 {
-			logger.Infof("⚠️  source_type is 'ai500' but use_ai500 is false, falling back to static coins")
-			for _, symbol := range coinSource.StaticCoins {
-				symbol = market.Normalize(symbol)
-				candidates = append(candidates, CandidateCoin{
-					Symbol:  symbol,
-					Sources: []string{"static"},
-				})
+	case "screener", "ai500":
+		// "ai500" is kept as a configuration alias: the vendor pool is gone, and
+		// the local screener is the documented replacement.
+		if coinSource.SourceType == "ai500" {
+			ai500AliasOnce.Do(func() {
+				logger.Warnf("⚠️  coin source 'ai500' now uses the local screener (free exchange data); update the config to 'screener'")
+			})
+			if !coinSource.UseAI500 {
+				return e.filterExcludedCoins(e.staticFallback()), nil
 			}
-			return e.filterExcludedCoins(candidates), nil
 		}
-		coins, err := e.getAI500Coins(coinSource.AI500Limit)
+		coins, err := e.getScreenerCoins(coinSource.AI500Limit)
 		if err != nil {
-			return nil, err
+			logger.Warnf("⚠️  Screener unavailable: %v", err)
+			return e.filterExcludedCoins(e.staticFallback()), nil
 		}
-		// Empty list is a normal condition, return directly
 		return e.filterExcludedCoins(coins), nil
 
 	case "oi_top":
@@ -345,7 +348,8 @@ func (e *StrategyEngine) GetCandidateCoins() ([]CandidateCoin, error) {
 		}
 		coins, err := e.getOITopCoins(coinSource.OITopLimit)
 		if err != nil {
-			return nil, err
+			logger.Warnf("⚠️  OI top ranking unavailable: %v", err)
+			return e.filterExcludedCoins(e.staticFallback()), nil
 		}
 		// Empty list is a normal condition, return directly
 		return e.filterExcludedCoins(coins), nil
@@ -365,7 +369,8 @@ func (e *StrategyEngine) GetCandidateCoins() ([]CandidateCoin, error) {
 		}
 		coins, err := e.getOILowCoins(coinSource.OILowLimit)
 		if err != nil {
-			return nil, err
+			logger.Warnf("⚠️  OI low ranking unavailable: %v", err)
+			return e.filterExcludedCoins(e.staticFallback()), nil
 		}
 		// Empty list is a normal condition, return directly
 		return e.filterExcludedCoins(coins), nil
@@ -417,12 +422,12 @@ func (e *StrategyEngine) GetCandidateCoins() ([]CandidateCoin, error) {
 
 	case "mixed":
 		if coinSource.UseAI500 {
-			poolCoins, err := e.getAI500Coins(coinSource.AI500Limit)
+			poolCoins, err := e.getScreenerCoins(coinSource.AI500Limit)
 			if err != nil {
-				logger.Infof("⚠️  Failed to get AI500 coins: %v", err)
+				logger.Infof("⚠️  Failed to get screener coins: %v", err)
 			} else {
 				for _, coin := range poolCoins {
-					symbolSources[coin.Symbol] = append(symbolSources[coin.Symbol], "ai500")
+					symbolSources[coin.Symbol] = append(symbolSources[coin.Symbol], "screener")
 				}
 			}
 		}
@@ -519,72 +524,110 @@ func (e *StrategyEngine) filterExcludedCoins(candidates []CandidateCoin) []Candi
 	return filtered
 }
 
-func (e *StrategyEngine) getAI500Coins(limit int) ([]CandidateCoin, error) {
+// getScreenerCoins returns the local screener's top-scored contracts. It is the
+// free replacement for the vendor AI500 pool: the score is a documented
+// composite of turnover, open interest and volatility, computed from public
+// tickers.
+func (e *StrategyEngine) getScreenerCoins(limit int) ([]CandidateCoin, error) {
 	if limit <= 0 {
 		limit = 30
 	}
-
-	symbols, err := e.nofxosClient.GetTopRatedCoins(limit)
-	if err != nil {
-		return nil, err
+	service := market.CurrentUniverse()
+	if service == nil {
+		return nil, fmt.Errorf("market universe service is not running")
 	}
+	e.ensureUniverse(service)
 
-	var candidates []CandidateCoin
-	for _, symbol := range symbols {
+	coins := service.Screener(limit)
+	if len(coins) == 0 {
+		return nil, fmt.Errorf("screener universe is empty")
+	}
+	candidates := make([]CandidateCoin, 0, len(coins))
+	for _, coin := range coins {
 		candidates = append(candidates, CandidateCoin{
-			Symbol:  symbol,
-			Sources: []string{"ai500"},
+			Symbol:  coin.Symbol,
+			Sources: []string{"screener"},
 		})
 	}
 	return candidates, nil
+}
+
+func (e *StrategyEngine) ensureUniverse(service *market.UniverseService) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	service.Ensure(ctx)
 }
 
 func (e *StrategyEngine) getOITopCoins(limit int) ([]CandidateCoin, error) {
+	return e.getOIRankedCoins(limit, true)
+}
+
+func (e *StrategyEngine) getOILowCoins(limit int) ([]CandidateCoin, error) {
+	return e.getOIRankedCoins(limit, false)
+}
+
+// getOIRankedCoins reads the local market-wide OI ranking. The 1h window is the
+// same one the vendor source used; when the process has not observed it yet the
+// caller gets an explicit error so it can fall back instead of silently
+// returning an empty candidate list.
+func (e *StrategyEngine) getOIRankedCoins(limit int, top bool) ([]CandidateCoin, error) {
 	if limit <= 0 {
 		limit = 10
 	}
-
-	positions, err := e.nofxosClient.GetOITopPositions()
-	if err != nil {
-		return nil, err
+	service := market.CurrentUniverse()
+	if service == nil {
+		return nil, fmt.Errorf("market universe service is not running")
 	}
+	e.ensureUniverse(service)
 
-	var candidates []CandidateCoin
-	for i, pos := range positions {
-		if i >= limit {
-			break
-		}
-		symbol := market.Normalize(pos.Symbol)
+	topItems, lowItems, ok := service.OIRanking(time.Hour, limit)
+	if !ok {
+		return nil, fmt.Errorf("1h open-interest history is not available yet")
+	}
+	items, source := topItems, "oi_top"
+	if !top {
+		items, source = lowItems, "oi_low"
+	}
+	candidates := make([]CandidateCoin, 0, len(items))
+	for _, item := range items {
 		candidates = append(candidates, CandidateCoin{
-			Symbol:  symbol,
-			Sources: []string{"oi_top"},
+			Symbol:  item.Symbol,
+			Sources: []string{source},
 		})
 	}
 	return candidates, nil
 }
 
-func (e *StrategyEngine) getOILowCoins(limit int) ([]CandidateCoin, error) {
-	if limit <= 0 {
-		limit = 10
-	}
-
-	positions, err := e.nofxosClient.GetOILowPositions()
-	if err != nil {
-		return nil, err
-	}
-
-	var candidates []CandidateCoin
-	for i, pos := range positions {
-		if i >= limit {
-			break
+// staticFallback keeps a failed candidate source from stopping trading when the
+// user configured a static list.
+func (e *StrategyEngine) staticFallback() []CandidateCoin {
+	coins := make([]CandidateCoin, 0, len(e.config.CoinSource.StaticCoins))
+	for _, symbol := range e.config.CoinSource.StaticCoins {
+		if canonical := market.Normalize(symbol); canonical != "" {
+			coins = append(coins, CandidateCoin{Symbol: canonical, Sources: []string{"static"}})
 		}
-		symbol := market.Normalize(pos.Symbol)
-		candidates = append(candidates, CandidateCoin{
-			Symbol:  symbol,
-			Sources: []string{"oi_low"},
-		})
 	}
-	return candidates, nil
+	return coins
+}
+
+// rankingWindow maps a configured duration onto the local ranking window.
+func rankingWindow(duration string) (time.Duration, bool) {
+	switch strings.ToLower(strings.TrimSpace(duration)) {
+	case "5m":
+		return 5 * time.Minute, true
+	case "15m":
+		return 15 * time.Minute, true
+	case "1h":
+		return time.Hour, true
+	case "4h":
+		return 4 * time.Hour, true
+	case "12h":
+		return 12 * time.Hour, true
+	case "24h":
+		return 24 * time.Hour, true
+	default:
+		return 0, false
+	}
 }
 
 // getHyperAllCoins returns all available Hyperliquid perpetual coins
@@ -916,14 +959,14 @@ func (e *StrategyEngine) FetchQuantDataBatch(symbols []string) map[string]*Quant
 	return result
 }
 
-// FetchOIRankingData fetches market-wide OI ranking data
-func (e *StrategyEngine) FetchOIRankingData() *nofxos.OIRankingData {
+// FetchOIRankingData builds the market-wide OI ranking from the local universe.
+func (e *StrategyEngine) FetchOIRankingData() *market.OIRankingData {
 	indicators := e.config.Indicators
 	if !indicators.EnableOIRanking {
 		return nil
 	}
 	if e.usesHyperliquidNativeUniverse() {
-		logger.Infof("⏭️  Skipping NofxOS OI ranking for Hyperliquid strategy; native Hyperliquid universe is the source of truth")
+		logger.Infof("⏭️  Skipping OI ranking for Hyperliquid strategy; native Hyperliquid universe is the source of truth")
 		return nil
 	}
 
@@ -931,24 +974,30 @@ func (e *StrategyEngine) FetchOIRankingData() *nofxos.OIRankingData {
 	if duration == "" {
 		duration = "1h"
 	}
+	window, windowOK := rankingWindow(duration)
+	if !windowOK {
+		logger.Warnf("⚠️  Unsupported OI ranking duration %q, skipping", duration)
+		return nil
+	}
 
 	limit := indicators.OIRankingLimit
 	if limit <= 0 {
 		limit = 10
 	}
 
-	logger.Infof("📊 Fetching OI ranking data (duration: %s, limit: %d)", duration, limit)
-
-	data, err := e.nofxosClient.GetOIRanking(duration, limit)
-	if err != nil {
-		logger.Warnf("⚠️  Failed to fetch OI ranking data: %v", err)
+	service := market.CurrentUniverse()
+	if service == nil {
 		return nil
 	}
+	e.ensureUniverse(service)
 
-	logger.Infof("✓ OI ranking data ready: %d top, %d low positions",
-		len(data.TopPositions), len(data.LowPositions))
-
-	return data
+	top, low, ok := service.OIRanking(window, limit)
+	if !ok {
+		logger.Infof("⏭️  OI ranking (%s) unavailable: the local snapshot history is too short", duration)
+		return nil
+	}
+	logger.Infof("✓ OI ranking ready: %d top, %d low (%s)", len(top), len(low), duration)
+	return &market.OIRankingData{Duration: duration, Top: top, Low: low, FetchedAt: time.Now()}
 }
 
 // FetchNetFlowRankingData fetches market-wide NetFlow ranking data
@@ -987,14 +1036,16 @@ func (e *StrategyEngine) FetchNetFlowRankingData() *nofxos.NetFlowRankingData {
 	return data
 }
 
-// FetchPriceRankingData fetches market-wide price ranking data (gainers/losers)
-func (e *StrategyEngine) FetchPriceRankingData() *nofxos.PriceRankingData {
+// FetchPriceRankingData builds the market-wide price ranking from the local
+// universe. The 24h window comes from the venue ticker and is always available;
+// shorter windows need local snapshot history and are omitted until it exists.
+func (e *StrategyEngine) FetchPriceRankingData() *market.PriceRankingData {
 	indicators := e.config.Indicators
 	if !indicators.EnablePriceRanking {
 		return nil
 	}
 	if e.usesHyperliquidNativeUniverse() {
-		logger.Infof("⏭️  Skipping NofxOS price ranking for Hyperliquid strategy; native Hyperliquid universe is the source of truth")
+		logger.Infof("⏭️  Skipping price ranking for Hyperliquid strategy; native Hyperliquid universe is the source of truth")
 		return nil
 	}
 
@@ -1008,16 +1059,33 @@ func (e *StrategyEngine) FetchPriceRankingData() *nofxos.PriceRankingData {
 		limit = 10
 	}
 
-	logger.Infof("📈 Fetching Price ranking data (durations: %s, limit: %d)", durations, limit)
-
-	data, err := e.nofxosClient.GetPriceRanking(durations, limit)
-	if err != nil {
-		logger.Warnf("⚠️  Failed to fetch Price ranking data: %v", err)
+	service := market.CurrentUniverse()
+	if service == nil {
 		return nil
 	}
+	e.ensureUniverse(service)
 
-	logger.Infof("✓ Price ranking data ready for %d durations", len(data.Durations))
-
+	data := &market.PriceRankingData{
+		Durations: make(map[string]*market.PriceRankingDuration),
+		FetchedAt: time.Now(),
+	}
+	for _, duration := range strings.Split(durations, ",") {
+		duration = strings.TrimSpace(duration)
+		window, ok := rankingWindow(duration)
+		if !ok || duration == "" {
+			continue
+		}
+		top, low, ok := service.PriceRanking(window, limit)
+		if !ok {
+			logger.Infof("⏭️  Price ranking (%s) unavailable: the local snapshot history is too short", duration)
+			continue
+		}
+		data.Durations[duration] = &market.PriceRankingDuration{Top: top, Low: low}
+	}
+	if len(data.Durations) == 0 {
+		return nil
+	}
+	logger.Infof("✓ Price ranking ready for %d durations", len(data.Durations))
 	return data
 }
 

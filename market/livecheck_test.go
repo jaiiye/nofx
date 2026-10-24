@@ -65,6 +65,36 @@ func TestLiveWSConnectivity(t *testing.T) {
 	}
 }
 
+func TestLiveUniverse(t *testing.T) {
+	service := NewUniverseService()
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Second)
+	defer cancel()
+
+	service.poll(ctx)
+	coins := service.Screener(5)
+	t.Logf("universe: %d contracts", len(service.Coins()))
+	for _, coin := range coins {
+		t.Logf("  %-14s score=%+.2f vol=$%.0f oi=$%.0f chg24h=%+.2f%%",
+			coin.Symbol, coin.Score, coin.Turnover24h, coin.OIUSD, coin.Change24hPct)
+	}
+	if len(coins) == 0 {
+		t.Fatal("screener returned nothing")
+	}
+
+	// Bootstrap runs in the background; wait for the 1h window to become usable.
+	deadline := time.Now().Add(120 * time.Second)
+	for time.Now().Before(deadline) {
+		top, low, ok := service.OIRanking(time.Hour, 3)
+		if ok {
+			t.Logf("1h OI top: %+v", top)
+			t.Logf("1h OI low: %+v", low)
+			return
+		}
+		time.Sleep(5 * time.Second)
+	}
+	t.Fatal("1h OI ranking still unavailable after bootstrap window")
+}
+
 func TestLiveVenueMetrics(t *testing.T) {
 	collector := NewVenueMetricsCollector(nil)
 	collector.SetSymbols([]string{"BTC", "ETH"})

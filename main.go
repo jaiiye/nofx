@@ -156,6 +156,11 @@ func main() {
 	nofxiAgent.Start()
 	defer nofxiAgent.Stop()
 
+	// Local market universe: one Bybit tickers poll feeds the screener, the OI
+	// ranking and the price ranking. No vendor key is involved.
+	universe := market.StartUniverse(context.Background())
+	defer universe.Stop()
+
 	// Stream Hyperliquid public trades to feed the positioning taker-flow ratio.
 	// Best-effort: without it the prompt simply omits the flow clause.
 	hlFlowWatcher := market.StartHLFlow(context.Background())

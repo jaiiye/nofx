@@ -723,7 +723,7 @@ func (at *AutoTrader) buildTradingContext() (*kernel.Context, error) {
 		ctx.OIRankingData = at.strategyEngine.FetchOIRankingData()
 		if ctx.OIRankingData != nil {
 			logger.Infof("📊 [%s] OI ranking data ready: %d top, %d low positions",
-				at.name, len(ctx.OIRankingData.TopPositions), len(ctx.OIRankingData.LowPositions))
+				at.name, len(ctx.OIRankingData.Top), len(ctx.OIRankingData.Low))
 		}
 	}
 
