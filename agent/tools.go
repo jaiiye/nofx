@@ -376,7 +376,6 @@ func strategyConfigSchema() map[string]any {
 							"nofxos_api_key":           map[string]any{"type": "string"},
 							"enable_quant_data":        map[string]any{"type": "boolean"},
 							"enable_quant_oi":          map[string]any{"type": "boolean"},
-							"enable_quant_netflow":     map[string]any{"type": "boolean"},
 							"enable_oi_ranking":        map[string]any{"type": "boolean"},
 							"oi_ranking_duration":      map[string]any{"type": "string", "enum": []string{"1h", "4h", "24h"}},
 							"oi_ranking_limit":         map[string]any{"type": "number", "enum": []int{5, 10, 15, 20}},

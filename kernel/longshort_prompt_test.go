@@ -1,14 +1,15 @@
 package kernel
 
 import (
+	"math"
 	"strings"
 	"testing"
 
-	"nofx/provider/nofxos"
+	"nofx/provider/binance"
 	"nofx/store"
 )
 
-func longShortEngine(t *testing.T) *StrategyEngine {
+func quantEngine(t *testing.T) *StrategyEngine {
 	t.Helper()
 	cfg := store.GetDefaultStrategyConfig("en")
 	cfg.Indicators.EnableQuantData = true
@@ -16,102 +17,122 @@ func longShortEngine(t *testing.T) *StrategyEngine {
 	return NewStrategyEngine(&cfg)
 }
 
-// The long/short exposure ships inside the OI payload; the conversion used to
-// drop it, so the model never saw a signal the client had already fetched.
-func TestConvertQuantDataCarriesLongShort(t *testing.T) {
-	got := convertQuantData(&nofxos.QuantData{
-		Symbol: "BTCUSDT",
-		Price:  63000,
-		OI: map[string]*nofxos.OIData{
+func syntheticKlines(count int) []binance.PricePoint {
+	points := make([]binance.PricePoint, 0, count)
+	for i := 0; i < count; i++ {
+		points = append(points, binance.PricePoint{
+			TimestampMs:   int64(i) * 300000,
+			Close:         100 + float64(i),
+			QuoteVolume:   1000,
+			TakerBuyQuote: 600,
+		})
+	}
+	return points
+}
+
+func TestPriceChangesFromKlines(t *testing.T) {
+	points := syntheticKlines(289) // 24h of 5m candles
+	changes := priceChangesFromKlines(points)
+
+	// Current close is 388; the previous candle is 387.
+	if got, want := changes["5m"], 1.0/387.0; math.Abs(got-want) > 1e-12 {
+		t.Fatalf("5m change = %v, want %v", got, want)
+	}
+	// 12 candles back is 376.
+	if got, want := changes["1h"], 12.0/376.0; math.Abs(got-want) > 1e-12 {
+		t.Fatalf("1h change = %v, want %v", got, want)
+	}
+	// 288 candles back is 100.
+	if got, want := changes["24h"], 288.0/100.0; math.Abs(got-want) > 1e-12 {
+		t.Fatalf("24h change = %v, want %v", got, want)
+	}
+}
+
+func TestOIDeltaFromPoints(t *testing.T) {
+	points := make([]binance.OIPoint, 0, 289)
+	for i := 0; i < 289; i++ {
+		points = append(points, binance.OIPoint{TimestampMs: int64(i) * 300000, OIUSD: 1000 + float64(i)*10})
+	}
+	oi := oiDeltaFromPoints(points)
+	if oi == nil {
+		t.Fatal("expected OI data")
+	}
+	if oi.CurrentOI != 3880 {
+		t.Fatalf("current OI = %v, want 3880", oi.CurrentOI)
+	}
+	delta := oi.Delta["1h"]
+	if delta == nil {
+		t.Fatal("1h delta missing")
+	}
+	if delta.OIDelta != 120 {
+		t.Fatalf("1h delta = %v, want 120", delta.OIDelta)
+	}
+	if want := 120.0 / 3760.0 * 100; math.Abs(delta.OIDeltaPercent-want) > 1e-9 {
+		t.Fatalf("1h delta%% = %v, want %v", delta.OIDeltaPercent, want)
+	}
+}
+
+func TestTakerFlowFromKlines(t *testing.T) {
+	flow := takerFlowFromKlines(syntheticKlines(20), 12)
+	if flow == nil {
+		t.Fatal("expected taker flow")
+	}
+	if flow.BuySharePct != 60 {
+		t.Fatalf("buy share = %v, want 60", flow.BuySharePct)
+	}
+	if flow.BuyUSD != 7200 || flow.SellUSD != 4800 {
+		t.Fatalf("buy/sell = %v/%v, want 7200/4800", flow.BuyUSD, flow.SellUSD)
+	}
+}
+
+func TestFormatQuantDataRendersLocalFields(t *testing.T) {
+	engine := quantEngine(t)
+	got := engine.formatQuantData(&QuantData{
+		Symbol:      "BTCUSDT",
+		Price:       63000,
+		PriceChange: map[string]float64{"1h": 0.0123},
+		OI: map[string]*OIData{
 			"binance": {
 				CurrentOI: 5_000_000,
-				NetLong:   120,
-				NetShort:  60,
-				Delta: map[string]*nofxos.OIDeltaData{
-					"1h": {OIDelta: 1, OIDeltaValue: 1000, OIDeltaPercent: 2.5},
+				Delta: map[string]*OIDeltaData{
+					"1h": {OIDelta: 120, OIDeltaValue: 120, OIDeltaPercent: 3.1915},
 				},
 			},
 		},
-	})
-
-	if got == nil {
-		t.Fatal("expected converted data")
-	}
-	oi := got.OI["binance"]
-	if oi == nil {
-		t.Fatal("binance OI missing")
-	}
-	if oi.NetLong != 120 || oi.NetShort != 60 {
-		t.Fatalf("long/short = %v/%v, want 120/60", oi.NetLong, oi.NetShort)
-	}
-	if oi.Delta["1h"] == nil || oi.Delta["1h"].OIDeltaPercent != 2.5 {
-		t.Fatalf("delta mapping regressed: %+v", oi.Delta)
-	}
-}
-
-func TestFormatQuantDataRendersLongShort(t *testing.T) {
-	engine := longShortEngine(t)
-	got := engine.formatQuantData(&QuantData{
-		Symbol: "BTCUSDT",
-		OI: map[string]*OIData{
-			"binance": {CurrentOI: 5_000_000, NetLong: 120, NetShort: 60},
+		LongShort: &LongShortData{
+			AccountRatio: 1.82, AccountLongPct: 64.5,
+			TopTraderRatio: 1.40, TopTraderLongPct: 58.3,
+		},
+		TakerFlow: &TakerFlowData{
+			Window: "1h", BuyUSD: 1_200_000, SellUSD: 850_000, BuySharePct: 58.5,
 		},
 	})
 
-	if !strings.Contains(got, "Long/Short (binance): long 120.00 / short 60.00 = 2.00x") {
-		t.Fatalf("long/short line missing:\n%s", got)
-	}
-}
-
-func TestFormatQuantDataRendersAllLongWithoutRatio(t *testing.T) {
-	engine := longShortEngine(t)
-	got := engine.formatQuantData(&QuantData{
-		Symbol: "BTCUSDT",
-		OI: map[string]*OIData{
-			"binance": {NetLong: 120},
-		},
-	})
-
-	if !strings.Contains(got, "long 120.00 / short 0.00 = all long") {
-		t.Fatalf("all-long line missing:\n%s", got)
-	}
-}
-
-// A venue that reports neither side must not produce a fabricated 0/0 line.
-func TestFormatQuantDataOmitsZeroLongShort(t *testing.T) {
-	engine := longShortEngine(t)
-	got := engine.formatQuantData(&QuantData{
-		Symbol: "BTCUSDT",
-		OI: map[string]*OIData{
-			"binance": {CurrentOI: 5_000_000, Delta: map[string]*OIDeltaData{
-				"1h": {OIDeltaPercent: 1.2, OIDeltaValue: 500},
-			}},
-		},
-	})
-
-	if strings.Contains(got, "Long/Short") {
-		t.Fatalf("long/short line must be omitted when both sides are zero:\n%s", got)
-	}
-	if !strings.Contains(got, "Open Interest (binance)") {
-		t.Fatalf("OI block should still render:\n%s", got)
-	}
-}
-
-func TestLongShortRatio(t *testing.T) {
-	cases := []struct {
-		long, short float64
-		want        string
-		ok          bool
-	}{
-		{120, 60, "2.00x", true},
-		{60, 120, "0.50x", true},
-		{10, 0, "all long", true},
-		{0, 0, "", false},
-	}
-	for _, tc := range cases {
-		got, ok := longShortRatio(tc.long, tc.short)
-		if got != tc.want || ok != tc.ok {
-			t.Fatalf("longShortRatio(%v, %v) = %q, %v; want %q, %v", tc.long, tc.short, got, ok, tc.want, tc.ok)
+	for _, want := range []string{
+		"Price Change: 1h: +1.2300%",
+		"Open Interest (binance): 5.00M",
+		"OI 1h: +3.1915%",
+		"Long/Short (binance): accounts 1.82x (long 64.5%) | top traders 1.40x (long 58.3%)",
+		"Taker flow 1h: buy 58.5% / sell 41.5%",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("quant block missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestFormatQuantDataOmitsEmptySections(t *testing.T) {
+	engine := quantEngine(t)
+
+	if got := engine.formatQuantData(&QuantData{Symbol: "BTCUSDT"}); got != "" {
+		t.Fatalf("an empty quant block must be omitted, got %q", got)
+	}
+
+	got := engine.formatQuantData(&QuantData{Symbol: "BTCUSDT", LongShort: &LongShortData{AccountRatio: 1.2, AccountLongPct: 54.5}})
+	if strings.Contains(got, "Open Interest") || strings.Contains(got, "Taker flow") {
+		t.Fatalf("absent sections must not render:\n%s", got)
+	}
+	if !strings.Contains(got, "Long/Short") {
+		t.Fatalf("the present section must render:\n%s", got)
 	}
 }

@@ -80,22 +80,6 @@ func GetFullDecisionWithStrategy(ctx *Context, mcpClient mcp.AIClient, engine *S
 	}
 	pruneCandidateCoinsWithoutMarketData(ctx)
 
-	// Ensure OITopDataMap is initialized
-	if ctx.OITopDataMap == nil {
-		ctx.OITopDataMap = make(map[string]*OITopData)
-		oiPositions, err := engine.nofxosClient.GetOITopPositions()
-		if err == nil {
-			for _, pos := range oiPositions {
-				ctx.OITopDataMap[pos.Symbol] = &OITopData{
-					Rank:              pos.Rank,
-					OIDeltaPercent:    pos.OIDeltaPercent,
-					OIDeltaValue:      pos.OIDeltaValue,
-					PriceDeltaPercent: pos.PriceDeltaPercent,
-				}
-			}
-		}
-	}
-
 	// 2. Build System Prompt using strategy engine
 	riskConfig := engine.GetRiskControlConfig()
 	systemPrompt := engine.BuildSystemPrompt(ctx.Account.TotalEquity, variant)

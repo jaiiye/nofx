@@ -136,10 +136,26 @@ type OIPoint struct {
 	OIUSD       float64
 }
 
-// PricePoint is one historical candle close.
+// PricePoint is one historical candle, reduced to what the local rankings and
+// quant data need.
 type PricePoint struct {
-	TimestampMs int64
-	Close       float64
+	TimestampMs   int64
+	Close         float64
+	QuoteVolume   float64
+	TakerBuyQuote float64
+}
+
+// LongShortReading is the venue's public long/short positioning. The account
+// ratio counts accounts; the top-trader ratio weights the largest positions, so
+// the gap between them is the retail-vs-big-trader divergence.
+type LongShortReading struct {
+	AccountRatio      float64 // long accounts / short accounts
+	AccountLongPct    float64
+	AccountShortPct   float64
+	TopTraderRatio    float64
+	TopTraderLongPct  float64
+	TopTraderShortPct float64
+	TimestampMs       int64
 }
 
 // OpenInterestHist returns historical open interest (5m..1d periods, last 30
@@ -212,7 +228,7 @@ func (c *Client) PriceHistory(ctx context.Context, symbol, interval string, limi
 
 	points := make([]PricePoint, 0, len(raw))
 	for _, row := range raw {
-		if len(row) < 5 {
+		if len(row) < 11 {
 			continue
 		}
 		var openTime int64
@@ -223,11 +239,84 @@ func (c *Client) PriceHistory(ctx context.Context, symbol, interval string, limi
 		if err := json.Unmarshal(row[4], &closePrice); err != nil {
 			continue
 		}
+		var quoteVolume, takerBuyQuote string
+		_ = json.Unmarshal(row[7], &quoteVolume)
+		_ = json.Unmarshal(row[10], &takerBuyQuote)
 		if price := parseFloat(closePrice); price > 0 {
-			points = append(points, PricePoint{TimestampMs: openTime, Close: price})
+			points = append(points, PricePoint{
+				TimestampMs:   openTime,
+				Close:         price,
+				QuoteVolume:   parseFloat(quoteVolume),
+				TakerBuyQuote: parseFloat(takerBuyQuote),
+			})
 		}
 	}
 	return points, nil
+}
+
+// LongShortRatio returns the public account and top-trader long/short ratios.
+// Both endpoints are keyless and cover the last 30 days.
+func (c *Client) LongShortRatio(ctx context.Context, symbol string) (*LongShortReading, error) {
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	if symbol == "" {
+		return nil, fmt.Errorf("symbol is required")
+	}
+
+	reading := &LongShortReading{}
+	account, accountErr := c.longShortPoint(ctx, "/futures/data/globalLongShortAccountRatio", symbol)
+	top, topErr := c.longShortPoint(ctx, "/futures/data/topLongShortPositionRatio", symbol)
+	if accountErr != nil && topErr != nil {
+		return nil, fmt.Errorf("long/short ratio unavailable: %v; %v", accountErr, topErr)
+	}
+	if accountErr == nil {
+		reading.AccountRatio = account.longShortRatio
+		reading.AccountLongPct = account.longAccount * 100
+		reading.AccountShortPct = account.shortAccount * 100
+		reading.TimestampMs = account.timestamp
+	}
+	if topErr == nil {
+		reading.TopTraderRatio = top.longShortRatio
+		reading.TopTraderLongPct = top.longAccount * 100
+		reading.TopTraderShortPct = top.shortAccount * 100
+		if reading.TimestampMs == 0 {
+			reading.TimestampMs = top.timestamp
+		}
+	}
+	return reading, nil
+}
+
+type longShortPoint struct {
+	longShortRatio float64
+	longAccount    float64
+	shortAccount   float64
+	timestamp      int64
+}
+
+func (c *Client) longShortPoint(ctx context.Context, path, symbol string) (longShortPoint, error) {
+	params := url.Values{
+		"symbol": {symbol},
+		"period": {"5m"},
+		"limit":  {"1"},
+	}
+	var raw []struct {
+		LongShortRatio string `json:"longShortRatio"`
+		LongAccount    string `json:"longAccount"`
+		ShortAccount   string `json:"shortAccount"`
+		Timestamp      int64  `json:"timestamp"`
+	}
+	if err := c.getJSON(ctx, path, params, &raw); err != nil {
+		return longShortPoint{}, err
+	}
+	if len(raw) == 0 {
+		return longShortPoint{}, fmt.Errorf("%s returned no points", path)
+	}
+	point := raw[len(raw)-1]
+	return longShortPoint{
+		longShortRatio: parseFloat(point.LongShortRatio),
+		longAccount:    parseFloat(point.LongAccount),
+		shortAccount:   parseFloat(point.ShortAccount),
+		timestamp:      point.Timestamp,
+	}, nil
 }
 
 // FundingInterval is how often Binance settles USD-M funding. It is a constant

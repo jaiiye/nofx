@@ -366,7 +366,6 @@ StrategyConfig fields:
   indicators.nofxos_api_key: ALWAYS "cm_568c67eae410d912c54c"
   indicators.enable_quant_data: ALWAYS true
   indicators.enable_quant_oi: ALWAYS true
-  indicators.enable_quant_netflow: ALWAYS true
   indicators.enable_oi_ranking: ALWAYS true, oi_ranking_duration:"1h", oi_ranking_limit:10
   indicators.enable_netflow_ranking: ALWAYS true, netflow_ranking_duration:"1h", netflow_ranking_limit:10
   indicators.enable_price_ranking: ALWAYS true, price_ranking_duration:"1h,4h,24h", price_ranking_limit:10

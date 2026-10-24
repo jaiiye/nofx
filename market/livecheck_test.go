@@ -95,6 +95,25 @@ func TestLiveUniverse(t *testing.T) {
 	t.Fatal("1h OI ranking still unavailable after bootstrap window")
 }
 
+func TestLiveTakerFlowRanking(t *testing.T) {
+	service := NewUniverseService()
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	service.poll(ctx)
+	ranking, ok := service.TakerFlowRanking(time.Hour, 3)
+	if !ok {
+		t.Fatal("taker flow ranking unavailable")
+	}
+	t.Logf("window=%s", ranking.Window)
+	for _, item := range ranking.Top {
+		t.Logf("  buy-dominant %-12s %.1f%% ($%.0f)", item.Symbol, item.BuySharePct, item.QuoteVolume)
+	}
+	for _, item := range ranking.Low {
+		t.Logf("  sell-dominant %-12s %.1f%% ($%.0f)", item.Symbol, item.BuySharePct, item.QuoteVolume)
+	}
+}
+
 func TestLiveVenueMetrics(t *testing.T) {
 	collector := NewVenueMetricsCollector(nil)
 	collector.SetSymbols([]string{"BTC", "ETH"})

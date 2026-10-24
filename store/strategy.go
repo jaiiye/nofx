@@ -1052,10 +1052,9 @@ type IndicatorConfig struct {
 	// Unified API Key for all NofxOS data sources
 	NofxOSAPIKey string `json:"nofxos_api_key,omitempty"`
 
-	// quantitative data sources (capital flow, position changes, price changes)
-	EnableQuantData    bool `json:"enable_quant_data"`    // whether to enable quantitative data
-	EnableQuantOI      bool `json:"enable_quant_oi"`      // whether to show OI data
-	EnableQuantNetflow bool `json:"enable_quant_netflow"` // whether to show Netflow data
+	// quantitative data sources (exchange-native, free)
+	EnableQuantData bool `json:"enable_quant_data"` // whether to enable quantitative data
+	EnableQuantOI   bool `json:"enable_quant_oi"`   // whether to show OI data
 
 	// OI ranking data (market-wide open interest increase/decrease rankings)
 	EnableOIRanking   bool   `json:"enable_oi_ranking"`             // whether to enable OI ranking data
@@ -1063,9 +1062,11 @@ type IndicatorConfig struct {
 	OIRankingLimit    int    `json:"oi_ranking_limit,omitempty"`    // number of entries (default 10)
 
 	// NetFlow ranking data (market-wide fund flow rankings - institution/personal)
-	EnableNetFlowRanking   bool   `json:"enable_netflow_ranking"`             // whether to enable NetFlow ranking data
-	NetFlowRankingDuration string `json:"netflow_ranking_duration,omitempty"` // duration: 1h, 4h, 24h
-	NetFlowRankingLimit    int    `json:"netflow_ranking_limit,omitempty"`    // number of entries (default 10)
+	// Taker flow ranking (market-wide buy/sell imbalance). The JSON keys keep
+	// their historical "netflow" names so existing strategies keep loading.
+	EnableTakerFlowRanking   bool   `json:"enable_netflow_ranking"`
+	TakerFlowRankingDuration string `json:"netflow_ranking_duration,omitempty"`
+	TakerFlowRankingLimit    int    `json:"netflow_ranking_limit,omitempty"`
 
 	// Price ranking data (market-wide gainers/losers)
 	EnablePriceRanking   bool   `json:"enable_price_ranking"`             // whether to enable price ranking data
@@ -1330,19 +1331,18 @@ func GetDefaultStrategyConfig(lang string) StrategyConfig {
 			BOLLMultiplier:       2.0,
 			// Hyperliquid strategies must use native Hyperliquid market data by default.
 			// NofxOS datasets do not cover all Hyperliquid XYZ assets, so keep them off.
-			NofxOSAPIKey:           "",
-			EnableQuantData:        false,
-			EnableQuantOI:          false,
-			EnableQuantNetflow:     false,
-			EnableOIRanking:        false,
-			OIRankingDuration:      "1h",
-			OIRankingLimit:         10,
-			EnableNetFlowRanking:   false,
-			NetFlowRankingDuration: "1h",
-			NetFlowRankingLimit:    10,
-			EnablePriceRanking:     false,
-			PriceRankingDuration:   "1h,4h,24h",
-			PriceRankingLimit:      10,
+			NofxOSAPIKey:             "",
+			EnableQuantData:          false,
+			EnableQuantOI:            false,
+			EnableOIRanking:          false,
+			OIRankingDuration:        "1h",
+			OIRankingLimit:           10,
+			EnableTakerFlowRanking:   false,
+			TakerFlowRankingDuration: "1h",
+			TakerFlowRankingLimit:    10,
+			EnablePriceRanking:       false,
+			PriceRankingDuration:     "1h,4h,24h",
+			PriceRankingLimit:        10,
 		},
 		RiskControl: RiskControlConfig{
 			MaxPositions:                 3,   // Max 3 coins simultaneously (CODE ENFORCED)
@@ -1800,12 +1800,8 @@ func (c *StrategyConfig) EstimateTokens() TokenEstimate {
 	if c.Indicators.EnableQuantData {
 		quantCharsPerCoin := 0
 		if c.Indicators.EnableQuantOI {
-			// OI windows plus the long/short exposure line per exchange (up to
-			// three exchanges; ~50 chars each).
+			// OI windows, the long/short line and the taker-flow line.
 			quantCharsPerCoin += 420
-		}
-		if c.Indicators.EnableQuantNetflow {
-			quantCharsPerCoin += 300
 		}
 		breakdown.QuantData = (numCoins * quantCharsPerCoin) / 4
 	}
@@ -1819,8 +1815,8 @@ func (c *StrategyConfig) EstimateTokens() TokenEstimate {
 		}
 		rankingChars += limit * 60
 	}
-	if c.Indicators.EnableNetFlowRanking {
-		limit := c.Indicators.NetFlowRankingLimit
+	if c.Indicators.EnableTakerFlowRanking {
+		limit := c.Indicators.TakerFlowRankingLimit
 		if limit <= 0 {
 			limit = 10
 		}

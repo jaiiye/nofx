@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"nofx/logger"
 	"nofx/market"
+	"nofx/provider/binance"
 	"nofx/provider/hyperliquid"
 	"nofx/provider/nofxos"
 	"nofx/security"
@@ -61,14 +62,6 @@ type CandidateCoin struct {
 	Sources []string `json:"sources"` // Sources: "ai500" and/or "oi_top"
 }
 
-// OITopData open interest growth top data (for AI decision reference)
-type OITopData struct {
-	Rank              int     // OI Top ranking
-	OIDeltaPercent    float64 // Open interest change percentage (1 hour)
-	OIDeltaValue      float64 // Open interest change value
-	PriceDeltaPercent float64 // Price change percentage
-}
-
 // TradingStats trading statistics (for AI input)
 type TradingStats struct {
 	TotalTrades    int     `json:"total_trades"`     // Total number of trades (closed)
@@ -116,15 +109,14 @@ type Context struct {
 	// summing OI across venues double-counts hedged exposure.
 	CrossVenueMap map[string]*market.CrossVenue `json:"-"`
 	// Liquidation flow per symbol (1h/15m windows, cascade flag).
-	LiquidationMap     map[string]*market.LiquidationReading `json:"-"`
-	OITopDataMap       map[string]*OITopData                 `json:"-"`
-	QuantDataMap       map[string]*QuantData                 `json:"-"`
-	OIRankingData      *market.OIRankingData                 `json:"-"` // Market-wide OI ranking data
-	NetFlowRankingData *nofxos.NetFlowRankingData            `json:"-"` // Market-wide taker-flow ranking data
-	PriceRankingData   *market.PriceRankingData              `json:"-"` // Market-wide price gainers/losers
-	BTCETHLeverage     int                                   `json:"-"`
-	AltcoinLeverage    int                                   `json:"-"`
-	Timeframes         []string                              `json:"-"`
+	LiquidationMap   map[string]*market.LiquidationReading `json:"-"`
+	QuantDataMap     map[string]*QuantData                 `json:"-"`
+	OIRankingData    *market.OIRankingData                 `json:"-"` // Market-wide OI ranking data
+	TakerFlowRanking *market.TakerFlowRanking              `json:"-"` // Market-wide buy/sell imbalance ranking
+	PriceRankingData *market.PriceRankingData              `json:"-"` // Market-wide price gainers/losers
+	BTCETHLeverage   int                                   `json:"-"`
+	AltcoinLeverage  int                                   `json:"-"`
+	Timeframes       []string                              `json:"-"`
 	// GoCtx is an optional stdlib context used to cancel the LLM call and
 	// its retry backoff. Nil means context.Background().
 	GoCtx context.Context `json:"-"`
@@ -170,33 +162,39 @@ type FullDecision struct {
 	AIRequestDurationMs int64      `json:"ai_request_duration_ms,omitempty"`
 }
 
-// QuantData quantitative data structure (fund flow, position changes, price changes)
+// QuantData quantitative data structure assembled from free exchange endpoints:
+// price changes and taker flow from klines, OI history from the public OI
+// endpoint, and the long/short ratio from Binance's public statistics.
 type QuantData struct {
 	Symbol      string             `json:"symbol"`
 	Price       float64            `json:"price"`
-	Netflow     *NetflowData       `json:"netflow,omitempty"`
 	OI          map[string]*OIData `json:"oi,omitempty"`
 	PriceChange map[string]float64 `json:"price_change,omitempty"`
+	LongShort   *LongShortData     `json:"long_short,omitempty"`
+	TakerFlow   *TakerFlowData     `json:"taker_flow,omitempty"`
 }
 
-type NetflowData struct {
-	Institution *FlowTypeData `json:"institution,omitempty"`
-	Personal    *FlowTypeData `json:"personal,omitempty"`
+// LongShortData is the venue's public long/short positioning. The account ratio
+// counts accounts; the top-trader ratio weights the largest positions, so their
+// gap is the retail-vs-big-trader divergence.
+type LongShortData struct {
+	AccountRatio     float64 `json:"account_ratio"`
+	AccountLongPct   float64 `json:"account_long_pct"`
+	TopTraderRatio   float64 `json:"top_trader_ratio"`
+	TopTraderLongPct float64 `json:"top_trader_long_pct"`
 }
 
-type FlowTypeData struct {
-	Future map[string]float64 `json:"future,omitempty"`
-	Spot   map[string]float64 `json:"spot,omitempty"`
+// TakerFlowData is the aggressor-side split over the last hour.
+type TakerFlowData struct {
+	Window      string  `json:"window"`
+	BuyUSD      float64 `json:"buy_usd"`
+	SellUSD     float64 `json:"sell_usd"`
+	BuySharePct float64 `json:"buy_share_pct"`
 }
 
 type OIData struct {
-	CurrentOI float64 `json:"current_oi"`
-	// NetLong / NetShort are the venue's reported long and short exposure.
-	// They arrive with the OI payload, so surfacing them costs no extra request;
-	// their ratio is the long/short reading the prompt uses.
-	NetLong  float64                 `json:"net_long,omitempty"`
-	NetShort float64                 `json:"net_short,omitempty"`
-	Delta    map[string]*OIDeltaData `json:"delta,omitempty"`
+	CurrentOI float64                 `json:"current_oi"`
+	Delta     map[string]*OIDeltaData `json:"delta,omitempty"`
 }
 
 type OIDeltaData struct {
@@ -213,11 +211,13 @@ type OIDeltaData struct {
 type StrategyEngine struct {
 	config       *store.StrategyConfig
 	nofxosClient *nofxos.Client
+	binance      *binance.Client
 }
 
 // NewStrategyEngine creates strategy execution engine.
 // claw402WalletKey is optional — if provided, nofxos data requests are routed through claw402.
 func NewStrategyEngine(config *store.StrategyConfig, claw402WalletKey ...string) *StrategyEngine {
+	engine := &StrategyEngine{config: config, binance: binance.NewClient()}
 	// Create NofxOS client with API key from config
 	apiKey := config.Indicators.NofxOSAPIKey
 	if apiKey == "" {
@@ -247,10 +247,8 @@ func NewStrategyEngine(config *store.StrategyConfig, claw402WalletKey ...string)
 		}
 	}
 
-	return &StrategyEngine{
-		config:       config,
-		nofxosClient: client,
-	}
+	engine.nofxosClient = client
+	return engine
 }
 
 func (e *StrategyEngine) usesHyperliquidNativeUniverse() bool {
@@ -848,93 +846,162 @@ func extractJSONPath(data interface{}, path string) interface{} {
 	return current
 }
 
-// FetchQuantData fetches quantitative data for a single coin
+// FetchQuantData assembles the prompt's quant block from free, keyless
+// endpoints. Three Binance requests per symbol are cached for five minutes, so
+// a normal cycle does not repeat them.
 func (e *StrategyEngine) FetchQuantData(symbol string) (*QuantData, error) {
 	if !e.config.Indicators.EnableQuantData {
 		return nil, nil
 	}
 	if e.usesHyperliquidNativeUniverse() || market.IsXyzDexAsset(symbol) {
-		logger.Infof("⏭️  Skipping NofxOS quant data for Hyperliquid symbol %s; using native Hyperliquid klines/mark data only", symbol)
+		logger.Infof("⏭️  Skipping exchange quant data for Hyperliquid symbol %s; using native Hyperliquid klines/mark data only", symbol)
 		return nil, nil
 	}
 
-	// Use nofxos client with unified API key
-	include := "oi,price"
-	if e.config.Indicators.EnableQuantNetflow {
-		include = "netflow,oi,price"
+	canonical := market.Normalize(symbol)
+	now := time.Now()
+	if cached := cachedQuantData(canonical, now); cached != nil {
+		return cached, nil
 	}
 
-	nofxosData, err := e.nofxosClient.GetCoinData(symbol, include)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch quant data: %w", err)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	oiPoints, oiErr := e.binance.OpenInterestHist(ctx, canonical, "5m", 289)
+	klines, klineErr := e.binance.PriceHistory(ctx, canonical, "5m", 289)
+	if oiErr != nil && klineErr != nil {
+		return nil, fmt.Errorf("free quant data unavailable for %s: %v; %v", canonical, oiErr, klineErr)
 	}
 
-	if nofxosData == nil {
-		return nil, nil
+	data := &QuantData{Symbol: canonical}
+	if klineErr == nil && len(klines) > 0 {
+		data.Price = klines[len(klines)-1].Close
+		data.PriceChange = priceChangesFromKlines(klines)
+		data.TakerFlow = takerFlowFromKlines(klines, 12)
 	}
-
-	return convertQuantData(nofxosData), nil
+	if oiErr == nil && len(oiPoints) > 0 {
+		data.OI = map[string]*OIData{"binance": oiDeltaFromPoints(oiPoints)}
+	}
+	if reading, err := e.binance.LongShortRatio(ctx, canonical); err == nil && reading != nil {
+		data.LongShort = &LongShortData{
+			AccountRatio:     reading.AccountRatio,
+			AccountLongPct:   reading.AccountLongPct,
+			TopTraderRatio:   reading.TopTraderRatio,
+			TopTraderLongPct: reading.TopTraderLongPct,
+		}
+	}
+	if data.OI == nil && data.LongShort == nil && len(data.PriceChange) == 0 {
+		return nil, fmt.Errorf("no free quant data for %s", canonical)
+	}
+	storeQuantData(canonical, data, now)
+	return data, nil
 }
 
-// convertQuantData maps the provider payload onto the prompt-facing type. It is
-// pure so the field mapping (including the long/short exposure that travels
-// with OI) can be tested without the network.
-func convertQuantData(nofxosData *nofxos.QuantData) *QuantData {
-	if nofxosData == nil {
+// quantWindows are the look-backs the prompt shows. Five-minute candles make
+// each count exact (1h = 12 candles, 24h = 288).
+var quantWindows = []struct {
+	Label   string
+	Candles int
+}{
+	{"5m", 1},
+	{"15m", 3},
+	{"1h", 12},
+	{"4h", 48},
+	{"12h", 144},
+	{"24h", 288},
+}
+
+func priceChangesFromKlines(points []binance.PricePoint) map[string]float64 {
+	changes := make(map[string]float64)
+	if len(points) == 0 {
+		return changes
+	}
+	current := points[len(points)-1].Close
+	for _, window := range quantWindows {
+		if len(points) <= window.Candles {
+			continue
+		}
+		past := points[len(points)-1-window.Candles].Close
+		if past > 0 {
+			changes[window.Label] = (current - past) / past
+		}
+	}
+	return changes
+}
+
+func oiDeltaFromPoints(points []binance.OIPoint) *OIData {
+	if len(points) == 0 {
 		return nil
 	}
-
-	quantData := &QuantData{
-		Symbol:      nofxosData.Symbol,
-		Price:       nofxosData.Price,
-		PriceChange: nofxosData.PriceChange,
-	}
-
-	// Convert OI data
-	if nofxosData.OI != nil {
-		quantData.OI = make(map[string]*OIData)
-		for exchange, oiData := range nofxosData.OI {
-			if oiData != nil {
-				kData := &OIData{
-					CurrentOI: oiData.CurrentOI,
-					NetLong:   oiData.NetLong,
-					NetShort:  oiData.NetShort,
-				}
-				if oiData.Delta != nil {
-					kData.Delta = make(map[string]*OIDeltaData)
-					for dur, delta := range oiData.Delta {
-						if delta != nil {
-							kData.Delta[dur] = &OIDeltaData{
-								OIDelta:        delta.OIDelta,
-								OIDeltaValue:   delta.OIDeltaValue,
-								OIDeltaPercent: delta.OIDeltaPercent,
-							}
-						}
-					}
-				}
-				quantData.OI[exchange] = kData
-			}
+	current := points[len(points)-1].OIUSD
+	data := &OIData{CurrentOI: current, Delta: make(map[string]*OIDeltaData)}
+	for _, window := range quantWindows {
+		if len(points) <= window.Candles {
+			continue
+		}
+		past := points[len(points)-1-window.Candles].OIUSD
+		if past <= 0 {
+			continue
+		}
+		delta := current - past
+		data.Delta[window.Label] = &OIDeltaData{
+			OIDelta:        delta,
+			OIDeltaValue:   delta,
+			OIDeltaPercent: delta / past * 100,
 		}
 	}
+	return data
+}
 
-	// Convert Netflow data
-	if nofxosData.Netflow != nil {
-		quantData.Netflow = &NetflowData{}
-		if nofxosData.Netflow.Institution != nil {
-			quantData.Netflow.Institution = &FlowTypeData{
-				Future: nofxosData.Netflow.Institution.Future,
-				Spot:   nofxosData.Netflow.Institution.Spot,
-			}
-		}
-		if nofxosData.Netflow.Personal != nil {
-			quantData.Netflow.Personal = &FlowTypeData{
-				Future: nofxosData.Netflow.Personal.Future,
-				Spot:   nofxosData.Netflow.Personal.Spot,
-			}
-		}
+func takerFlowFromKlines(points []binance.PricePoint, candles int) *TakerFlowData {
+	if len(points) < candles || candles <= 0 {
+		return nil
 	}
+	var quoteVolume, buyVolume float64
+	for _, point := range points[len(points)-candles:] {
+		quoteVolume += point.QuoteVolume
+		buyVolume += point.TakerBuyQuote
+	}
+	if quoteVolume <= 0 {
+		return nil
+	}
+	return &TakerFlowData{
+		Window:      "1h",
+		BuyUSD:      buyVolume,
+		SellUSD:     quoteVolume - buyVolume,
+		BuySharePct: buyVolume / quoteVolume * 100,
+	}
+}
 
-	return quantData
+const quantCacheTTL = 5 * time.Minute
+
+var quantCache struct {
+	mu    sync.Mutex
+	items map[string]quantCacheEntry
+}
+
+type quantCacheEntry struct {
+	data *QuantData
+	at   time.Time
+}
+
+func cachedQuantData(symbol string, now time.Time) *QuantData {
+	quantCache.mu.Lock()
+	defer quantCache.mu.Unlock()
+	entry, ok := quantCache.items[symbol]
+	if !ok || now.Sub(entry.at) > quantCacheTTL {
+		return nil
+	}
+	return entry.data
+}
+
+func storeQuantData(symbol string, data *QuantData, now time.Time) {
+	quantCache.mu.Lock()
+	defer quantCache.mu.Unlock()
+	if quantCache.items == nil {
+		quantCache.items = make(map[string]quantCacheEntry)
+	}
+	quantCache.items[symbol] = quantCacheEntry{data: data, at: now}
 }
 
 // FetchQuantDataBatch batch fetches quantitative data
@@ -1000,40 +1067,46 @@ func (e *StrategyEngine) FetchOIRankingData() *market.OIRankingData {
 	return &market.OIRankingData{Duration: duration, Top: top, Low: low, FetchedAt: time.Now()}
 }
 
-// FetchNetFlowRankingData fetches market-wide NetFlow ranking data
-func (e *StrategyEngine) FetchNetFlowRankingData() *nofxos.NetFlowRankingData {
+// FetchTakerFlowRankingData builds the market-wide buy/sell imbalance ranking
+// from local klines. It replaces the vendor "institutional vs retail" netflow,
+// which has no free equivalent; the label says exactly what it measures.
+func (e *StrategyEngine) FetchTakerFlowRankingData() *market.TakerFlowRanking {
 	indicators := e.config.Indicators
-	if !indicators.EnableNetFlowRanking {
+	if !indicators.EnableTakerFlowRanking {
 		return nil
 	}
 	if e.usesHyperliquidNativeUniverse() {
-		logger.Infof("⏭️  Skipping NofxOS netflow ranking for Hyperliquid strategy; native Hyperliquid universe is the source of truth")
+		logger.Infof("⏭️  Skipping taker flow ranking for Hyperliquid strategy; native Hyperliquid universe is the source of truth")
 		return nil
 	}
 
-	duration := indicators.NetFlowRankingDuration
+	duration := indicators.TakerFlowRankingDuration
 	if duration == "" {
 		duration = "1h"
 	}
-
-	limit := indicators.NetFlowRankingLimit
+	window, ok := rankingWindow(duration)
+	if !ok {
+		logger.Warnf("⚠️  Unsupported taker flow ranking duration %q, skipping", duration)
+		return nil
+	}
+	limit := indicators.TakerFlowRankingLimit
 	if limit <= 0 {
 		limit = 10
 	}
 
-	logger.Infof("💰 Fetching NetFlow ranking data (duration: %s, limit: %d)", duration, limit)
-
-	data, err := e.nofxosClient.GetNetFlowRanking(duration, limit)
-	if err != nil {
-		logger.Warnf("⚠️  Failed to fetch NetFlow ranking data: %v", err)
+	service := market.CurrentUniverse()
+	if service == nil {
 		return nil
 	}
+	e.ensureUniverse(service)
 
-	logger.Infof("✓ NetFlow ranking data ready: inst_in=%d, inst_out=%d, retail_in=%d, retail_out=%d",
-		len(data.InstitutionFutureTop), len(data.InstitutionFutureLow),
-		len(data.PersonalFutureTop), len(data.PersonalFutureLow))
-
-	return data
+	ranking, ok := service.TakerFlowRanking(window, limit)
+	if !ok {
+		logger.Infof("⏭️  Taker flow ranking (%s) unavailable: not enough liquid symbols responded", duration)
+		return nil
+	}
+	logger.Infof("✓ Taker flow ranking ready: %d top, %d low (%s)", len(ranking.Top), len(ranking.Low), duration)
+	return ranking
 }
 
 // FetchPriceRankingData builds the market-wide price ranking from the local

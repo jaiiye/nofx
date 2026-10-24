@@ -125,7 +125,6 @@ const stripNofxOSDataForHyperliquid = (config: StrategyConfig): StrategyConfig =
         nofxos_api_key: '',
         enable_quant_data: false,
         enable_quant_oi: false,
-        enable_quant_netflow: false,
         enable_oi_ranking: false,
         enable_netflow_ranking: false,
         enable_price_ranking: false,

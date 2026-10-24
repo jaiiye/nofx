@@ -40,6 +40,12 @@ const (
 	// looking for a baseline. One is not enough with mixed hourly and 5-minute
 	// cadences; more than a handful would just scan stale history.
 	universeWindowPairAttempts = 4
+	// universeTakerFlowSymbols bounds the taker-flow ranking to the most liquid
+	// contracts, because it needs one kline request per symbol.
+	universeTakerFlowSymbols = 40
+	// universeTakerFlowTTL caches that scan; the ranking does not need a tighter
+	// cadence than the rest of the universe.
+	universeTakerFlowTTL = 5 * time.Minute
 )
 
 // UniverseCoin is one contract's current state.
@@ -93,6 +99,22 @@ type PriceRankingData struct {
 	FetchedAt time.Time
 }
 
+// TakerFlowItem is one symbol's aggressor-side share over a window.
+type TakerFlowItem struct {
+	Rank        int
+	Symbol      string
+	BuySharePct float64
+	QuoteVolume float64
+}
+
+// TakerFlowRanking is the market-wide buy/sell imbalance ranking.
+type TakerFlowRanking struct {
+	Window    string
+	Top       []TakerFlowItem
+	Low       []TakerFlowItem
+	FetchedAt time.Time
+}
+
 // UniverseService polls the venue, keeps 24h of snapshots, and derives the
 // screener/rankings from them.
 type UniverseService struct {
@@ -108,6 +130,9 @@ type UniverseService struct {
 	stopped          bool
 	bootstrapRunning bool
 	bootstrapDone    bool
+	takerMu          sync.Mutex
+	takerCache       map[string]*TakerFlowRanking
+	takerAt          map[string]time.Time
 }
 
 var (
@@ -117,10 +142,12 @@ var (
 
 func NewUniverseService() *UniverseService {
 	return &UniverseService{
-		client:   bybit.NewClient(),
-		binance:  binance.NewClient(),
-		bySymbol: make(map[string]UniverseCoin),
-		history:  make(map[string][]universeSample),
+		client:     bybit.NewClient(),
+		binance:    binance.NewClient(),
+		bySymbol:   make(map[string]UniverseCoin),
+		history:    make(map[string][]universeSample),
+		takerCache: make(map[string]*TakerFlowRanking),
+		takerAt:    make(map[string]time.Time),
 	}
 }
 
@@ -460,6 +487,128 @@ func (s *UniverseService) PriceRanking(window time.Duration, limit int) (top, lo
 	})
 	top, low = splitTopLow(items, limit)
 	return top, low, true
+}
+
+// TakerFlowRanking ranks the most liquid contracts by aggressor buy share over
+// the window. It needs one hourly kline request per symbol, so it is limited to
+// the top of the universe and cached for a full poll interval.
+func (s *UniverseService) TakerFlowRanking(window time.Duration, limit int) (*TakerFlowRanking, bool) {
+	if s == nil || window <= 0 || window > universeHistoryWindow {
+		return nil, false
+	}
+	key := window.String()
+	now := time.Now()
+
+	s.takerMu.Lock()
+	if cached, ok := s.takerCache[key]; ok && now.Sub(s.takerAt[key]) < universeTakerFlowTTL {
+		s.takerMu.Unlock()
+		return cached, true
+	}
+	s.takerMu.Unlock()
+
+	coins := s.Screener(universeTakerFlowSymbols)
+	hours := int(window / time.Hour)
+	if hours <= 0 {
+		hours = 1
+	}
+	if len(coins) < universeMinRankedSymbols {
+		return nil, false
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	type result struct {
+		symbol string
+		share  float64
+		volume float64
+		ok     bool
+	}
+	results := make(chan result, len(coins))
+	var wg sync.WaitGroup
+	gate := make(chan struct{}, 4)
+	for _, coin := range coins {
+		wg.Add(1)
+		go func(coin UniverseCoin) {
+			defer wg.Done()
+			gate <- struct{}{}
+			defer func() { <-gate }()
+
+			points, err := s.binance.PriceHistory(ctx, coin.VenueSymbol, "1h", hours)
+			if err != nil || len(points) < hours {
+				results <- result{}
+				return
+			}
+			var quoteVolume, buyVolume float64
+			for _, point := range points[len(points)-hours:] {
+				quoteVolume += point.QuoteVolume
+				buyVolume += point.TakerBuyQuote
+			}
+			if quoteVolume <= 0 {
+				results <- result{}
+				return
+			}
+			results <- result{
+				symbol: coin.Symbol,
+				share:  buyVolume / quoteVolume * 100,
+				volume: quoteVolume,
+				ok:     true,
+			}
+		}(coin)
+	}
+	wg.Wait()
+	close(results)
+
+	items := make([]TakerFlowItem, 0, len(coins))
+	for result := range results {
+		if result.ok {
+			items = append(items, TakerFlowItem{
+				Symbol:      result.symbol,
+				BuySharePct: result.share,
+				QuoteVolume: result.volume,
+			})
+		}
+	}
+	if len(items) < universeMinRankedSymbols {
+		return nil, false
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].BuySharePct != items[j].BuySharePct {
+			return items[i].BuySharePct > items[j].BuySharePct
+		}
+		return items[i].Symbol < items[j].Symbol
+	})
+	if limit <= 0 {
+		limit = 10
+	}
+	top, low := splitTakerFlow(items, limit)
+
+	ranking := &TakerFlowRanking{Window: key, Top: top, Low: low, FetchedAt: now}
+	s.takerMu.Lock()
+	s.takerCache[key] = ranking
+	s.takerAt[key] = now
+	s.takerMu.Unlock()
+	return ranking, true
+}
+
+func splitTakerFlow(items []TakerFlowItem, limit int) (top, low []TakerFlowItem) {
+	if len(items) > limit {
+		top = append([]TakerFlowItem(nil), items[:limit]...)
+		low = append([]TakerFlowItem(nil), items[len(items)-limit:]...)
+	} else {
+		top = append([]TakerFlowItem(nil), items...)
+		low = append([]TakerFlowItem(nil), items...)
+	}
+	for i, j := 0, len(low)-1; i < j; i, j = i+1, j-1 {
+		low[i], low[j] = low[j], low[i]
+	}
+	for i := range top {
+		top[i].Rank = i + 1
+	}
+	for i := range low {
+		low[i].Rank = i + 1
+	}
+	return top, low
 }
 
 // bootstrap seeds hourly OI and price history for the most liquid contracts

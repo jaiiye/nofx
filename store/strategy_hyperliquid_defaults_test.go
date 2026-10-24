@@ -9,7 +9,7 @@ func TestDefaultHyperliquidStrategyDoesNotEnableNofxOSData(t *testing.T) {
 	if ind.NofxOSAPIKey != "" {
 		t.Fatalf("default should not include a NofxOS API key for Hyperliquid strategies")
 	}
-	if ind.EnableQuantData || ind.EnableQuantOI || ind.EnableQuantNetflow || ind.EnableOIRanking || ind.EnableNetFlowRanking || ind.EnablePriceRanking {
+	if ind.EnableQuantData || ind.EnableQuantOI || ind.EnableOIRanking || ind.EnableTakerFlowRanking || ind.EnablePriceRanking {
 		t.Fatalf("default Hyperliquid strategy must not enable NofxOS datasets: %+v", ind)
 	}
 	if !ind.EnableRawKlines {

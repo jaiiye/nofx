@@ -46,7 +46,7 @@ func validateStrategyConfig(config *store.StrategyConfig) []string {
 
 	// Validate NofxOS API key if any NofxOS feature is enabled
 	if (config.Indicators.EnableQuantData || config.Indicators.EnableOIRanking ||
-		config.Indicators.EnableNetFlowRanking || config.Indicators.EnablePriceRanking) &&
+		config.Indicators.EnableTakerFlowRanking || config.Indicators.EnablePriceRanking) &&
 		config.Indicators.NofxOSAPIKey == "" {
 		warnings = append(warnings, "NofxOS API key is not configured. NofxOS data sources may not work properly.")
 	}
@@ -665,7 +665,7 @@ func (s *Server) handleStrategyTestRun(c *gin.Context) {
 	oiRankingData := engine.FetchOIRankingData()
 
 	// Fetch NetFlow ranking data (market-wide fund flow)
-	netFlowRankingData := engine.FetchNetFlowRankingData()
+	takerFlowRankingData := engine.FetchTakerFlowRankingData()
 
 	// Fetch Price ranking data (market-wide gainers/losers)
 	priceRankingData := engine.FetchPriceRankingData()
@@ -698,15 +698,15 @@ func (s *Server) handleStrategyTestRun(c *gin.Context) {
 			MarginUsedPct:    0,
 			PositionCount:    0,
 		},
-		Positions:          []kernel.PositionInfo{},
-		CandidateCoins:     candidates,
-		MarketDataMap:      marketDataMap,
-		QuantDataMap:       quantDataMap,
-		CrossVenueMap:      crossVenueMap,
-		LiquidationMap:     liquidationMap,
-		OIRankingData:      oiRankingData,
-		NetFlowRankingData: netFlowRankingData,
-		PriceRankingData:   priceRankingData,
+		Positions:        []kernel.PositionInfo{},
+		CandidateCoins:   candidates,
+		MarketDataMap:    marketDataMap,
+		QuantDataMap:     quantDataMap,
+		CrossVenueMap:    crossVenueMap,
+		LiquidationMap:   liquidationMap,
+		OIRankingData:    oiRankingData,
+		TakerFlowRanking: takerFlowRankingData,
+		PriceRankingData: priceRankingData,
 	}
 
 	// Build System Prompt

@@ -1154,7 +1154,7 @@ func formatStrategyCreateFinalConfirmation(lang string, session skillSession, cf
 				fmt.Sprintf("- 指标：%s", formatEnabledAIIndicatorsZH(cfg)),
 				fmt.Sprintf("- NofxOS 量化数据：%t", cfg.Indicators.EnableQuantData),
 				fmt.Sprintf("- OI 排行数据：%t（%s / %d）", cfg.Indicators.EnableOIRanking, defaultIfEmpty(cfg.Indicators.OIRankingDuration, "未设置"), cfg.Indicators.OIRankingLimit),
-				fmt.Sprintf("- 资金流排行数据：%t（%s / %d）", cfg.Indicators.EnableNetFlowRanking, defaultIfEmpty(cfg.Indicators.NetFlowRankingDuration, "未设置"), cfg.Indicators.NetFlowRankingLimit),
+				fmt.Sprintf("- 资金流排行数据：%t（%s / %d）", cfg.Indicators.EnableTakerFlowRanking, defaultIfEmpty(cfg.Indicators.TakerFlowRankingDuration, "未设置"), cfg.Indicators.TakerFlowRankingLimit),
 				fmt.Sprintf("- 涨跌幅排行数据：%t（%s / %d）", cfg.Indicators.EnablePriceRanking, defaultIfEmpty(cfg.Indicators.PriceRankingDuration, "未设置"), cfg.Indicators.PriceRankingLimit),
 				fmt.Sprintf("- BTC/ETH 最大杠杆：%d倍", cfg.RiskControl.BTCETHMaxLeverage),
 				fmt.Sprintf("- 山寨币最大杠杆：%d倍", cfg.RiskControl.AltcoinMaxLeverage),
@@ -1763,12 +1763,12 @@ func formatStrategyDetailResponse(lang string, strategy *store.Strategy, cfg sto
 		if len(indicatorBits) > 0 {
 			lines = append(lines, "- 已启用指标："+strings.Join(indicatorBits, "、"))
 		}
-		if strings.TrimSpace(cfg.Indicators.NofxOSAPIKey) != "" || cfg.Indicators.EnableQuantData || cfg.Indicators.EnableOIRanking || cfg.Indicators.EnableNetFlowRanking || cfg.Indicators.EnablePriceRanking {
+		if strings.TrimSpace(cfg.Indicators.NofxOSAPIKey) != "" || cfg.Indicators.EnableQuantData || cfg.Indicators.EnableOIRanking || cfg.Indicators.EnableTakerFlowRanking || cfg.Indicators.EnablePriceRanking {
 			lines = append(lines, fmt.Sprintf("- NofxOS 数据：API Key=%t，量化数据=%t，OI 排行=%t，净流入排行=%t，价格排行=%t",
 				strings.TrimSpace(cfg.Indicators.NofxOSAPIKey) != "",
 				cfg.Indicators.EnableQuantData,
 				cfg.Indicators.EnableOIRanking,
-				cfg.Indicators.EnableNetFlowRanking,
+				cfg.Indicators.EnableTakerFlowRanking,
 				cfg.Indicators.EnablePriceRanking,
 			))
 		}
@@ -1820,12 +1820,12 @@ func formatStrategyDetailResponse(lang string, strategy *store.Strategy, cfg sto
 	if len(indicatorBits) > 0 {
 		lines = append(lines, "- Enabled indicators: "+strings.Join(indicatorBits, ", "))
 	}
-	if strings.TrimSpace(cfg.Indicators.NofxOSAPIKey) != "" || cfg.Indicators.EnableQuantData || cfg.Indicators.EnableOIRanking || cfg.Indicators.EnableNetFlowRanking || cfg.Indicators.EnablePriceRanking {
+	if strings.TrimSpace(cfg.Indicators.NofxOSAPIKey) != "" || cfg.Indicators.EnableQuantData || cfg.Indicators.EnableOIRanking || cfg.Indicators.EnableTakerFlowRanking || cfg.Indicators.EnablePriceRanking {
 		lines = append(lines, fmt.Sprintf("- NofxOS data: API key=%t, quant data=%t, OI ranking=%t, netflow ranking=%t, price ranking=%t",
 			strings.TrimSpace(cfg.Indicators.NofxOSAPIKey) != "",
 			cfg.Indicators.EnableQuantData,
 			cfg.Indicators.EnableOIRanking,
-			cfg.Indicators.EnableNetFlowRanking,
+			cfg.Indicators.EnableTakerFlowRanking,
 			cfg.Indicators.EnablePriceRanking,
 		))
 	}

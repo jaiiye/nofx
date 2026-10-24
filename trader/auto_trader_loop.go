@@ -727,13 +727,13 @@ func (at *AutoTrader) buildTradingContext() (*kernel.Context, error) {
 		}
 	}
 
-	// 10. Get NetFlow ranking data (market-wide fund flow)
-	if strategyConfig.Indicators.EnableNetFlowRanking {
-		logger.Infof("💰 [%s] Fetching NetFlow ranking data...", at.name)
-		ctx.NetFlowRankingData = at.strategyEngine.FetchNetFlowRankingData()
-		if ctx.NetFlowRankingData != nil {
-			logger.Infof("💰 [%s] NetFlow ranking data ready: inst_in=%d, inst_out=%d",
-				at.name, len(ctx.NetFlowRankingData.InstitutionFutureTop), len(ctx.NetFlowRankingData.InstitutionFutureLow))
+	// 10. Get Taker Flow ranking data (market-wide buy/sell imbalance)
+	if strategyConfig.Indicators.EnableTakerFlowRanking {
+		logger.Infof("💰 [%s] Fetching taker flow ranking data...", at.name)
+		ctx.TakerFlowRanking = at.strategyEngine.FetchTakerFlowRankingData()
+		if ctx.TakerFlowRanking != nil {
+			logger.Infof("💰 [%s] Taker flow ranking data ready: %d top, %d low",
+				at.name, len(ctx.TakerFlowRanking.Top), len(ctx.TakerFlowRanking.Low))
 		}
 	}
 

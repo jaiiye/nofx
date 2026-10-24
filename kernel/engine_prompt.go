@@ -5,7 +5,6 @@ import (
 	"math"
 	"nofx/market"
 	"nofx/provider/hyperliquid"
-	"nofx/provider/nofxos"
 	"nofx/store"
 	"sort"
 	"strconv"
@@ -1017,20 +1016,14 @@ func (e *StrategyEngine) BuildUserPrompt(ctx *Context) string {
 	sb.WriteString(candidateBody.String())
 	sb.WriteString("\n")
 
-	// Get language for market data formatting
-	nofxosLang := nofxos.LangEnglish
-	if e.GetLanguage() == LangChinese {
-		nofxosLang = nofxos.LangChinese
-	}
-
 	// OI Ranking data (market-wide open interest changes)
 	if ctx.OIRankingData != nil {
 		sb.WriteString(e.formatOIRanking(ctx.OIRankingData))
 	}
 
 	// Taker flow ranking (market-wide buy/sell imbalance)
-	if ctx.NetFlowRankingData != nil {
-		sb.WriteString(nofxos.FormatNetFlowRankingForAI(ctx.NetFlowRankingData, nofxosLang))
+	if ctx.TakerFlowRanking != nil {
+		sb.WriteString(e.formatTakerFlowRanking(ctx.TakerFlowRanking))
 	}
 
 	// Price Ranking data (market-wide gainers/losers)
@@ -1977,7 +1970,7 @@ func (e *StrategyEngine) formatQuantData(data *QuantData) string {
 	}
 
 	indicators := e.config.Indicators
-	if !indicators.EnableQuantOI && !indicators.EnableQuantNetflow {
+	if len(data.PriceChange) == 0 && len(data.OI) == 0 && data.LongShort == nil && data.TakerFlow == nil {
 		return ""
 	}
 
@@ -1997,87 +1990,39 @@ func (e *StrategyEngine) formatQuantData(data *QuantData) string {
 		sb.WriteString("\n")
 	}
 
-	if indicators.EnableQuantNetflow && data.Netflow != nil {
-		sb.WriteString("Fund Flow (Netflow):\n")
-		timeframes := []string{"5m", "15m", "1h", "4h", "12h", "24h"}
-
-		if data.Netflow.Institution != nil {
-			if data.Netflow.Institution.Future != nil && len(data.Netflow.Institution.Future) > 0 {
-				sb.WriteString("  Institutional Futures:\n")
-				for _, tf := range timeframes {
-					if v, ok := data.Netflow.Institution.Future[tf]; ok {
-						sb.WriteString(fmt.Sprintf("    %s: %s\n", tf, formatFlowValue(v)))
-					}
-				}
+	if indicators.EnableQuantOI && len(data.OI) > 0 {
+		for exchange, oiData := range data.OI {
+			if oiData.CurrentOI > 0 {
+				sb.WriteString(fmt.Sprintf("Open Interest (%s): %s\n", exchange, formatUSDCompact(oiData.CurrentOI)))
 			}
-			if data.Netflow.Institution.Spot != nil && len(data.Netflow.Institution.Spot) > 0 {
-				sb.WriteString("  Institutional Spot:\n")
-				for _, tf := range timeframes {
-					if v, ok := data.Netflow.Institution.Spot[tf]; ok {
-						sb.WriteString(fmt.Sprintf("    %s: %s\n", tf, formatFlowValue(v)))
-					}
-				}
-			}
-		}
-
-		if data.Netflow.Personal != nil {
-			if data.Netflow.Personal.Future != nil && len(data.Netflow.Personal.Future) > 0 {
-				sb.WriteString("  Retail Futures:\n")
-				for _, tf := range timeframes {
-					if v, ok := data.Netflow.Personal.Future[tf]; ok {
-						sb.WriteString(fmt.Sprintf("    %s: %s\n", tf, formatFlowValue(v)))
-					}
-				}
-			}
-			if data.Netflow.Personal.Spot != nil && len(data.Netflow.Personal.Spot) > 0 {
-				sb.WriteString("  Retail Spot:\n")
-				for _, tf := range timeframes {
-					if v, ok := data.Netflow.Personal.Spot[tf]; ok {
-						sb.WriteString(fmt.Sprintf("    %s: %s\n", tf, formatFlowValue(v)))
-					}
+			for _, tf := range []string{"5m", "15m", "1h", "4h", "12h", "24h"} {
+				if d, ok := oiData.Delta[tf]; ok {
+					sb.WriteString(fmt.Sprintf("    OI %s: %+.4f%% (%s)\n", tf, d.OIDeltaPercent, formatFlowValue(d.OIDeltaValue)))
 				}
 			}
 		}
 	}
 
-	if indicators.EnableQuantOI && len(data.OI) > 0 {
-		for exchange, oiData := range data.OI {
-			// Long/short exposure travels with the OI payload; render it even
-			// when no delta window is present, and omit it when the venue
-			// reports neither side.
-			if oiData.NetLong > 0 || oiData.NetShort > 0 {
-				sb.WriteString(fmt.Sprintf("Long/Short (%s): long %.2f / short %.2f",
-					exchange, oiData.NetLong, oiData.NetShort))
-				if ratio, ok := longShortRatio(oiData.NetLong, oiData.NetShort); ok {
-					sb.WriteString(fmt.Sprintf(" = %s", ratio))
-				}
-				sb.WriteString("\n")
-			}
-			if len(oiData.Delta) > 0 {
-				sb.WriteString(fmt.Sprintf("Open Interest (%s):\n", exchange))
-				for _, tf := range []string{"5m", "15m", "1h", "4h", "12h", "24h"} {
-					if d, ok := oiData.Delta[tf]; ok {
-						sb.WriteString(fmt.Sprintf("    %s: %+.4f%% (%s)\n", tf, d.OIDeltaPercent, formatFlowValue(d.OIDeltaValue)))
-					}
-				}
-			}
+	// Long/short is the venue's public account and top-trader ratio. The gap
+	// between the two is the retail-vs-big-trader divergence.
+	if ls := data.LongShort; ls != nil && (ls.AccountRatio > 0 || ls.TopTraderRatio > 0) {
+		sb.WriteString("Long/Short (binance):")
+		if ls.AccountRatio > 0 {
+			sb.WriteString(fmt.Sprintf(" accounts %.2fx (long %.1f%%)", ls.AccountRatio, ls.AccountLongPct))
 		}
+		if ls.TopTraderRatio > 0 {
+			sb.WriteString(fmt.Sprintf(" | top traders %.2fx (long %.1f%%)", ls.TopTraderRatio, ls.TopTraderLongPct))
+		}
+		sb.WriteString("\n")
+	}
+
+	if flow := data.TakerFlow; flow != nil {
+		sb.WriteString(fmt.Sprintf("Taker flow %s: buy %.1f%% / sell %.1f%% (buy %s / sell %s)\n",
+			flow.Window, flow.BuySharePct, 100-flow.BuySharePct,
+			formatUSDCompact(flow.BuyUSD), formatUSDCompact(flow.SellUSD)))
 	}
 
 	return sb.String()
-}
-
-// longShortRatio renders the long/short exposure ratio. It is unit-independent,
-// so it stays meaningful whatever scale the source reports the two sides in.
-func longShortRatio(netLong, netShort float64) (string, bool) {
-	switch {
-	case netShort > 0:
-		return fmt.Sprintf("%.2fx", netLong/netShort), true
-	case netLong > 0:
-		return "all long", true
-	default:
-		return "", false
-	}
 }
 
 // formatOIRanking renders the local market-wide open-interest ranking.
@@ -2157,6 +2102,46 @@ func (e *StrategyEngine) formatPriceRanking(data *market.PriceRankingData) strin
 				item.Symbol, item.ChangePct, item.Price, formatUSDCompact(item.OIUSD)))
 		}
 		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+// formatTakerFlowRanking renders the market-wide buy/sell imbalance ranking.
+// It replaces the vendor "institutional vs retail netflow", which cannot be
+// derived from free data, so the label states exactly what is measured.
+func (e *StrategyEngine) formatTakerFlowRanking(data *market.TakerFlowRanking) string {
+	if data == nil || (len(data.Top) == 0 && len(data.Low) == 0) {
+		return ""
+	}
+	zh := e.GetLanguage() == LangChinese
+
+	var sb strings.Builder
+	if zh {
+		sb.WriteString(fmt.Sprintf("## 主动买卖失衡排行 (%s)\n\n", data.Window))
+		sb.WriteString("**买方主导**\n| 排名 | 币种 | 主动买占比 | 成交额(USD) |\n|---|---|---|---|\n")
+		for _, item := range data.Top {
+			sb.WriteString(fmt.Sprintf("| %d | %s | %.1f%% | %s |\n",
+				item.Rank, item.Symbol, item.BuySharePct, formatUSDCompact(item.QuoteVolume)))
+		}
+		sb.WriteString("\n**卖方主导**\n| 排名 | 币种 | 主动买占比 | 成交额(USD) |\n|---|---|---|---|\n")
+		for _, item := range data.Low {
+			sb.WriteString(fmt.Sprintf("| %d | %s | %.1f%% | %s |\n",
+				item.Rank, item.Symbol, item.BuySharePct, formatUSDCompact(item.QuoteVolume)))
+		}
+		sb.WriteString("\n**口径**: 主动买占比 = 主动买成交额 / 总成交额；>50% 表示主动买方占优。这是成交失衡，不是机构/散户资金流。\n\n")
+	} else {
+		sb.WriteString(fmt.Sprintf("## Taker Flow Ranking (%s)\n\n", data.Window))
+		sb.WriteString("**Buyer-dominant**\n| Rank | Symbol | Buy share | Turnover (USD) |\n|---|---|---|---|\n")
+		for _, item := range data.Top {
+			sb.WriteString(fmt.Sprintf("| %d | %s | %.1f%% | %s |\n",
+				item.Rank, item.Symbol, item.BuySharePct, formatUSDCompact(item.QuoteVolume)))
+		}
+		sb.WriteString("\n**Seller-dominant**\n| Rank | Symbol | Buy share | Turnover (USD) |\n|---|---|---|---|\n")
+		for _, item := range data.Low {
+			sb.WriteString(fmt.Sprintf("| %d | %s | %.1f%% | %s |\n",
+				item.Rank, item.Symbol, item.BuySharePct, formatUSDCompact(item.QuoteVolume)))
+		}
+		sb.WriteString("\n**Definition**: buy share = taker-buy quote volume / total quote volume; above 50% means aggressive buyers dominate. This is trade imbalance, not institutional/retail netflow.\n\n")
 	}
 	return sb.String()
 }

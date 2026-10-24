@@ -26,23 +26,41 @@
     },
     "lang": {
       "type": "enum",
-      "values": ["zh", "en"],
+      "values": [
+        "zh",
+        "en"
+      ],
       "default": "zh",
       "description": "策略语言，zh 或 en，影响 AI 决策时使用的语言。"
     },
     "strategy_type": {
       "type": "enum",
-      "values": ["ai_trading", "grid_trading"],
+      "values": [
+        "ai_trading",
+        "grid_trading"
+      ],
       "description": "策略类型：ai_trading（AI 量化）或 grid_trading（网格策略）。创建策略时必须先由用户选择或从用户话语明确识别，不能默认成 ai_trading。"
     },
     "symbol": {
       "type": "enum",
-      "values": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT"],
+      "values": [
+        "BTCUSDT",
+        "ETHUSDT",
+        "SOLUSDT",
+        "BNBUSDT",
+        "XRPUSDT",
+        "DOGEUSDT"
+      ],
       "description": "网格策略页面交易对下拉选项，只能从 BTCUSDT、ETHUSDT、SOLUSDT、BNBUSDT、XRPUSDT、DOGEUSDT 中选择。用户问“交易对有哪些选项”时，直接列出这些选项。"
     },
     "source_type": {
       "type": "enum",
-      "values": ["static", "ai500", "oi_top", "oi_low"],
+      "values": [
+        "static",
+        "ai500",
+        "oi_top",
+        "oi_low"
+      ],
       "description": "选币来源类型。static=用户指定静态币池，ai500=AI500榜单，oi_top=持仓量增长，oi_low=持仓量下降。"
     },
     "static_coins": {
@@ -56,12 +74,42 @@
     },
     "primary_timeframe": {
       "type": "string",
-      "values": ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "3d", "1w"],
+      "values": [
+        "1m",
+        "3m",
+        "5m",
+        "15m",
+        "30m",
+        "1h",
+        "2h",
+        "4h",
+        "6h",
+        "8h",
+        "12h",
+        "1d",
+        "3d",
+        "1w"
+      ],
       "description": "主 K 线周期，例如 5m、15m、1h。"
     },
     "selected_timeframes": {
       "type": "string_array",
-      "values": ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "3d", "1w"],
+      "values": [
+        "1m",
+        "3m",
+        "5m",
+        "15m",
+        "30m",
+        "1h",
+        "2h",
+        "4h",
+        "6h",
+        "8h",
+        "12h",
+        "1d",
+        "3d",
+        "1w"
+      ],
       "max_items": 4,
       "description": "多周期分析时间框架列表，例如 [\"5m\",\"15m\",\"1h\"]；手动页面最多选择 4 个。"
     },
@@ -136,7 +184,11 @@
     },
     "distribution": {
       "type": "enum",
-      "values": ["uniform", "gaussian", "pyramid"],
+      "values": [
+        "uniform",
+        "gaussian",
+        "pyramid"
+      ],
       "description": "网格分布方式：uniform=均匀，gaussian=正态，pyramid=金字塔。"
     },
     "use_atr_bounds": {
@@ -293,11 +345,6 @@
       "default": false,
       "description": "是否启用量化持仓量数据。"
     },
-    "enable_quant_netflow": {
-      "type": "bool",
-      "default": false,
-      "description": "是否启用量化净流入数据。"
-    },
     "enable_oi_ranking": {
       "type": "bool",
       "default": false,
@@ -305,7 +352,11 @@
     },
     "oi_ranking_duration": {
       "type": "enum",
-      "values": ["1h", "4h", "24h"],
+      "values": [
+        "1h",
+        "4h",
+        "24h"
+      ],
       "description": "OI 排行榜统计周期，页面选项为 1h、4h、24h。"
     },
     "oi_ranking_limit": {
@@ -321,7 +372,11 @@
     },
     "netflow_ranking_duration": {
       "type": "enum",
-      "values": ["1h", "4h", "24h"],
+      "values": [
+        "1h",
+        "4h",
+        "24h"
+      ],
       "description": "净流入排行榜统计周期，页面选项为 1h、4h、24h。"
     },
     "netflow_ranking_limit": {
@@ -337,7 +392,12 @@
     },
     "price_ranking_duration": {
       "type": "enum",
-      "values": ["1h", "4h", "24h", "1h,4h,24h"],
+      "values": [
+        "1h",
+        "4h",
+        "24h",
+        "1h,4h,24h"
+      ],
       "description": "价格排行榜统计周期，页面选项为 1h、4h、24h、1h,4h,24h。"
     },
     "price_ranking_limit": {
@@ -354,16 +414,29 @@
   "actions": {
     "create": {
       "description": "创建策略模板。",
-      "required_slots": ["name"],
-      "optional_slots": ["strategy_type", "config_patch"],
+      "required_slots": [
+        "name"
+      ],
+      "optional_slots": [
+        "strategy_type",
+        "config_patch"
+      ],
       "goal": "创建一个可供 trader 绑定使用的策略模板。",
       "success_output": "返回 strategy_id 和新策略摘要（名称、类型、主要配置）。",
       "failure_output": "明确指出仍缺哪些核心参数，或说明需要先确认的风控收敛结果。"
     },
     "update": {
       "description": "更新策略模板的任意可编辑字段。",
-      "required_slots": ["target_ref"],
-      "optional_slots": ["name", "description", "is_public", "config_visible", "config_patch"],
+      "required_slots": [
+        "target_ref"
+      ],
+      "optional_slots": [
+        "name",
+        "description",
+        "is_public",
+        "config_visible",
+        "config_patch"
+      ],
       "goal": "更新一个已有策略模板的指定配置，而不覆盖未提及字段。",
       "dynamic_rules": [
         "只更新用户明确提到的字段，不要覆盖未提及的字段。",
@@ -375,7 +448,10 @@
     },
     "update_name": {
       "description": "仅修改策略模板名称。",
-      "required_slots": ["target_ref", "name"],
+      "required_slots": [
+        "target_ref",
+        "name"
+      ],
       "goal": "仅修改策略模板名称。",
       "dynamic_rules": [
         "若输入里还包含其他配置项，应优先转去更通用的 update 或 update_config。"
@@ -385,8 +461,16 @@
     },
     "update_prompt": {
       "description": "仅修改策略的 custom_prompt 或 prompt_sections（role_definition、trading_frequency、entry_standards、decision_process）。",
-      "required_slots": ["target_ref"],
-      "optional_slots": ["custom_prompt", "role_definition", "trading_frequency", "entry_standards", "decision_process"],
+      "required_slots": [
+        "target_ref"
+      ],
+      "optional_slots": [
+        "custom_prompt",
+        "role_definition",
+        "trading_frequency",
+        "entry_standards",
+        "decision_process"
+      ],
       "goal": "更新策略模板的提示词相关内容，而不改动其他配置。",
       "dynamic_rules": [
         "若用户一次修改多个 prompt section，应整体应用并在结果里清楚说明。",
@@ -399,8 +483,12 @@
     },
     "update_config": {
       "description": "修改策略的某个具体配置参数（选币来源、指标、风控参数等）。",
-      "required_slots": ["target_ref"],
-      "optional_slots": ["config_patch"],
+      "required_slots": [
+        "target_ref"
+      ],
+      "optional_slots": [
+        "config_patch"
+      ],
       "goal": "修改策略模板中的一个或一组具体配置参数。",
       "dynamic_rules": [
         "配置变更统一通过 config_patch 表达，字段必须来自当前策略类型的产品模板。",
@@ -411,14 +499,19 @@
     },
     "activate": {
       "description": "将策略模板设为默认模板（激活）。",
-      "required_slots": ["target_ref"],
+      "required_slots": [
+        "target_ref"
+      ],
       "goal": "将某个策略模板设为默认模板。",
       "success_output": "返回 strategy_id，并明确告知该策略已被设为默认模板。",
       "failure_output": "明确指出目标策略不存在，或激活失败原因。"
     },
     "duplicate": {
       "description": "复制策略模板，生成一个新的同配置模板。",
-      "required_slots": ["target_ref", "name"],
+      "required_slots": [
+        "target_ref",
+        "name"
+      ],
       "goal": "复制一个现有策略模板并生成新的模板名称。",
       "dynamic_rules": [
         "新名称必须单独收齐；若名称有歧义或为空，应先继续追问。"
@@ -428,7 +521,9 @@
     },
     "delete": {
       "description": "删除策略模板，不可逆操作，必须确认。",
-      "required_slots": ["target_ref"],
+      "required_slots": [
+        "target_ref"
+      ],
       "needs_confirmation": true,
       "goal": "删除一个策略模板。",
       "dynamic_rules": [
@@ -449,7 +544,9 @@
     },
     "query_detail": {
       "description": "查询某个策略模板的详细配置，包括选币来源、指标、风控参数、提示词等。",
-      "required_slots": ["target_ref"],
+      "required_slots": [
+        "target_ref"
+      ],
       "goal": "读取一个策略模板的详细配置。",
       "dynamic_rules": [
         "若目标有歧义，应先澄清再返回详情。"

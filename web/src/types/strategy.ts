@@ -195,7 +195,6 @@ export interface IndicatorConfig {
   // 量化数据源（资金流向、持仓变化、价格变化）
   enable_quant_data?: boolean;
   enable_quant_oi?: boolean;
-  enable_quant_netflow?: boolean;
 
   // OI 排行数据（市场持仓量增减排行）
   enable_oi_ranking?: boolean;

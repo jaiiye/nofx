@@ -777,8 +777,6 @@ func strategyConfigFieldDisplayName(field, lang string) string {
 		return "quant data"
 	case "enable_quant_oi":
 		return "quant OI"
-	case "enable_quant_netflow":
-		return "quant netflow"
 	case "enable_oi_ranking":
 		return "OI ranking"
 	case "oi_ranking_duration":
@@ -1023,8 +1021,6 @@ func applyStrategyConfigPatch(cfg *store.StrategyConfig, field, value string) er
 		cfg.Indicators.EnableQuantData = value == "true"
 	case "enable_quant_oi":
 		cfg.Indicators.EnableQuantOI = value == "true"
-	case "enable_quant_netflow":
-		cfg.Indicators.EnableQuantNetflow = value == "true"
 	case "enable_oi_ranking":
 		cfg.Indicators.EnableOIRanking = value == "true"
 	case "oi_ranking_duration":
@@ -1036,15 +1032,15 @@ func applyStrategyConfigPatch(cfg *store.StrategyConfig, field, value string) er
 		}
 		cfg.Indicators.OIRankingLimit = parsed
 	case "enable_netflow_ranking":
-		cfg.Indicators.EnableNetFlowRanking = value == "true"
+		cfg.Indicators.EnableTakerFlowRanking = value == "true"
 	case "netflow_ranking_duration":
-		cfg.Indicators.NetFlowRankingDuration = value
+		cfg.Indicators.TakerFlowRankingDuration = value
 	case "netflow_ranking_limit":
 		parsed, err := strconv.Atoi(value)
 		if err != nil {
 			return fmt.Errorf("资金流排行数量需要是整数")
 		}
-		cfg.Indicators.NetFlowRankingLimit = parsed
+		cfg.Indicators.TakerFlowRankingLimit = parsed
 	case "enable_price_ranking":
 		cfg.Indicators.EnablePriceRanking = value == "true"
 	case "price_ranking_duration":
