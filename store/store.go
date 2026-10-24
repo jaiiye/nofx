@@ -27,6 +27,7 @@ type Store struct {
 	strategy        *StrategyStore
 	equity          *EquityStore
 	marketStructure *MarketStructureStore
+	marketMetrics   *MarketMetricsStore
 	order           *OrderStore
 	grid            *GridStore
 	aiCharge        *AIChargeStore
@@ -156,6 +157,9 @@ func (s *Store) initTables() error {
 	if err := s.MarketStructure().initTables(); err != nil {
 		return fmt.Errorf("failed to initialize market structure tables: %w", err)
 	}
+	if err := s.MarketMetrics().initTables(); err != nil {
+		return fmt.Errorf("failed to initialize market metrics tables: %w", err)
+	}
 	if err := s.Order().InitTables(); err != nil {
 		return fmt.Errorf("failed to initialize order tables: %w", err)
 	}
@@ -279,6 +283,16 @@ func (s *Store) MarketStructure() *MarketStructureStore {
 		s.marketStructure = NewMarketStructureStore(s.gdb)
 	}
 	return s.marketStructure
+}
+
+// MarketMetrics gets per-venue positioning and liquidation storage
+func (s *Store) MarketMetrics() *MarketMetricsStore {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.marketMetrics == nil {
+		s.marketMetrics = NewMarketMetricsStore(s.gdb)
+	}
+	return s.marketMetrics
 }
 
 // Order gets order storage

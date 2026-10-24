@@ -172,6 +172,10 @@ export interface IndicatorConfig {
   // disabled, because it runs a background index that polls the venue per
   // address.
   enable_position_structure?: boolean;
+  // Per-venue OI/funding and the public liquidation streams. Same nil=on
+  // convention as microstructure: only an explicit false disables them.
+  enable_cross_venue?: boolean;
+  enable_liquidation_flow?: boolean;
   ema_periods?: number[];
   rsi_periods?: number[];
   atr_periods?: number[];

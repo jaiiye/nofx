@@ -83,6 +83,8 @@ Welcome to the NOFX documentation! This page helps you find the right documentat
 |----------|-------------|------|
 | [Architecture Overview (EN)](architecture/README.md) | System architecture, modules, and design | 系统架构、模块和设计 |
 | [Architecture Overview (中文)](architecture/README.zh-CN.md) | 系统架构、模块和设计 | System architecture overview |
+| [Market Data Sources](market-data-sources.md) | Cross-venue OI, liquidation flow, storage and conventions | 跨所持仓、爆仓流的接口、落库与口径 |
+| [市场数据来源与口径](market-data-sources.zh-CN.md) | 跨所持仓、爆仓流的接口、落库与口径 | Cross-venue OI, liquidation flow, storage and conventions |
 | API Reference *(coming soon)* | HTTP API documentation | HTTP API 文档 |
 | Database Schema *(coming soon)* | SQLite database structure | SQLite 数据库结构 |
 | Testing Guide *(coming soon)* | How to write tests | 如何编写测试 |

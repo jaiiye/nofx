@@ -57,13 +57,20 @@ const (
 	promptGaugeChars          = 30 // ATR / ADX / DI / SUPERTREND single value
 	promptMicrostructureChars = 170
 	promptPositioningChars    = 210
+	// Cross-venue: header, one line per venue (up to three), a spread/crowding
+	// line and the total caveat. Measured at ~503 chars for a three-venue,
+	// cascade-adjacent worst case (kernel/venue_prompt_test.go).
+	promptCrossVenueChars = 520
+	// Liquidation flow: header, the window line and an optional cascade line.
+	// Measured at ~238 chars.
+	promptLiquidationChars = 260
 	// The holder-structure block is a header, four reading lines and up to five
 	// bucket rows. Kept above the rendered size on purpose: the estimate must never
 	// undershoot, and kernel/estimate_drift_test.go fails if it does.
 	promptPositionProfileChars    = 1100
 	promptVenueContextChars       = 120 // OI + funding lines per coin
-	promptSystemBaseCharsEN       = 6900
-	promptSystemBaseCharsZH       = 6400
+	promptSystemBaseCharsEN       = 7400
+	promptSystemBaseCharsZH       = 6900
 	promptSystemCharsPerIndicator = 300 // one confluence group per enabled indicator
 	// Hyperliquid ranking default: the venue's volume board. Liquidity is the
 	// right funnel for a trend strategy — the most traded assets have tight
@@ -1008,6 +1015,12 @@ type IndicatorConfig struct {
 	// convention as EnableMicrostructure so an existing config cannot silently
 	// turn the feature off on unmarshal.
 	EnablePositioning *bool `json:"enable_positioning,omitempty"`
+	// Cross-venue positioning (per-venue OI, funding spread, crowding). Nil =
+	// enabled: it costs one market-wide request per venue per minute.
+	EnableCrossVenue *bool `json:"enable_cross_venue,omitempty"`
+	// Liquidation flow (Binance/Bybit public liquidation streams). Nil =
+	// enabled: it is a websocket, not a polling cost.
+	EnableLiquidationFlow *bool `json:"enable_liquidation_flow,omitempty"`
 	// Holder cost/liquidation structure (where holders entered and where they get
 	// liquidated), built from publicly readable venue positions. Nil = disabled:
 	// unlike the two flags above, this one runs a background index that polls the
@@ -1071,6 +1084,18 @@ func (c *IndicatorConfig) PositioningEnabled() bool {
 // per address, so it is opt-in.
 func (c *IndicatorConfig) PositionStructureEnabled() bool {
 	return c.EnablePositionStructure != nil && *c.EnablePositionStructure
+}
+
+// CrossVenueEnabled reports whether the per-venue OI/funding view should be
+// collected and rendered. Nil means enabled.
+func (c *IndicatorConfig) CrossVenueEnabled() bool {
+	return c.EnableCrossVenue == nil || *c.EnableCrossVenue
+}
+
+// LiquidationFlowEnabled reports whether the liquidation streams should be
+// collected and rendered. Nil means enabled.
+func (c *IndicatorConfig) LiquidationFlowEnabled() bool {
+	return c.EnableLiquidationFlow == nil || *c.EnableLiquidationFlow
 }
 
 // KlineConfig K-line configuration
@@ -1756,6 +1781,12 @@ func (c *StrategyConfig) EstimateTokens() TokenEstimate {
 	}
 	if c.Indicators.PositioningEnabled() {
 		extrasPerCoin += promptPositioningChars
+	}
+	if c.Indicators.CrossVenueEnabled() {
+		extrasPerCoin += promptCrossVenueChars
+	}
+	if c.Indicators.LiquidationFlowEnabled() {
+		extrasPerCoin += promptLiquidationChars
 	}
 	if c.Indicators.PositionStructureEnabled() {
 		extrasPerCoin += promptPositionProfileChars

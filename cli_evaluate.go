@@ -23,11 +23,12 @@ func runEvaluate(args []string) {
 	timeframe := fs.String("timeframe", "15m", "candle timeframe used to simulate fills")
 	exchange := fs.String("exchange", "binance", "exchange fee schedule to assume")
 	dbPath := fs.String("db", "", "override the SQLite database path")
+	regime := fs.Bool("regime", false, "label trades with stored cascade/crowding state (attribution only)")
 	_ = fs.Parse(args)
 
 	if *traderID == "" || *fromStr == "" {
 		fmt.Fprintln(os.Stderr, "usage: nofx evaluate --trader <id> --from <date> [--to <date>] "+
-			"[--timeframe 15m] [--exchange binance] [--db path]")
+			"[--timeframe 15m] [--exchange binance] [--db path] [--regime]")
 		os.Exit(2)
 	}
 
@@ -59,14 +60,21 @@ func runEvaluate(args []string) {
 	fmt.Printf("📼 Replaying %d decision cycles for trader %s (%s → %s)\n",
 		len(records), *traderID, from.Format("2006-01-02"), to.Format("2006-01-02"))
 
-	res, err := backtest.Evaluate(records, backtest.Config{
+	cfg := backtest.Config{
 		TraderID:  *traderID,
 		From:      from,
 		To:        to,
 		Timeframe: *timeframe,
 		Fees:      connector.FeeModelFor(*exchange),
 		Seed:      1,
-	}, market.GetKlinesRange)
+	}
+	// Attribution only: the label is read from stored point-in-time rows and
+	// never changes entry, exit or sizing.
+	if *regime {
+		cfg.RegimeSource = backtest.StoreRegimeSource(st)
+	}
+
+	res, err := backtest.Evaluate(records, cfg, market.GetKlinesRange)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "evaluation failed: %v\n", err)
 		os.Exit(1)
@@ -110,6 +118,12 @@ func printEvaluation(res *backtest.Result) {
 		fmt.Println("\n-- by AI confidence --")
 		for _, c := range res.ByConfidence {
 			fmt.Printf("  %-8s trades=%-4d win=%5.1f%%  net=%9.2f\n", c.Bucket, c.Trades, c.WinRate, c.NetPnL)
+		}
+	}
+	if len(res.ByRegime) > 0 {
+		fmt.Println("\n-- by entry regime --")
+		for _, r := range res.ByRegime {
+			fmt.Printf("  %-14s trades=%-4d win=%5.1f%%  net=%9.2f\n", r.Regime, r.Trades, r.WinRate, r.NetPnL)
 		}
 	}
 

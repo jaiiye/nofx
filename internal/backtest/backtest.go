@@ -24,6 +24,18 @@ import (
 // Injected so the engine can be tested without the network.
 type KlineSource func(symbol, timeframe string, start, end time.Time) ([]market.Kline, error)
 
+// Regime is the market state at entry, supplied by the caller from stored
+// cross-venue and liquidation snapshots. It never changes the simulation; it
+// only labels a trade so the report can attribute results to the tape it was
+// taken on.
+type Regime struct {
+	Cascade     bool
+	CrowdedSide string // "long", "short", or ""
+}
+
+// RegimeSource looks up the regime that was known when the decision was taken.
+type RegimeSource func(symbol string, at time.Time) Regime
+
 // Config controls a replay.
 type Config struct {
 	TraderID       string
@@ -38,6 +50,11 @@ type Config struct {
 	// percentage distance from the entry price. Used by the parameter sweep.
 	OverrideStopPct float64
 	OverrideTakePct float64
+
+	// RegimeSource optionally labels each trade with the tape it was taken on
+	// (liquidation cascade, crowding). Nil leaves the replay byte-for-byte
+	// unchanged; attribution is the only consumer.
+	RegimeSource RegimeSource
 }
 
 func (c Config) withDefaults() Config {
@@ -72,6 +89,9 @@ type Trade struct {
 	ExitReason  string // take_profit | stop_loss | timeout
 	Confidence  int
 	HoldCandles int
+	// Entry regime (attribution only; empty when no source was supplied).
+	EntryCascade     bool
+	EntryCrowdedSide string
 }
 
 // Metrics summarizes a replay (all PnL figures are net of fees unless named).
@@ -118,6 +138,15 @@ type ConfidenceStat struct {
 	WinRate float64
 }
 
+// RegimeStat is attribution by the tape at entry.
+type RegimeStat struct {
+	Regime  string
+	Trades  int
+	Wins    int
+	NetPnL  float64
+	WinRate float64
+}
+
 // Significance reports whether the strategy beat random entries over the same
 // symbols and holding periods (a Jesse-style skill-vs-luck check).
 type Significance struct {
@@ -137,6 +166,7 @@ type Result struct {
 	BySymbol     []SymbolStat
 	ByReason     []ReasonStat
 	ByConfidence []ConfidenceStat
+	ByRegime     []RegimeStat `json:",omitempty"`
 	Significance Significance
 	Notes        []string
 }
@@ -183,6 +213,9 @@ func Evaluate(records []*store.DecisionRecord, cfg Config, src KlineSource) (*Re
 	res.BySymbol = bySymbol(res.Trades)
 	res.ByReason = byReason(res.Trades)
 	res.ByConfidence = byConfidence(res.Trades)
+	if cfg.RegimeSource != nil {
+		res.ByRegime = byRegime(res.Trades)
+	}
 	res.Significance = bootstrap(res.Trades, candles, cfg)
 	return res, nil
 }
@@ -240,6 +273,11 @@ func simulate(decidedAt time.Time, d store.DecisionAction, candles []market.Klin
 		Symbol: d.Symbol, Side: side, EntryTime: time.UnixMilli(candles[start].OpenTime).UTC(),
 		EntryPrice: entry, Quantity: d.Quantity, Notional: entry * d.Quantity,
 		Confidence: d.Confidence,
+	}
+	if cfg.RegimeSource != nil {
+		regime := cfg.RegimeSource(d.Symbol, decidedAt)
+		t.EntryCascade = regime.Cascade
+		t.EntryCrowdedSide = regime.CrowdedSide
 	}
 
 	// Effective protective levels: recorded, or overridden to a fixed
@@ -405,6 +443,60 @@ func byReason(trades []Trade) []ReasonStat {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].NetPnL > out[j].NetPnL })
 	return out
+}
+
+// byRegime attributes results to the tape each entry was taken on. A cascade
+// entry and a calm entry are different bets, so their win rates are not
+// comparable until they are separated like this.
+func byRegime(trades []Trade) []RegimeStat {
+	agg := map[string]*RegimeStat{}
+	for _, t := range trades {
+		label := regimeLabel(t)
+		stat := agg[label]
+		if stat == nil {
+			stat = &RegimeStat{Regime: label}
+			agg[label] = stat
+		}
+		stat.Trades++
+		stat.NetPnL += t.NetPnL
+		if t.NetPnL > 0 {
+			stat.Wins++
+		}
+	}
+	out := make([]RegimeStat, 0, len(agg))
+	for _, stat := range agg {
+		stat.WinRate = float64(stat.Wins) / float64(stat.Trades) * 100
+		out = append(out, *stat)
+	}
+	sort.Slice(out, func(i, j int) bool { return regimeOrder(out[i].Regime) < regimeOrder(out[j].Regime) })
+	return out
+}
+
+func regimeLabel(t Trade) string {
+	if t.EntryCascade {
+		return "cascade"
+	}
+	switch t.EntryCrowdedSide {
+	case "long":
+		return "crowded_long"
+	case "short":
+		return "crowded_short"
+	default:
+		return "calm"
+	}
+}
+
+func regimeOrder(regime string) int {
+	switch regime {
+	case "cascade":
+		return 0
+	case "crowded_long":
+		return 1
+	case "crowded_short":
+		return 2
+	default:
+		return 3
+	}
 }
 
 func confidenceBucket(c int) string {

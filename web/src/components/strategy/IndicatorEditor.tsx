@@ -127,6 +127,8 @@ const marketContextCards = [
   { key: 'enable_microstructure', label: 'Order Book', hint: 'spread / imbalance / depth / liquidity', color: '#38bdf8' },
   { key: 'enable_positioning', label: 'Positioning', hint: 'HL funding percentile / OI quadrants / taker flow', color: '#f472b6' },
   { key: 'enable_position_structure', label: 'Holder Structure', hint: 'cost basis / liquidation fuel — starts a holder index', color: '#a3e635' },
+  { key: 'enable_cross_venue', label: 'Cross-Venue', hint: 'per-venue OI / funding spread / crowding', color: '#22d3ee' },
+  { key: 'enable_liquidation_flow', label: 'Liquidation Flow', hint: 'Binance + Bybit public liquidation bursts', color: '#fb7185' },
 ] as const
 
 function parsePeriods(raw: string): number[] {
@@ -402,14 +404,18 @@ export function IndicatorEditor({ config, onChange, disabled, language }: Indica
         </div>
         <div className="grid gap-2 sm:grid-cols-3">
           {marketContextCards.map(({ key, label, hint, color }) => {
-            // Microstructure and positioning default to enabled when the key is
-            // absent (the backend treats nil as on), so only an explicit false
-            // turns them off. Holder structure is the opposite: it runs a
-            // background index that polls the venue per address, so it stays off
-            // until it is explicitly turned on.
+            // Microstructure, positioning, cross-venue and liquidation flow
+            // default to enabled when the key is absent (the backend treats nil
+            // as on), so only an explicit false turns them off. Holder structure
+            // is the opposite: it runs a background index that polls the venue
+            // per address, so it stays off until it is explicitly turned on.
+            const defaultOn = key === 'enable_microstructure'
+              || key === 'enable_positioning'
+              || key === 'enable_cross_venue'
+              || key === 'enable_liquidation_flow'
             const enabled = key === 'enable_position_structure'
               ? config[key] === true
-              : key === 'enable_microstructure' || key === 'enable_positioning'
+              : defaultOn
                 ? config[key] !== false
                 : Boolean(config[key])
             return (

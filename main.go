@@ -169,6 +169,15 @@ func main() {
 	positionIndex := kernel.StartPositionStructure(context.Background(), st)
 	defer positionIndex.Stop()
 
+	// Cross-venue OI/funding, and the public liquidation streams. Both are
+	// best-effort: an unreachable venue simply contributes no reading, and the
+	// prompt omits the section instead of showing a zero.
+	marketMetrics := kernel.StartMarketMetrics(context.Background(), st)
+	defer marketMetrics.Stop()
+
+	liquidationFlow := kernel.StartLiquidationFlow(context.Background(), st)
+	defer liquidationFlow.Stop()
+
 	go func() {
 		if err := server.Start(); err != nil {
 			logger.Fatalf("❌ Failed to start API server: %v", err)

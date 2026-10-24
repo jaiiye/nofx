@@ -213,6 +213,29 @@ func loadPositioning(ctx *Context, symbol string) {
 	}
 }
 
+// loadCrossVenue stores the per-venue OI/funding reading. The collector keeps
+// it in memory, so this costs nothing upstream; a reading older than a few
+// polls is absent rather than shown as current.
+func loadCrossVenue(ctx *Context, symbol string) {
+	if ctx.CrossVenueMap == nil {
+		ctx.CrossVenueMap = make(map[string]*market.CrossVenue)
+	}
+	if reading, ok := market.VenueMetricsForSymbol(symbol); ok && reading != nil {
+		ctx.CrossVenueMap[symbol] = reading
+	}
+}
+
+// loadLiquidationFlow stores the liquidation-flow reading. Omitting it is the
+// normal quiet-market case, so a missing entry carries no implication.
+func loadLiquidationFlow(ctx *Context, symbol string) {
+	if ctx.LiquidationMap == nil {
+		ctx.LiquidationMap = make(map[string]*market.LiquidationReading)
+	}
+	if reading, ok := market.LiquidationFlowForSymbol(symbol); ok && reading != nil {
+		ctx.LiquidationMap[symbol] = reading
+	}
+}
+
 // fetchMarketDataWithStrategy fetches market data using strategy config (multiple timeframes)
 func fetchMarketDataWithStrategy(ctx *Context, engine *StrategyEngine) error {
 	config := engine.GetConfig()
@@ -268,6 +291,14 @@ func fetchMarketDataWithStrategy(ctx *Context, engine *StrategyEngine) error {
 	structureEnabled := config.Indicators.PositionStructureEnabled()
 	ctx.PositioningMap = make(map[string]*market.Positioning)
 
+	// Cross-venue positioning and the liquidation flow (both nil flags =
+	// enabled). They read the background collectors' in-memory readings, so
+	// enabling them adds no per-cycle venue requests.
+	crossVenueEnabled := config.Indicators.CrossVenueEnabled()
+	liquidationEnabled := config.Indicators.LiquidationFlowEnabled()
+	ctx.CrossVenueMap = make(map[string]*market.CrossVenue)
+	ctx.LiquidationMap = make(map[string]*market.LiquidationReading)
+
 	// 1. First fetch data for position coins (must fetch)
 	for _, pos := range ctx.Positions {
 		data, err := market.GetWithTimeframesIndicators(pos.Symbol, timeframes, primaryTimeframe, klineCount, indicatorParams)
@@ -281,6 +312,12 @@ func fetchMarketDataWithStrategy(ctx *Context, engine *StrategyEngine) error {
 		}
 		if positioningEnabled {
 			loadPositioning(ctx, pos.Symbol)
+		}
+		if crossVenueEnabled {
+			loadCrossVenue(ctx, pos.Symbol)
+		}
+		if liquidationEnabled {
+			loadLiquidationFlow(ctx, pos.Symbol)
 		}
 	}
 
@@ -336,6 +373,12 @@ func fetchMarketDataWithStrategy(ctx *Context, engine *StrategyEngine) error {
 		if positioningEnabled {
 			loadPositioning(ctx, coin.Symbol)
 		}
+		if crossVenueEnabled {
+			loadCrossVenue(ctx, coin.Symbol)
+		}
+		if liquidationEnabled {
+			loadLiquidationFlow(ctx, coin.Symbol)
+		}
 
 		ctx.MarketDataMap[coin.Symbol] = data
 	}
@@ -354,6 +397,12 @@ func fetchMarketDataWithStrategy(ctx *Context, engine *StrategyEngine) error {
 	}
 	if structureEnabled {
 		market.UpdatePositionIndexSymbols(symbols)
+	}
+	if crossVenueEnabled {
+		market.UpdateVenueMetricSymbols(symbols)
+	}
+	if liquidationEnabled {
+		market.UpdateLiquidationSymbols(symbols)
 	}
 
 	return nil

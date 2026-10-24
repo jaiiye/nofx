@@ -214,6 +214,27 @@ var DataDictionary = map[string]map[string]BilingualFieldDef{
 			DescZH: "1小时内持仓量的变化。用于判断市场真实资金流向",
 			DescEN: "OI change in 1 hour. Used to determine real capital flow direction",
 		},
+		"VenueFunding": {
+			NameZH: "分所资金费率",
+			NameEN: "Per-venue Funding",
+			Unit:   "%/hour",
+			DescZH: "已归一到每小时的资金费率，正=多头付空头。各所分开列示：跨所合计持仓会重复计算对冲仓位，不可当作全市场持仓",
+			DescEN: "Funding normalized to hourly; positive = longs pay shorts. Listed per venue: cross-venue OI totals double-count hedged positions and are not market-wide exposure",
+		},
+		"FundingSpread": {
+			NameZH: "资金费差",
+			NameEN: "Funding Spread",
+			Unit:   "%/hour",
+			DescZH: "两所每小时资金费率之差，用于判断哪一侧更拥挤；本身不构成方向",
+			DescEN: "Hourly funding gap between venues; shows which side is crowded, not a direction",
+		},
+		"LiquidationFlow": {
+			NameZH: "爆仓流",
+			NameEN: "Liquidation Flow",
+			Unit:   "USDT",
+			DescZH: "公开推送的强平名义额。z 为相对该币自身近期窗口的偏离，z 高且单边=级联；级联是已消耗的燃料，不追末端",
+			DescEN: "Liquidated notional from public streams. z is the deviation from the coin's own recent windows; a high one-sided z is a cascade, which is fuel already spent — do not chase the end of it",
+		},
 	},
 }
 

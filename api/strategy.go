@@ -670,6 +670,19 @@ func (s *Server) handleStrategyTestRun(c *gin.Context) {
 	// Fetch Price ranking data (market-wide gainers/losers)
 	priceRankingData := engine.FetchPriceRankingData()
 
+	// Reading the background collectors is free, and without it the preview would
+	// silently omit sections the live cycle renders.
+	crossVenueMap := make(map[string]*market.CrossVenue)
+	liquidationMap := make(map[string]*market.LiquidationReading)
+	for _, candidate := range candidates {
+		if reading, ok := market.VenueMetricsForSymbol(candidate.Symbol); ok && reading != nil {
+			crossVenueMap[candidate.Symbol] = reading
+		}
+		if reading, ok := market.LiquidationFlowForSymbol(candidate.Symbol); ok && reading != nil {
+			liquidationMap[candidate.Symbol] = reading
+		}
+	}
+
 	// Build real context (for generating User Prompt)
 	testContext := &kernel.Context{
 		CurrentTime:    time.Now().UTC().Format("2006-01-02 15:04:05 UTC"),
@@ -689,6 +702,8 @@ func (s *Server) handleStrategyTestRun(c *gin.Context) {
 		CandidateCoins:     candidates,
 		MarketDataMap:      marketDataMap,
 		QuantDataMap:       quantDataMap,
+		CrossVenueMap:      crossVenueMap,
+		LiquidationMap:     liquidationMap,
 		OIRankingData:      oiRankingData,
 		NetFlowRankingData: netFlowRankingData,
 		PriceRankingData:   priceRankingData,

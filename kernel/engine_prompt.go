@@ -779,6 +779,28 @@ func (e *StrategyEngine) writeIndicatorPlaybook(sb *strings.Builder, zh bool) {
 	}
 	addGroup(l("Positioning / crowding", "持仓与拥挤度"), positioning)
 
+	// Cross-venue: how exposure is split and which venue is paying up.
+	var crossVenue []string
+	if ind.CrossVenueEnabled() {
+		crossVenue = append(crossVenue,
+			l("Cross-venue OI is listed per venue because the same position can be hedged elsewhere, so the total double-counts. Judge crowding from the per-venue funding spread (already normalized to hourly) and the OI-weighted funding, not from the total.",
+				"跨所持仓按交易所分列：同一仓位可能在其他所对冲，合计会重复计算。拥挤度看各所资金费差（已归一到每小时）与持仓加权资金费，而不是合计值。"),
+			l("A wide funding gap means the expensive side is crowded on that venue; it argues for smaller size or waiting, not for a direction on its own.",
+				"资金费差较大说明费用高的一侧在该所更拥挤；这支持降低仓位或等待，本身不构成方向。"))
+	}
+	addGroup(l("Cross-venue positioning", "跨所持仓"), crossVenue)
+
+	// Liquidation flow: event data, explicitly not a trend signal.
+	var liquidation []string
+	if ind.LiquidationFlowEnabled() {
+		liquidation = append(liquidation,
+			l("Liquidation flow is event data, not a trend signal: a one-sided cascade late in a move is fuel already spent, so do not chase into it. Wait for the z-score to fall back and price to stop making new extremes.",
+				"爆仓流是事件数据，不是趋势信号：行情末端的单边级联是已经消耗掉的燃料，不要追进去。等 z 值回落且价格不再创新极值。"),
+			l("A cascade against your intended direction means the move is being forced; treat it as a warning to delay or reduce size, not as an immediate reversal cue.",
+				"与你计划方向相反的级联说明行情正被强制推动；把它当作延迟入场或减小仓位的警告，而不是立即反手的信号。"))
+	}
+	addGroup(l("Liquidation flow", "爆仓流"), liquidation)
+
 	if len(groups) == 0 {
 		return
 	}
@@ -976,6 +998,8 @@ func (e *StrategyEngine) BuildUserPrompt(ctx *Context) string {
 		}
 		candidateBody.WriteString(e.formatMicrostructure(ctx, coin.Symbol))
 		candidateBody.WriteString(e.formatPositioning(ctx, coin.Symbol))
+		candidateBody.WriteString(e.formatCrossVenue(ctx, coin.Symbol))
+		candidateBody.WriteString(e.formatLiquidationFlow(ctx, coin.Symbol))
 		candidateBody.WriteString(e.formatPositionProfile(ctx, coin.Symbol))
 		candidateBody.WriteString("\n")
 	}
@@ -1156,6 +1180,149 @@ func (e *StrategyEngine) formatPositioning(ctx *Context, symbol string) string {
 
 	sb.WriteString("\n")
 	return sb.String()
+}
+
+// formatCrossVenue writes the per-venue open interest and funding reading.
+// Venues are listed separately on purpose: the same position can be hedged
+// across venues, so a summed OI double-counts and is never presented as the
+// market's real exposure.
+func (e *StrategyEngine) formatCrossVenue(ctx *Context, symbol string) string {
+	if ctx == nil || ctx.CrossVenueMap == nil {
+		return ""
+	}
+	v, ok := ctx.CrossVenueMap[symbol]
+	if !ok || v == nil || len(v.Venues) == 0 {
+		return ""
+	}
+
+	zh := e.GetLanguage() == LangChinese
+	pick := func(en, cn string) string {
+		if zh {
+			return cn
+		}
+		return en
+	}
+
+	var sb strings.Builder
+	sb.WriteString(pick("**CROSS-VENUE OI / FUNDING (per venue; not additive)**\n",
+		"**跨所持仓/资金费（按交易所分列，不可相加）**\n"))
+
+	for _, venue := range v.Venues {
+		parts := make([]string, 0, 4)
+		if venue.OIUSD > 0 {
+			parts = append(parts, fmt.Sprintf("OI $%s", formatUSDCompact(venue.OIUSD)))
+		} else {
+			parts = append(parts, pick("OI n/a", "持仓不可用"))
+		}
+		if share := v.OISharePct[venue.Venue]; share > 0 {
+			parts = append(parts, fmt.Sprintf(pick("%.0f%% of total", "占合计 %.0f%%"), share))
+		}
+		if venue.Funding1hPct != 0 || venue.FundingAssumed {
+			funding := fmt.Sprintf("%+.4f%%/h", venue.Funding1hPct)
+			if venue.FundingIntervalH > 0 && venue.FundingIntervalH != 1 {
+				funding += fmt.Sprintf(pick(" (settles every %gh)", "（每 %g 小时结算）"), venue.FundingIntervalH)
+			}
+			if venue.FundingAssumed {
+				funding += pick(" [interval assumed]", " [结算周期为假设值]")
+			}
+			parts = append(parts, funding)
+		}
+		if venue.PremiumPct != 0 {
+			parts = append(parts, fmt.Sprintf("premium %+.3f%%", venue.PremiumPct))
+		}
+		sb.WriteString(fmt.Sprintf("- %s: %s\n", venueDisplayName(venue.Venue), strings.Join(parts, " | ")))
+	}
+
+	var summary []string
+	if v.FundingSpreadOK {
+		summary = append(summary, fmt.Sprintf(pick("funding spread %+.4f%%/h (%s)", "资金费差 %+.4f%%/h（%s）"),
+			v.FundingSpread1hPct, v.FundingSpreadPair))
+	}
+	if v.CrowdedSide != "" {
+		summary = append(summary, fmt.Sprintf(pick("OI-weighted funding marks %s crowded", "持仓加权资金费显示%s拥挤"),
+			crowdedSideLabel(v.CrowdedSide, zh)))
+	}
+	if len(summary) > 0 {
+		sb.WriteString("- " + strings.Join(summary, " | ") + "\n")
+	}
+	sb.WriteString(fmt.Sprintf(pick(
+		"- Total $%s across venues: hedged positions can be counted twice, so this is not market-wide exposure.\n",
+		"- 跨所合计 $%s：对冲仓位会被重复计算，不能当作全市场持仓。\n"), formatUSDCompact(v.OITotalUSD)))
+	sb.WriteString("\n")
+	return sb.String()
+}
+
+// formatLiquidationFlow writes the liquidation burst reading for one symbol.
+// The z-score appears only with enough baseline windows; a cascade is only
+// named when the burst is both unusual and one-sided.
+func (e *StrategyEngine) formatLiquidationFlow(ctx *Context, symbol string) string {
+	if ctx == nil || ctx.LiquidationMap == nil {
+		return ""
+	}
+	r, ok := ctx.LiquidationMap[symbol]
+	if !ok || r == nil {
+		return ""
+	}
+
+	zh := e.GetLanguage() == LangChinese
+	pick := func(en, cn string) string {
+		if zh {
+			return cn
+		}
+		return en
+	}
+
+	parts := []string{fmt.Sprintf(pick("1h long $%s / short $%s", "1小时 多 $%s / 空 $%s"),
+		formatUSDCompact(r.LongUSD), formatUSDCompact(r.ShortUSD))}
+	if r.TotalUSD > 0 {
+		parts = append(parts, fmt.Sprintf(pick("long share %.0f%%", "多头占比 %.0f%%"), r.LongSharePct))
+	}
+	if r.ShortWindowUSD > 0 {
+		parts = append(parts, fmt.Sprintf(pick("15m $%s", "15分钟 $%s"), formatUSDCompact(r.ShortWindowUSD)))
+	}
+	if r.LargestUSD > 0 {
+		parts = append(parts, fmt.Sprintf(pick("largest $%s", "最大单笔 $%s"), formatUSDCompact(r.LargestUSD)))
+	}
+	if r.BaselineOK {
+		parts = append(parts, fmt.Sprintf("z=%.1f", r.ZScore))
+	}
+
+	var sb strings.Builder
+	sb.WriteString(pick("**LIQUIDATION FLOW (public venue streams)**\n", "**爆仓流（交易所公开清算推送）**\n"))
+	sb.WriteString("- " + strings.Join(parts, " | ") + "\n")
+	if r.Cascade {
+		sb.WriteString(fmt.Sprintf(pick(
+			"- CASCADE: %s are being liquidated right now. This is fuel already burning — do not chase into it.\n",
+			"- 级联：%s正在被强平。这是正在燃烧的燃料，不要追进去。\n"), crowdedSideLabel(r.CascadeSide, zh)))
+	}
+	sb.WriteString("\n")
+	return sb.String()
+}
+
+func venueDisplayName(venue string) string {
+	switch venue {
+	case "binance":
+		return "Binance"
+	case "bybit":
+		return "Bybit"
+	case "hyperliquid":
+		return "Hyperliquid"
+	default:
+		return venue
+	}
+}
+
+func crowdedSideLabel(side string, zh bool) string {
+	if zh {
+		if side == "long" {
+			return "多头"
+		}
+		return "空头"
+	}
+	if side == "long" {
+		return "longs"
+	}
+	return "shorts"
 }
 
 // stockVenueNote describes a stock whose venue has gone quiet. Returns an empty
@@ -1399,6 +1566,8 @@ func (e *StrategyEngine) formatPositionInfo(index int, pos PositionInfo, ctx *Co
 		}
 		sb.WriteString(e.formatMicrostructure(ctx, pos.Symbol))
 		sb.WriteString(e.formatPositioning(ctx, pos.Symbol))
+		sb.WriteString(e.formatCrossVenue(ctx, pos.Symbol))
+		sb.WriteString(e.formatLiquidationFlow(ctx, pos.Symbol))
 		sb.WriteString(e.formatPositionProfile(ctx, pos.Symbol))
 		sb.WriteString("\n")
 	}
