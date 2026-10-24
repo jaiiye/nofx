@@ -1152,7 +1152,7 @@ func formatStrategyCreateFinalConfirmation(lang string, session skillSession, cf
 				fmt.Sprintf("- K线数量：%d", cfg.Indicators.Klines.PrimaryCount),
 				fmt.Sprintf("- 多周期：%s", defaultIfEmpty(strings.Join(cfg.Indicators.Klines.SelectedTimeframes, ","), "未设置")),
 				fmt.Sprintf("- 指标：%s", formatEnabledAIIndicatorsZH(cfg)),
-				fmt.Sprintf("- NofxOS 量化数据：%t", cfg.Indicators.EnableQuantData),
+				fmt.Sprintf("- 交易所量化数据：%t", cfg.Indicators.EnableQuantData),
 				fmt.Sprintf("- OI 排行数据：%t（%s / %d）", cfg.Indicators.EnableOIRanking, defaultIfEmpty(cfg.Indicators.OIRankingDuration, "未设置"), cfg.Indicators.OIRankingLimit),
 				fmt.Sprintf("- 资金流排行数据：%t（%s / %d）", cfg.Indicators.EnableTakerFlowRanking, defaultIfEmpty(cfg.Indicators.TakerFlowRankingDuration, "未设置"), cfg.Indicators.TakerFlowRankingLimit),
 				fmt.Sprintf("- 涨跌幅排行数据：%t（%s / %d）", cfg.Indicators.EnablePriceRanking, defaultIfEmpty(cfg.Indicators.PriceRankingDuration, "未设置"), cfg.Indicators.PriceRankingLimit),
@@ -1763,9 +1763,8 @@ func formatStrategyDetailResponse(lang string, strategy *store.Strategy, cfg sto
 		if len(indicatorBits) > 0 {
 			lines = append(lines, "- 已启用指标："+strings.Join(indicatorBits, "、"))
 		}
-		if strings.TrimSpace(cfg.Indicators.NofxOSAPIKey) != "" || cfg.Indicators.EnableQuantData || cfg.Indicators.EnableOIRanking || cfg.Indicators.EnableTakerFlowRanking || cfg.Indicators.EnablePriceRanking {
-			lines = append(lines, fmt.Sprintf("- NofxOS 数据：API Key=%t，量化数据=%t，OI 排行=%t，净流入排行=%t，价格排行=%t",
-				strings.TrimSpace(cfg.Indicators.NofxOSAPIKey) != "",
+		if cfg.Indicators.EnableQuantData || cfg.Indicators.EnableOIRanking || cfg.Indicators.EnableTakerFlowRanking || cfg.Indicators.EnablePriceRanking {
+			lines = append(lines, fmt.Sprintf("- 交易所数据：量化数据=%t，OI 排行=%t，主动买卖排行=%t，价格排行=%t",
 				cfg.Indicators.EnableQuantData,
 				cfg.Indicators.EnableOIRanking,
 				cfg.Indicators.EnableTakerFlowRanking,
@@ -1820,9 +1819,8 @@ func formatStrategyDetailResponse(lang string, strategy *store.Strategy, cfg sto
 	if len(indicatorBits) > 0 {
 		lines = append(lines, "- Enabled indicators: "+strings.Join(indicatorBits, ", "))
 	}
-	if strings.TrimSpace(cfg.Indicators.NofxOSAPIKey) != "" || cfg.Indicators.EnableQuantData || cfg.Indicators.EnableOIRanking || cfg.Indicators.EnableTakerFlowRanking || cfg.Indicators.EnablePriceRanking {
-		lines = append(lines, fmt.Sprintf("- NofxOS data: API key=%t, quant data=%t, OI ranking=%t, netflow ranking=%t, price ranking=%t",
-			strings.TrimSpace(cfg.Indicators.NofxOSAPIKey) != "",
+	if cfg.Indicators.EnableQuantData || cfg.Indicators.EnableOIRanking || cfg.Indicators.EnableTakerFlowRanking || cfg.Indicators.EnablePriceRanking {
+		lines = append(lines, fmt.Sprintf("- Exchange data: quant data=%t, OI ranking=%t, taker flow ranking=%t, price ranking=%t",
 			cfg.Indicators.EnableQuantData,
 			cfg.Indicators.EnableOIRanking,
 			cfg.Indicators.EnableTakerFlowRanking,

@@ -112,7 +112,7 @@
 
 ## 四、配置开关
 
-`IndicatorConfig` 中两个指针开关，`nil` 表示启用（与 `EnablePositioning` 一致）：
+两个指针开关，`nil` 表示启用（与 `EnablePositioning` 一致）：
 
 ```json
 {
@@ -123,6 +123,26 @@
 
 - 关闭后：不再采集、不再渲染 prompt 段落、不参与回放归因。
 - 采集器本身在 `main.go` 启动，无法通过策略配置热关闭（多个 trader 共享同一份采集）。
+
+**不需要任何 API key 或 claw402 钱包。** claw402 仅用于 AI 模型调用，数据链路已完全切断。
+
+---
+
+## 四之二、从 NofxOS / claw402 迁移
+
+旧版本把候选池、OI 排行、涨跌榜和每币量化数据交给 NofxOS（付费 key 或 claw402 钱包）。这些已全部替换为公开接口：
+
+| 旧配置 / 字段 | 现在 |
+|---|---|
+| `nofxos_api_key` | 删除；出现在旧策略 JSON 中会被忽略 |
+| `source_type: "ai500"` | 本地 screener 的别名（启动时警告一次）；新配置建议写 `"screener"` |
+| `enable_quant_netflow` | 删除；旧的键会被忽略 |
+| `enable_netflow_ranking` | 键保留，但内容是 **Taker Flow Ranking**（主动买卖失衡），不再是机构/散户资金流 |
+| `netflow_ranking_duration` / `netflow_ranking_limit` | 键保留，作用于 Taker Flow Ranking |
+| 每币 `netflow` 字段 | 删除（免费数据无法复现机构/散户口径） |
+| 每币 `net_long` / `net_short` | 改为 Binance 公开的账户多空比与大户持仓多空比 |
+
+**冷启动**：进程启动后会用 Binance 的 `openInterestHist` 与 K 线为成交额最高的 120 个合约回填 24 小时的小时级历史，因此 `oi_top` / `oi_low` 不会在重启后空窗一小时。
 
 ---
 

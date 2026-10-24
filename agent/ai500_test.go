@@ -7,22 +7,22 @@ import (
 	"strings"
 	"testing"
 
-	"nofx/provider/nofxos"
+	"nofx/market"
 )
 
-func withStubbedAI500(t *testing.T, fn func(walletKey string) ([]nofxos.CoinData, error)) {
+func withStubbedScreener(t *testing.T, fn func() ([]market.UniverseCoin, error)) {
 	t.Helper()
-	original := fetchAI500ForTool
-	fetchAI500ForTool = fn
-	t.Cleanup(func() { fetchAI500ForTool = original })
+	original := fetchScreenerForTool
+	fetchScreenerForTool = fn
+	t.Cleanup(func() { fetchScreenerForTool = original })
 }
 
-func TestToolGetAI500ListSortsByScoreAndLimits(t *testing.T) {
-	withStubbedAI500(t, func(walletKey string) ([]nofxos.CoinData, error) {
-		return []nofxos.CoinData{
-			{Pair: "LOWUSDT", Score: 10, IncreasePercent: -3},
-			{Pair: "TOPUSDT", Score: 99, IncreasePercent: 42},
-			{Pair: "MIDUSDT", Score: 55, IncreasePercent: 7},
+func TestToolGetScreenerListSortsAndLimits(t *testing.T) {
+	withStubbedScreener(t, func() ([]market.UniverseCoin, error) {
+		return []market.UniverseCoin{
+			{Symbol: "LOWUSDT", Score: 10, Change24hPct: -3},
+			{Symbol: "TOPUSDT", Score: 99, Change24hPct: 42},
+			{Symbol: "MIDUSDT", Score: 55, Change24hPct: 7},
 		}, nil
 	})
 
@@ -33,9 +33,9 @@ func TestToolGetAI500ListSortsByScoreAndLimits(t *testing.T) {
 		Status string `json:"status"`
 		Count  int    `json:"count"`
 		Coins  []struct {
-			Pair            string  `json:"pair"`
-			Score           float64 `json:"score"`
-			IncreasePercent float64 `json:"increase_percent"`
+			Pair         string  `json:"pair"`
+			Score        float64 `json:"score"`
+			Change24hPct float64 `json:"change_24h_pct"`
 		} `json:"coins"`
 	}
 	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
@@ -49,12 +49,12 @@ func TestToolGetAI500ListSortsByScoreAndLimits(t *testing.T) {
 	}
 }
 
-func TestToolGetAI500ListDefaultLimit(t *testing.T) {
-	coins := make([]nofxos.CoinData, 30)
+func TestToolGetScreenerListDefaultLimit(t *testing.T) {
+	coins := make([]market.UniverseCoin, 30)
 	for i := range coins {
-		coins[i] = nofxos.CoinData{Pair: "C", Score: float64(i)}
+		coins[i] = market.UniverseCoin{Symbol: "C", Score: float64(i)}
 	}
-	withStubbedAI500(t, func(walletKey string) ([]nofxos.CoinData, error) {
+	withStubbedScreener(t, func() ([]market.UniverseCoin, error) {
 		return coins, nil
 	})
 
@@ -70,9 +70,9 @@ func TestToolGetAI500ListDefaultLimit(t *testing.T) {
 	}
 }
 
-func TestToolGetAI500ListUpstreamError(t *testing.T) {
-	withStubbedAI500(t, func(walletKey string) ([]nofxos.CoinData, error) {
-		return nil, errors.New("upstream down")
+func TestToolGetScreenerListUpstreamError(t *testing.T) {
+	withStubbedScreener(t, func() ([]market.UniverseCoin, error) {
+		return nil, errors.New("universe down")
 	})
 
 	a := New(nil, nil, DefaultConfig(), slog.Default())
@@ -83,8 +83,8 @@ func TestToolGetAI500ListUpstreamError(t *testing.T) {
 }
 
 func TestHandleToolCallDispatchesAI500(t *testing.T) {
-	withStubbedAI500(t, func(walletKey string) ([]nofxos.CoinData, error) {
-		return []nofxos.CoinData{{Pair: "BTCUSDT", Score: 90}}, nil
+	withStubbedScreener(t, func() ([]market.UniverseCoin, error) {
+		return []market.UniverseCoin{{Symbol: "BTCUSDT", Score: 90}}, nil
 	})
 
 	a := New(nil, nil, DefaultConfig(), slog.Default())

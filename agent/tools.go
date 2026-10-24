@@ -373,7 +373,6 @@ func strategyConfigSchema() map[string]any {
 							"rsi_periods":              intArraySchema("RSI periods such as [7,14]."),
 							"atr_periods":              intArraySchema("ATR periods such as [14]."),
 							"boll_periods":             intArraySchema("BOLL periods such as [20]."),
-							"nofxos_api_key":           map[string]any{"type": "string"},
 							"enable_quant_data":        map[string]any{"type": "boolean"},
 							"enable_quant_oi":          map[string]any{"type": "boolean"},
 							"enable_oi_ranking":        map[string]any{"type": "boolean"},

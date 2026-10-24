@@ -43,14 +43,8 @@ func validateStrategyConfig(config *store.StrategyConfig) []string {
 	if config.StrategyType == "grid_trading" {
 		return warnings
 	}
-
-	// Validate NofxOS API key if any NofxOS feature is enabled
-	if (config.Indicators.EnableQuantData || config.Indicators.EnableOIRanking ||
-		config.Indicators.EnableTakerFlowRanking || config.Indicators.EnablePriceRanking) &&
-		config.Indicators.NofxOSAPIKey == "" {
-		warnings = append(warnings, "NofxOS API key is not configured. NofxOS data sources may not work properly.")
-	}
-
+	// All market data now comes from free exchange endpoints, so no provider key
+	// or wallet is required.
 	return warnings
 }
 
@@ -585,17 +579,8 @@ func (s *Server) handleStrategyTestRun(c *gin.Context) {
 
 	req.PromptVariant = resolvePromptVariant(req.PromptVariant, req.Config.TradingMode)
 
-	claw402WalletKey, err := s.resolveStrategyDataWalletKey(userID, req.AIModelID)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":       err.Error(),
-			"ai_response": "",
-		})
-		return
-	}
-
 	// Create strategy engine to build prompt
-	engine := kernel.NewStrategyEngine(&req.Config, claw402WalletKey)
+	engine := kernel.NewStrategyEngine(&req.Config)
 
 	// Get candidate coins
 	candidates, err := engine.GetCandidateCoins()
@@ -800,8 +785,4 @@ func (s *Server) runRealAITest(ctx context.Context, userID, modelID, systemPromp
 	}
 
 	return response, nil
-}
-
-func (s *Server) resolveStrategyDataWalletKey(userID, selectedModelID string) (string, error) {
-	return s.store.AIModel().ResolveClaw402WalletKey(userID, selectedModelID)
 }

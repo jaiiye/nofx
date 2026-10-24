@@ -1,11 +1,11 @@
 package agent
 
 import (
-	"nofx/safe"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"nofx/safe"
 	"strconv"
 	"strings"
 	"time"
@@ -29,8 +29,8 @@ var stockHTTPClient = &http.Client{
 type StockQuote struct {
 	Name      string
 	Code      string
-	Market    string  // "A股", "港股", "美股"
-	Currency  string  // "CNY", "HKD", "USD"
+	Market    string // "A股", "港股", "美股"
+	Currency  string // "CNY", "HKD", "USD"
 	Open      float64
 	PrevClose float64
 	Price     float64
@@ -104,7 +104,9 @@ func resolveStockCode(text string) (string, string) {
 		if len(w) == 6 {
 			if _, err := strconv.Atoi(w); err == nil {
 				prefix := "sz"
-				if w[0] == '6' || w[0] == '9' { prefix = "sh" }
+				if w[0] == '6' || w[0] == '9' {
+					prefix = "sh"
+				}
 				return prefix + w, w
 			}
 		}
@@ -298,7 +300,9 @@ func fetchStockQuote(code string) (*StockQuote, error) {
 	req.Header.Set("Referer", "https://finance.sina.com.cn")
 
 	resp, err := stockHTTPClient.Do(req)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -307,15 +311,21 @@ func fetchStockQuote(code string) (*StockQuote, error) {
 
 	reader := transform.NewReader(io.LimitReader(resp.Body, 256*1024), simplifiedchinese.GBK.NewDecoder())
 	body, err := safe.ReadAllLimited(reader)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 
 	line := string(body)
 	start := strings.Index(line, "\"")
 	end := strings.LastIndex(line, "\"")
-	if start == -1 || end <= start { return nil, fmt.Errorf("invalid response") }
+	if start == -1 || end <= start {
+		return nil, fmt.Errorf("invalid response")
+	}
 
 	data := line[start+1 : end]
-	if data == "" { return nil, fmt.Errorf("empty data for %s", code) }
+	if data == "" {
+		return nil, fmt.Errorf("empty data for %s", code)
+	}
 
 	if strings.HasPrefix(code, "sh") || strings.HasPrefix(code, "sz") {
 		return parseAShare(code, data)
@@ -330,7 +340,9 @@ func fetchStockQuote(code string) (*StockQuote, error) {
 
 func parseAShare(code, data string) (*StockQuote, error) {
 	f := strings.Split(data, ",")
-	if len(f) < 32 { return nil, fmt.Errorf("too few fields") }
+	if len(f) < 32 {
+		return nil, fmt.Errorf("too few fields")
+	}
 
 	q := &StockQuote{Name: f[0], Code: code, Market: "A股", Currency: "CNY"}
 	q.Open, _ = strconv.ParseFloat(f[1], 64)
@@ -340,14 +352,20 @@ func parseAShare(code, data string) (*StockQuote, error) {
 	q.Low, _ = strconv.ParseFloat(f[5], 64)
 	q.Volume, _ = strconv.ParseFloat(f[8], 64)
 	q.Turnover, _ = strconv.ParseFloat(f[9], 64)
-	q.Date = f[30]; q.Time = f[31]
-	if q.PrevClose > 0 { q.Change = q.Price - q.PrevClose; q.ChangePct = (q.Change / q.PrevClose) * 100 }
+	q.Date = f[30]
+	q.Time = f[31]
+	if q.PrevClose > 0 {
+		q.Change = q.Price - q.PrevClose
+		q.ChangePct = (q.Change / q.PrevClose) * 100
+	}
 	return q, nil
 }
 
 func parseHKShare(code, data string) (*StockQuote, error) {
 	f := strings.Split(data, ",")
-	if len(f) < 18 { return nil, fmt.Errorf("too few fields") }
+	if len(f) < 18 {
+		return nil, fmt.Errorf("too few fields")
+	}
 
 	q := &StockQuote{Name: f[1], Code: code, Market: "港股", Currency: "HKD"}
 	q.PrevClose, _ = strconv.ParseFloat(f[3], 64)
@@ -359,13 +377,18 @@ func parseHKShare(code, data string) (*StockQuote, error) {
 	q.ChangePct, _ = strconv.ParseFloat(f[8], 64)
 	q.Turnover, _ = strconv.ParseFloat(f[10], 64)
 	q.Volume, _ = strconv.ParseFloat(f[11], 64)
-	if len(f) > 17 { q.Date = f[17]; q.Time = f[17] }
+	if len(f) > 17 {
+		q.Date = f[17]
+		q.Time = f[17]
+	}
 	return q, nil
 }
 
 func parseUSShare(code, data string) (*StockQuote, error) {
 	f := strings.Split(data, ",")
-	if len(f) < 30 { return nil, fmt.Errorf("too few fields") }
+	if len(f) < 30 {
+		return nil, fmt.Errorf("too few fields")
+	}
 
 	q := &StockQuote{Name: f[0], Code: code, Market: "美股", Currency: "USD"}
 	q.Price, _ = strconv.ParseFloat(f[1], 64)
@@ -379,9 +402,13 @@ func parseUSShare(code, data string) (*StockQuote, error) {
 	low52, _ := strconv.ParseFloat(f[9], 64)
 	q.Volume, _ = strconv.ParseFloat(f[10], 64)
 	q.Turnover, _ = strconv.ParseFloat(f[11], 64)
-	if len(f) > 25 { q.Date = f[25]; q.Time = f[26] }
+	if len(f) > 25 {
+		q.Date = f[25]
+		q.Time = f[26]
+	}
 	q.PrevClose = q.Price - q.Change
-	_ = high52; _ = low52
+	_ = high52
+	_ = low52
 
 	// 盘前盘后数据 (字段21=价格, 22=涨跌幅%, 23=涨跌额, 24=时间)
 	if len(f) > 24 {
@@ -402,18 +429,30 @@ func parseUSShare(code, data string) (*StockQuote, error) {
 
 func formatStockQuote(q *StockQuote) string {
 	emoji := "🟢"
-	if q.ChangePct < 0 { emoji = "🔴" }
+	if q.ChangePct < 0 {
+		emoji = "🔴"
+	}
 
 	sym := "¥"
-	if q.Currency == "USD" { sym = "$" }
-	if q.Currency == "HKD" { sym = "HK$" }
+	if q.Currency == "USD" {
+		sym = "$"
+	}
+	if q.Currency == "HKD" {
+		sym = "HK$"
+	}
 
 	volStr := fmt.Sprintf("%.0f", q.Volume)
-	if q.Volume > 1000000 { volStr = fmt.Sprintf("%.1f万", q.Volume/10000) }
-	if q.Volume > 100000000 { volStr = fmt.Sprintf("%.2f亿", q.Volume/100000000) }
+	if q.Volume > 1000000 {
+		volStr = fmt.Sprintf("%.1f万", q.Volume/10000)
+	}
+	if q.Volume > 100000000 {
+		volStr = fmt.Sprintf("%.2f亿", q.Volume/100000000)
+	}
 
 	turnStr := fmt.Sprintf("%.0f", q.Turnover)
-	if q.Turnover > 100000000 { turnStr = fmt.Sprintf("%.2f亿", q.Turnover/100000000) }
+	if q.Turnover > 100000000 {
+		turnStr = fmt.Sprintf("%.2f亿", q.Turnover/100000000)
+	}
 
 	result := fmt.Sprintf(`%s *%s* (%s · %s)
 💰 现价: %s%.2f (%+.2f%%)
@@ -431,7 +470,9 @@ func formatStockQuote(q *StockQuote) string {
 	// 盘前盘后数据
 	if q.IsExtHours && q.ExtPrice > 0 {
 		extEmoji := "🟢"
-		if q.ExtChangePct < 0 { extEmoji = "🔴" }
+		if q.ExtChangePct < 0 {
+			extEmoji = "🔴"
+		}
 		extLabel := "🌙 盘后"
 		if strings.Contains(strings.ToLower(q.ExtTime), "am") {
 			extLabel = "🌅 盘前"

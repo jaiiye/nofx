@@ -149,7 +149,6 @@ export function IndicatorEditor({ config, onChange, disabled, language }: Indica
     onChange({
       ...config,
       // Ensure the simplified Hyperliquid strategy editor never enables NofxOSAI-only datasets.
-      nofxos_api_key: '',
       enable_quant_data: false,
       enable_quant_oi: false,
       enable_oi_ranking: false,

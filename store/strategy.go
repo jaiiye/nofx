@@ -986,7 +986,6 @@ type CoinSourceConfig struct {
 	// Hyperliquid dynamic ranking maximum count. Defaults to 10 (the volume
 	// board) and is hard capped at MaxCandidateCoins for AI context safety.
 	HyperRankLimit int `json:"hyper_rank_limit,omitempty"`
-	// Note: API URLs are now built automatically using NofxOSAPIKey from IndicatorConfig
 }
 
 // IndicatorConfig indicator configuration
@@ -1047,10 +1046,6 @@ type IndicatorConfig struct {
 	BOLLMultiplier float64 `json:"boll_multiplier,omitempty"`
 	// external data sources
 	ExternalDataSources []ExternalDataSource `json:"external_data_sources,omitempty"`
-
-	// ========== NofxOS Unified API Configuration ==========
-	// Unified API Key for all NofxOS data sources
-	NofxOSAPIKey string `json:"nofxos_api_key,omitempty"`
 
 	// quantitative data sources (exchange-native, free)
 	EnableQuantData bool `json:"enable_quant_data"` // whether to enable quantitative data
@@ -1330,8 +1325,7 @@ func GetDefaultStrategyConfig(lang string) StrategyConfig {
 			BOLLPeriods:          []int{20},
 			BOLLMultiplier:       2.0,
 			// Hyperliquid strategies must use native Hyperliquid market data by default.
-			// NofxOS datasets do not cover all Hyperliquid XYZ assets, so keep them off.
-			NofxOSAPIKey:             "",
+			// Exchange datasets do not cover all Hyperliquid XYZ assets, so keep them off.
 			EnableQuantData:          false,
 			EnableQuantOI:            false,
 			EnableOIRanking:          false,

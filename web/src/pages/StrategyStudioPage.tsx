@@ -122,7 +122,6 @@ const stripNofxOSDataForHyperliquid = (config: StrategyConfig): StrategyConfig =
       ...normalized.ai_config,
       indicators: {
         ...normalized.ai_config.indicators,
-        nofxos_api_key: '',
         enable_quant_data: false,
         enable_quant_oi: false,
         enable_oi_ranking: false,

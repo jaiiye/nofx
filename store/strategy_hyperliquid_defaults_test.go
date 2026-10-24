@@ -2,15 +2,12 @@ package store
 
 import "testing"
 
-func TestDefaultHyperliquidStrategyDoesNotEnableNofxOSData(t *testing.T) {
+func TestDefaultHyperliquidStrategyDoesNotEnableVendorData(t *testing.T) {
 	cfg := GetDefaultStrategyConfig("zh")
 	assertHyperliquidStockRankDefault(t, cfg)
 	ind := cfg.Indicators
-	if ind.NofxOSAPIKey != "" {
-		t.Fatalf("default should not include a NofxOS API key for Hyperliquid strategies")
-	}
 	if ind.EnableQuantData || ind.EnableQuantOI || ind.EnableOIRanking || ind.EnableTakerFlowRanking || ind.EnablePriceRanking {
-		t.Fatalf("default Hyperliquid strategy must not enable NofxOS datasets: %+v", ind)
+		t.Fatalf("default Hyperliquid strategy must not enable exchange datasets: %+v", ind)
 	}
 	if !ind.EnableRawKlines {
 		t.Fatalf("raw Hyperliquid klines must stay enabled")

@@ -363,7 +363,6 @@ StrategyConfig fields:
   indicators.rsi_periods: [7,14] default
   indicators.atr_periods: [14] default
   indicators.boll_periods: [20] default
-  indicators.nofxos_api_key: ALWAYS "cm_568c67eae410d912c54c"
   indicators.enable_quant_data: ALWAYS true
   indicators.enable_quant_oi: ALWAYS true
   indicators.enable_oi_ranking: ALWAYS true, oi_ranking_duration:"1h", oi_ranking_limit:10

@@ -6,16 +6,16 @@ import (
 )
 
 type modelProviderSpec struct {
-	ID                     string
-	DisplayName            string
-	DefaultModel           string
-	CredentialLabelZH      string
-	CredentialLabelEN      string
-	SupportsCustomAPIURL   bool
-	SupportsCustomModel    bool
-	UsesWalletCredential   bool
-	Recommended            bool
-	RecommendedModelHints  []string
+	ID                    string
+	DisplayName           string
+	DefaultModel          string
+	CredentialLabelZH     string
+	CredentialLabelEN     string
+	SupportsCustomAPIURL  bool
+	SupportsCustomModel   bool
+	UsesWalletCredential  bool
+	Recommended           bool
+	RecommendedModelHints []string
 }
 
 func supportedModelProviders() []modelProviderSpec {
@@ -41,24 +41,24 @@ func supportedModelProviders() []modelProviderSpec {
 			RecommendedModelHints: []string{"deepseek", "glm-5", "gpt-5.4", "claude-opus", "qwen-max", "grok-4.1"},
 		},
 		{
-			ID:                    "blockrun-base",
-			DisplayName:           "BlockRun (Base Wallet)",
-			DefaultModel:          "auto",
-			CredentialLabelZH:     "钱包私钥",
-			CredentialLabelEN:     "wallet private key",
-			SupportsCustomAPIURL:  false,
-			SupportsCustomModel:   false,
-			UsesWalletCredential:  true,
+			ID:                   "blockrun-base",
+			DisplayName:          "BlockRun (Base Wallet)",
+			DefaultModel:         "auto",
+			CredentialLabelZH:    "钱包私钥",
+			CredentialLabelEN:    "wallet private key",
+			SupportsCustomAPIURL: false,
+			SupportsCustomModel:  false,
+			UsesWalletCredential: true,
 		},
 		{
-			ID:                    "blockrun-sol",
-			DisplayName:           "BlockRun (Solana Wallet)",
-			DefaultModel:          "auto",
-			CredentialLabelZH:     "钱包私钥",
-			CredentialLabelEN:     "wallet private key",
-			SupportsCustomAPIURL:  false,
-			SupportsCustomModel:   false,
-			UsesWalletCredential:  true,
+			ID:                   "blockrun-sol",
+			DisplayName:          "BlockRun (Solana Wallet)",
+			DefaultModel:         "auto",
+			CredentialLabelZH:    "钱包私钥",
+			CredentialLabelEN:    "wallet private key",
+			SupportsCustomAPIURL: false,
+			SupportsCustomModel:  false,
+			UsesWalletCredential: true,
 		},
 	}
 }

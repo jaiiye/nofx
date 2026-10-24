@@ -331,10 +331,6 @@
       "type": "int_array",
       "description": "布林带周期列表。"
     },
-    "nofxos_api_key": {
-      "type": "credential",
-      "description": "量化数据 API Key。"
-    },
     "enable_quant_data": {
       "type": "bool",
       "default": false,

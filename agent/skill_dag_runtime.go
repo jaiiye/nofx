@@ -48,4 +48,3 @@ func advanceSkillDAGStep(session *skillSession, currentStepID string) {
 		return
 	}
 }
-

@@ -18,7 +18,7 @@ func TestCheckOpenProtectionsFailsClosedAfterRepeatedErrors(t *testing.T) {
 	}
 
 	cfg := store.GetDefaultStrategyConfig("en")
-	engine := kernel.NewStrategyEngine(&cfg, "")
+	engine := kernel.NewStrategyEngine(&cfg)
 	at := &AutoTrader{id: "t1", name: "prot-test", store: st, strategyEngine: engine}
 
 	// Healthy store, no positions: nothing to block.

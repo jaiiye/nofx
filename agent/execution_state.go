@@ -118,12 +118,12 @@ type CurrentReferences struct {
 }
 
 type SnapshotSummary struct {
-	SnapshotID  string `json:"snapshot_id,omitempty"`
-	IntentID    string `json:"intent_id,omitempty"`
+	SnapshotID     string `json:"snapshot_id,omitempty"`
+	IntentID       string `json:"intent_id,omitempty"`
 	ParentIntentID string `json:"parent_intent_id,omitempty"`
-	Kind        string `json:"kind,omitempty"`
-	ResumeHint  string `json:"resume_hint,omitempty"`
-	SuspendedAt string `json:"suspended_at,omitempty"`
+	Kind           string `json:"kind,omitempty"`
+	ResumeHint     string `json:"resume_hint,omitempty"`
+	SuspendedAt    string `json:"suspended_at,omitempty"`
 }
 
 type SnapshotManager struct {
@@ -182,12 +182,12 @@ func (m SnapshotManager) List() []SnapshotSummary {
 	out := make([]SnapshotSummary, 0, len(stack))
 	for _, item := range stack {
 		out = append(out, SnapshotSummary{
-			SnapshotID:  strings.TrimSpace(item.SnapshotID),
-			IntentID: strings.TrimSpace(item.IntentID),
+			SnapshotID:     strings.TrimSpace(item.SnapshotID),
+			IntentID:       strings.TrimSpace(item.IntentID),
 			ParentIntentID: strings.TrimSpace(item.ParentIntentID),
-			Kind:        strings.TrimSpace(item.Kind),
-			ResumeHint:  strings.TrimSpace(item.ResumeHint),
-			SuspendedAt: strings.TrimSpace(item.SuspendedAt),
+			Kind:           strings.TrimSpace(item.Kind),
+			ResumeHint:     strings.TrimSpace(item.ResumeHint),
+			SuspendedAt:    strings.TrimSpace(item.SuspendedAt),
 		})
 	}
 	return out

@@ -768,8 +768,6 @@ func strategyConfigFieldDisplayName(field, lang string) string {
 			return "资金费率"
 		}
 		return "funding rate"
-	case "nofxos_api_key":
-		return "NofxOS API key"
 	case "enable_quant_data":
 		if lang == "zh" {
 			return "量化数据"
@@ -784,11 +782,11 @@ func strategyConfigFieldDisplayName(field, lang string) string {
 	case "oi_ranking_limit":
 		return "OI ranking limit"
 	case "enable_netflow_ranking":
-		return "netflow ranking"
+		return "taker flow ranking"
 	case "netflow_ranking_duration":
-		return "netflow ranking duration"
+		return "taker flow ranking duration"
 	case "netflow_ranking_limit":
-		return "netflow ranking limit"
+		return "taker flow ranking limit"
 	case "enable_price_ranking":
 		return "price ranking"
 	case "price_ranking_duration":
@@ -1015,8 +1013,6 @@ func applyStrategyConfigPatch(cfg *store.StrategyConfig, field, value string) er
 		cfg.Indicators.EnableOI = value == "true"
 	case "enable_funding_rate":
 		cfg.Indicators.EnableFundingRate = value == "true"
-	case "nofxos_api_key":
-		cfg.Indicators.NofxOSAPIKey = value
 	case "enable_quant_data":
 		cfg.Indicators.EnableQuantData = value == "true"
 	case "enable_quant_oi":
@@ -1308,8 +1304,6 @@ func strategyFieldKeywords(field string) []string {
 		return []string{"发布到市场", "公开", "publish"}
 	case "config_visible":
 		return []string{"配置可见", "显示配置", "config visible"}
-	case "nofxos_api_key":
-		return []string{"nofxos api key", "nofxos key", "api key"}
 	case "role_definition":
 		return []string{"角色定义", "role definition"}
 	case "trading_frequency":
@@ -1331,13 +1325,13 @@ func strategyFieldKeywords(field string) []string {
 	case "oi_ranking_duration":
 		return []string{"oi ranking duration", "oi排行周期"}
 	case "netflow_ranking_duration":
-		return []string{"netflow ranking duration", "资金流排行周期"}
+		return []string{"taker flow ranking duration", "主动买卖排行周期"}
 	case "price_ranking_duration":
 		return []string{"price ranking duration", "涨跌幅排行周期"}
 	case "oi_ranking_limit":
 		return []string{"oi ranking limit", "oi排行数量"}
 	case "netflow_ranking_limit":
-		return []string{"netflow ranking limit", "资金流排行数量"}
+		return []string{"taker flow ranking limit", "主动买卖排行数量"}
 	case "price_ranking_limit":
 		return []string{"price ranking limit", "涨跌幅排行数量"}
 	case "btceth_max_position_value_ratio":

@@ -129,7 +129,7 @@ export interface GridStrategyConfig {
 }
 
 export interface CoinSourceConfig {
-  source_type: 'static' | 'ai500' | 'oi_top' | 'oi_low' | 'hyper_all' | 'hyper_main' | 'hyper_rank';
+  source_type: 'static' | 'screener' | 'ai500' | 'oi_top' | 'oi_low' | 'hyper_all' | 'hyper_main' | 'hyper_rank';
   static_coins?: string[];
   excluded_coins?: string[];   // 排除的币种列表
   use_ai500: boolean;
@@ -144,7 +144,6 @@ export interface CoinSourceConfig {
   hyper_rank_category?: 'stock' | 'commodity' | 'index' | 'forex' | 'pre_ipo' | 'crypto' | 'all';
   hyper_rank_direction?: 'gainers' | 'losers' | 'volume';
   hyper_rank_limit?: number;
-  // Note: API URLs are now built automatically using nofxos_api_key from IndicatorConfig
 }
 
 export interface IndicatorConfig {
@@ -190,7 +189,6 @@ export interface IndicatorConfig {
 
   // ========== NofxOS 数据源统一配置 ==========
   // Unified NofxOS API Key - used for all NofxOS data sources
-  nofxos_api_key?: string;
 
   // 量化数据源（资金流向、持仓变化、价格变化）
   enable_quant_data?: boolean;

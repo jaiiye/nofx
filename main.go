@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"net/http"
 	nofxiagent "nofx/agent"
 	"nofx/api"
 	"nofx/auth"
@@ -184,7 +186,8 @@ func main() {
 	defer liquidationFlow.Stop()
 
 	go func() {
-		if err := server.Start(); err != nil {
+		// A closed server is the normal shutdown path, not a startup failure.
+		if err := server.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Fatalf("❌ Failed to start API server: %v", err)
 		}
 	}()

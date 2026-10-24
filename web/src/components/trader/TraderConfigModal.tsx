@@ -340,7 +340,7 @@ export function TraderConfigModal({
                             aiConfig.coin_source.source_type === 'hyper_rank' ? (language === 'zh' ? 'Hyperliquid 美股榜单' : 'Hyperliquid US stock ranking') :
                             aiConfig.coin_source.source_type === 'hyper_all' ? (language === 'zh' ? 'Hyperliquid 全市场' : 'Hyperliquid all markets') :
                             aiConfig.coin_source.source_type === 'hyper_main' ? (language === 'zh' ? 'Hyperliquid 主流市场' : 'Hyperliquid main markets') :
-                            aiConfig.coin_source.source_type === 'ai500' ? 'AI500' :
+                            aiConfig.coin_source.source_type === 'ai500' || aiConfig.coin_source.source_type === 'screener' ? 'Screener' :
                             aiConfig.coin_source.source_type === 'oi_top' ? 'OI Top' :
                             aiConfig.coin_source.source_type === 'oi_low' ? 'OI Low' : '-'}
                         </div>

@@ -112,7 +112,7 @@ The two venues describe the same event with opposite aggressor semantics. Mappin
 
 ## 4. Configuration
 
-Two pointer flags in `IndicatorConfig`; `nil` means enabled (same convention as `EnablePositioning`):
+Two pointer flags; `nil` means enabled (same convention as `EnablePositioning`):
 
 ```json
 {
@@ -123,6 +123,22 @@ Two pointer flags in `IndicatorConfig`; `nil` means enabled (same convention as 
 
 - Disabled: no collection, no prompt section, no replay attribution.
 - The collectors start in `main.go` and are shared by all traders, so they are not hot-switched per strategy.
+
+**No API key or claw402 wallet is required.** claw402 is only used for AI model calls; the data path no longer touches it.
+
+### 4.1 Migrating from NofxOS / claw402
+
+| Old config / field | Now |
+|---|---|
+| `nofxos_api_key` | removed; ignored if present in an old strategy JSON |
+| `source_type: "ai500"` | alias for the local screener (warns once); prefer `"screener"` |
+| `enable_quant_netflow` | removed; old keys are ignored |
+| `enable_netflow_ranking` | key kept, but the content is **Taker Flow Ranking** (buy/sell imbalance), not institutional/retail flow |
+| `netflow_ranking_duration` / `netflow_ranking_limit` | key kept, applied to Taker Flow Ranking |
+| per-coin `netflow` | removed (no free equivalent for the institutional/retail split) |
+| per-coin `net_long` / `net_short` | replaced by Binance's public account and top-trader long/short ratios |
+
+**Cold start**: on boot the process seeds 24 hours of hourly OI and price history for the 120 most liquid contracts from Binance's `openInterestHist` and klines, so `oi_top` / `oi_low` does not sit out for an hour after a restart.
 
 ---
 

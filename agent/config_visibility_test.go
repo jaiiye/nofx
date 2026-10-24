@@ -364,7 +364,7 @@ func TestSkillVisibleFieldSummaryForStrategyCoversManualPageFields(t *testing.T)
 	a := New(nil, st, DefaultConfig(), slog.Default())
 
 	summary := a.skillVisibleFieldSummary("default", "zh", "strategy_management", "update_config")
-	for _, expected := range []string{"发布到市场", "配置可见", "交易对", "杠杆", "主周期", "多周期时间框架", "NofxOS API key", "角色定义", "自定义 Prompt"} {
+	for _, expected := range []string{"发布到市场", "配置可见", "交易对", "杠杆", "主周期", "多周期时间框架", "角色定义", "自定义 Prompt"} {
 		if !strings.Contains(summary, expected) {
 			t.Fatalf("expected field label %q in summary, got: %s", expected, summary)
 		}
@@ -683,7 +683,7 @@ func TestDescribeStrategyIncludesManualPageSections(t *testing.T) {
 	}
 	for _, unexpected := range []string{
 		"标的来源：",
-		"NofxOS 数据：",
+		"交易所数据：",
 	} {
 		if strings.Contains(detail, unexpected) {
 			t.Fatalf("expected grid strategy detail not to contain AI field %q, got: %s", unexpected, detail)
