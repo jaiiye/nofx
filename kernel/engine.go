@@ -185,8 +185,13 @@ type FlowTypeData struct {
 }
 
 type OIData struct {
-	CurrentOI float64                 `json:"current_oi"`
-	Delta     map[string]*OIDeltaData `json:"delta,omitempty"`
+	CurrentOI float64 `json:"current_oi"`
+	// NetLong / NetShort are the venue's reported long and short exposure.
+	// They arrive with the OI payload, so surfacing them costs no extra request;
+	// their ratio is the long/short reading the prompt uses.
+	NetLong  float64                 `json:"net_long,omitempty"`
+	NetShort float64                 `json:"net_short,omitempty"`
+	Delta    map[string]*OIDeltaData `json:"delta,omitempty"`
 }
 
 type OIDeltaData struct {
@@ -825,7 +830,17 @@ func (e *StrategyEngine) FetchQuantData(symbol string) (*QuantData, error) {
 		return nil, nil
 	}
 
-	// Convert nofxos.QuantData to kernel.QuantData
+	return convertQuantData(nofxosData), nil
+}
+
+// convertQuantData maps the provider payload onto the prompt-facing type. It is
+// pure so the field mapping (including the long/short exposure that travels
+// with OI) can be tested without the network.
+func convertQuantData(nofxosData *nofxos.QuantData) *QuantData {
+	if nofxosData == nil {
+		return nil
+	}
+
 	quantData := &QuantData{
 		Symbol:      nofxosData.Symbol,
 		Price:       nofxosData.Price,
@@ -839,6 +854,8 @@ func (e *StrategyEngine) FetchQuantData(symbol string) (*QuantData, error) {
 			if oiData != nil {
 				kData := &OIData{
 					CurrentOI: oiData.CurrentOI,
+					NetLong:   oiData.NetLong,
+					NetShort:  oiData.NetShort,
 				}
 				if oiData.Delta != nil {
 					kData.Delta = make(map[string]*OIDeltaData)
@@ -874,7 +891,7 @@ func (e *StrategyEngine) FetchQuantData(symbol string) (*QuantData, error) {
 		}
 	}
 
-	return quantData, nil
+	return quantData
 }
 
 // FetchQuantDataBatch batch fetches quantitative data

@@ -801,6 +801,16 @@ func (e *StrategyEngine) writeIndicatorPlaybook(sb *strings.Builder, zh bool) {
 	}
 	addGroup(l("Liquidation flow", "爆仓流"), liquidation)
 
+	// Long/short exposure rides along with the OI payload. Like positioning, it
+	// explains crowding rather than setting a direction.
+	var longShort []string
+	if ind.EnableQuantData && ind.EnableQuantOI {
+		longShort = append(longShort, l(
+			"Long/short exposure is a crowding read, not a direction. It matters when one side is extreme or when it diverges from price and OI — price rising while long exposure shrinks is short covering, not new demand.",
+			"多空敞口是拥挤度读数，不是方向。只有一侧极端，或它与价格/OI 背离时才有意义——价格上涨而多头敞口缩小，说明是空头回补而不是新增需求。"))
+	}
+	addGroup(l("Long/short exposure", "多空敞口"), longShort)
+
 	if len(groups) == 0 {
 		return
 	}
@@ -2032,6 +2042,17 @@ func (e *StrategyEngine) formatQuantData(data *QuantData) string {
 
 	if indicators.EnableQuantOI && len(data.OI) > 0 {
 		for exchange, oiData := range data.OI {
+			// Long/short exposure travels with the OI payload; render it even
+			// when no delta window is present, and omit it when the venue
+			// reports neither side.
+			if oiData.NetLong > 0 || oiData.NetShort > 0 {
+				sb.WriteString(fmt.Sprintf("Long/Short (%s): long %.2f / short %.2f",
+					exchange, oiData.NetLong, oiData.NetShort))
+				if ratio, ok := longShortRatio(oiData.NetLong, oiData.NetShort); ok {
+					sb.WriteString(fmt.Sprintf(" = %s", ratio))
+				}
+				sb.WriteString("\n")
+			}
 			if len(oiData.Delta) > 0 {
 				sb.WriteString(fmt.Sprintf("Open Interest (%s):\n", exchange))
 				for _, tf := range []string{"5m", "15m", "1h", "4h", "12h", "24h"} {
@@ -2044,6 +2065,19 @@ func (e *StrategyEngine) formatQuantData(data *QuantData) string {
 	}
 
 	return sb.String()
+}
+
+// longShortRatio renders the long/short exposure ratio. It is unit-independent,
+// so it stays meaningful whatever scale the source reports the two sides in.
+func longShortRatio(netLong, netShort float64) (string, bool) {
+	switch {
+	case netShort > 0:
+		return fmt.Sprintf("%.2fx", netLong/netShort), true
+	case netLong > 0:
+		return "all long", true
+	default:
+		return "", false
+	}
 }
 
 func formatFlowValue(v float64) string {

@@ -1800,7 +1800,9 @@ func (c *StrategyConfig) EstimateTokens() TokenEstimate {
 	if c.Indicators.EnableQuantData {
 		quantCharsPerCoin := 0
 		if c.Indicators.EnableQuantOI {
-			quantCharsPerCoin += 300
+			// OI windows plus the long/short exposure line per exchange (up to
+			// three exchanges; ~50 chars each).
+			quantCharsPerCoin += 420
 		}
 		if c.Indicators.EnableQuantNetflow {
 			quantCharsPerCoin += 300
