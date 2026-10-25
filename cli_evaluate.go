@@ -1,3 +1,4 @@
+// File: cli_evaluate.go
 package main
 
 import (
@@ -5,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strings"
 	"time"
 
 	"nofx/internal/backtest"
@@ -24,11 +26,19 @@ func runEvaluate(args []string) {
 	exchange := fs.String("exchange", "binance", "exchange fee schedule to assume")
 	dbPath := fs.String("db", "", "override the SQLite database path")
 	regime := fs.Bool("regime", false, "label trades with stored cascade/crowding state (attribution only)")
+	sizing := fs.String("sizing", "recorded", "position sizing: recorded | decision | risk")
+	riskPct := fs.Float64("risk-pct", 0.5, "percent of equity risked per trade (risk sizing)")
+	equity := fs.Float64("equity", 0, "fallback account equity when no snapshots exist (risk sizing)")
+	exitMode := fs.String("exit", "bracket", "exit simulation: bracket | giveback")
+	armPct := fs.Float64("arm-pct", 2, "giveback: favorable price move that arms the trail (%)")
+	givebackPct := fs.Float64("giveback-pct", 30, "giveback: share of the peak profit given back before exit (%)")
 	_ = fs.Parse(args)
 
 	if *traderID == "" || *fromStr == "" {
 		fmt.Fprintln(os.Stderr, "usage: nofx evaluate --trader <id> --from <date> [--to <date>] "+
-			"[--timeframe 15m] [--exchange binance] [--db path] [--regime]")
+			"[--timeframe 15m] [--exchange binance] [--db path] [--regime] "+
+			"[--sizing recorded|decision|risk] [--risk-pct 0.5] [--equity 0] "+
+			"[--exit bracket|giveback] [--arm-pct 2] [--giveback-pct 30]")
 		os.Exit(2)
 	}
 
@@ -61,12 +71,22 @@ func runEvaluate(args []string) {
 		len(records), *traderID, from.Format("2006-01-02"), to.Format("2006-01-02"))
 
 	cfg := backtest.Config{
-		TraderID:  *traderID,
-		From:      from,
-		To:        to,
-		Timeframe: *timeframe,
-		Fees:      connector.FeeModelFor(*exchange),
-		Seed:      1,
+		TraderID:       *traderID,
+		From:           from,
+		To:             to,
+		Timeframe:      *timeframe,
+		Fees:           connector.FeeModelFor(*exchange),
+		Seed:           1,
+		SizingMode:     strings.ToLower(strings.TrimSpace(*sizing)),
+		RiskPct:        *riskPct,
+		Equity:         *equity,
+		ExitMode:       strings.ToLower(strings.TrimSpace(*exitMode)),
+		GivebackArmPct: *armPct,
+		GivebackPct:    *givebackPct,
+	}
+	// Risk sizing needs the account as it stood at each decision.
+	if cfg.SizingMode == backtest.SizingRisk {
+		cfg.EquitySource = backtest.StoreEquitySource(st, *traderID, from, to)
 	}
 	// Attribution only: the label is read from stored point-in-time rows and
 	// never changes entry, exit or sizing.
@@ -74,7 +94,9 @@ func runEvaluate(args []string) {
 		cfg.RegimeSource = backtest.StoreRegimeSource(st)
 	}
 
-	res, err := backtest.Evaluate(records, cfg, market.GetKlinesRange)
+	// GetKlinesRangeAuto routes HIP-3 (xyz) assets to Hyperliquid; the Binance
+	// endpoint rejects those symbols outright.
+	res, err := backtest.Evaluate(records, cfg, market.GetKlinesRangeAuto)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "evaluation failed: %v\n", err)
 		os.Exit(1)
@@ -96,6 +118,14 @@ func printEvaluation(res *backtest.Result) {
 	m := res.Metrics
 	fmt.Printf("\n=== Decision replay (%s candles, taker fee %.3f%%) ===\n",
 		res.Config.Timeframe, res.Config.Fees.TakerRate()*100)
+	fmt.Printf("sizing=%s  exit=%s", res.Config.SizingMode, res.Config.ExitMode)
+	if res.Config.SizingMode == backtest.SizingRisk {
+		fmt.Printf(" (risk %.2f%%/trade)", res.Config.RiskPct)
+	}
+	if res.Config.ExitMode == backtest.ExitGiveback {
+		fmt.Printf(" (arm %.1f%%, giveback %.0f%%)", res.Config.GivebackArmPct, res.Config.GivebackPct)
+	}
+	fmt.Println()
 	fmt.Printf("opens=%d  trades=%d  skipped=%d\n", res.Opens, m.Trades, res.Skipped)
 	fmt.Printf("win rate     : %.1f%% (%dW / %dL)\n", m.WinRate, m.Wins, m.Losses)
 	fmt.Printf("net PnL      : %.2f  (gross %.2f, fees %.2f)\n", m.NetPnL, m.GrossPnL, m.TotalFee)

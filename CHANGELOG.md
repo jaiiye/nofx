@@ -214,6 +214,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   making a context that is outgrowing the model's window visible before the provider rejects it.
 
 ### Changed
+- The decision replay can now size trades three ways and simulate a trailing exit. `--sizing recorded` keeps
+  the historical behaviour (the filled quantity, so risk-gate-blocked signals are skipped), `--sizing decision`
+  derives the quantity from the AI's `position_size_usd` so blocked signals can be evaluated too, and
+  `--sizing risk` sizes every signal to a fixed equity risk budget divided by its stop distance. `--exit
+  giveback` replaces the fixed target with a trail that arms after a favorable price move and closes when a
+  share of the peak profit is given back, so the live monitor's 2%/30% can finally be calibrated offline. The
+  sweep covers both: stop × take for bracket, stop × arm × giveback for giveback, with the same sizing flags.
 - Prompt accuracy: the trading-statistics block now prints the win rate next to profit factor and Sharpe (the
   value was already computed and passed in, just never rendered), and a "Data sources" section states that
   crypto K-lines are Binance USDT proxies while open interest, funding and taker flow are Hyperliquid
@@ -319,6 +326,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bot uses the same model selection as the web agent.
 
 ### Fixed
+- `nofx evaluate` and `nofx sweep` no longer abort the whole replay on HIP-3 assets: they route `xyz:*`
+  symbols to Hyperliquid (`GetKlinesRangeAuto`) instead of asking Binance for a symbol it does not list, and a
+  failed fetch names the symbol in the error. The sweep matrix also prints fractional stop grids correctly
+  (1.5% no longer rounds to a second "2%" row).
 - JSON parse failures are now explained from the parser's own error instead of a hand-rolled scan of the
   document. The old validator looked for "~" and thousand separators across the raw text, so a valid decision
   whose reasoning said "extended ~3x ATR above EMA50" was rejected. Parsing is the authority now: a valid array

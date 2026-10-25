@@ -36,6 +36,25 @@ type Regime struct {
 // RegimeSource looks up the regime that was known when the decision was taken.
 type RegimeSource func(symbol string, at time.Time) Regime
 
+// Sizing and exit modes. Empty means the historical default.
+const (
+	// SizingRecorded uses the quantity the live bot actually filled. Signals
+	// the risk gate blocked (quantity 0) are counted but skipped.
+	SizingRecorded = "recorded"
+	// SizingDecision derives the quantity from the AI's position_size_usd, so
+	// blocked/open-but-unfilled signals can be evaluated too.
+	SizingDecision = "decision"
+	// SizingRisk sizes every signal to a fixed risk budget from its stop
+	// distance. It needs an equity source (or Config.Equity).
+	SizingRisk = "risk"
+
+	// ExitBracket takes profit at the recorded/overridden target.
+	ExitBracket = "bracket"
+	// ExitGiveback trails the peak and closes after a share of the profit is
+	// given back (no fixed target). Used to calibrate the live monitor.
+	ExitGiveback = "giveback"
+)
+
 // Config controls a replay.
 type Config struct {
 	TraderID       string
@@ -50,6 +69,23 @@ type Config struct {
 	// percentage distance from the entry price. Used by the parameter sweep.
 	OverrideStopPct float64
 	OverrideTakePct float64
+
+	// SizingMode: recorded (default), decision or risk. See the constants above.
+	SizingMode string
+	// RiskPct is the equity percentage risked per trade in risk mode (default 0.5).
+	RiskPct float64
+	// EquitySource supplies the account equity at a decision time (risk mode).
+	// Equity is the fallback when no source is supplied.
+	EquitySource func(at time.Time) float64
+	Equity       float64
+
+	// ExitMode: bracket (default) or giveback. In giveback mode the fixed target
+	// is ignored; GivebackArmPct arms the trailing exit after that favorable
+	// price move, and GivebackPct closes after that share of the peak is given
+	// back (both price %, default 2 and 30).
+	ExitMode       string
+	GivebackArmPct float64
+	GivebackPct    float64
 
 	// RegimeSource optionally labels each trade with the tape it was taken on
 	// (liquidation cascade, crowding). Nil leaves the replay byte-for-byte
@@ -67,10 +103,58 @@ func (c Config) withDefaults() Config {
 	if c.Samples <= 0 {
 		c.Samples = 1000
 	}
+	if c.SizingMode == "" {
+		c.SizingMode = SizingRecorded
+	}
+	if c.ExitMode == "" {
+		c.ExitMode = ExitBracket
+	}
+	if c.RiskPct <= 0 {
+		c.RiskPct = 0.5
+	}
+	if c.GivebackArmPct <= 0 {
+		c.GivebackArmPct = 2
+	}
+	if c.GivebackPct <= 0 {
+		c.GivebackPct = 30
+	}
+	// Giving back 100% of the peak would place the trigger at break-even (and
+	// beyond that at a loss), which is not a trailing exit.
+	if c.GivebackPct > 99 {
+		c.GivebackPct = 99
+	}
 	if c.Fees == nil {
 		c.Fees = connector.FeeModelFor("")
 	}
 	return c
+}
+
+// validate rejects typos instead of silently falling back to another mode.
+func (c Config) validate() error {
+	switch c.SizingMode {
+	case SizingRecorded, SizingDecision, SizingRisk:
+	default:
+		return fmt.Errorf("unknown sizing mode %q (want recorded, decision or risk)", c.SizingMode)
+	}
+	switch c.ExitMode {
+	case ExitBracket, ExitGiveback:
+	default:
+		return fmt.Errorf("unknown exit mode %q (want bracket or giveback)", c.ExitMode)
+	}
+	if c.SizingMode == SizingRisk && c.EquitySource == nil && c.Equity <= 0 {
+		return fmt.Errorf("risk sizing needs an equity source or Config.Equity")
+	}
+	return nil
+}
+
+// equityAt returns the account equity the signal should be sized against.
+func (c Config) equityAt(at time.Time) float64 {
+	if c.EquitySource != nil {
+		if v := c.EquitySource(at); v > 0 {
+			return v
+		}
+	}
+	return c.Equity
 }
 
 // Trade is one simulated round trip derived from a recorded open decision.
@@ -179,34 +263,50 @@ func LoadRecords(st *store.Store, traderID string, from, to time.Time) ([]*store
 // Evaluate replays the open actions in the given decision records.
 func Evaluate(records []*store.DecisionRecord, cfg Config, src KlineSource) (*Result, error) {
 	cfg = cfg.withDefaults()
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
 	tf, err := market.TFDuration(cfg.Timeframe)
 	if err != nil {
 		return nil, fmt.Errorf("unsupported timeframe %q: %w", cfg.Timeframe, err)
 	}
 
 	res := &Result{Config: cfg}
-	res.Notes = append(res.Notes,
-		"entry = first candle open strictly after the decision timestamp (no look-ahead)",
-		fmt.Sprintf("intrabar: stop-loss assumed before take-profit within a candle; force-exit after %d candles", cfg.MaxHoldCandles))
+	res.Notes = append(res.Notes, "entry = first candle open strictly after the decision timestamp (no look-ahead)")
+	if cfg.ExitMode == ExitGiveback {
+		res.Notes = append(res.Notes, fmt.Sprintf(
+			"exit: stop-loss first, then a trailing exit arming at %.1f%% favorable price and closing after %.0f%% of the peak is given back; force-exit after %d candles",
+			cfg.GivebackArmPct, cfg.GivebackPct, cfg.MaxHoldCandles))
+	} else {
+		res.Notes = append(res.Notes, fmt.Sprintf("intrabar: stop-loss assumed before take-profit within a candle; force-exit after %d candles", cfg.MaxHoldCandles))
+	}
+	switch cfg.SizingMode {
+	case SizingDecision:
+		res.Notes = append(res.Notes, "sizing: AI position_size_usd divided by the entry price (blocked signals included)")
+	case SizingRisk:
+		res.Notes = append(res.Notes, fmt.Sprintf("sizing: %.2f%% of equity per trade divided by the stop distance (blocked signals included)", cfg.RiskPct))
+	default:
+		res.Notes = append(res.Notes, "sizing: recorded fill quantity; signals the risk gate blocked are counted but skipped")
+	}
 
-	candles, err := loadCandles(records, cfg, tf, src)
+	var signals []signal
+	for _, rec := range records {
+		signals = append(signals, collectSignals(rec, cfg.SizingMode)...)
+	}
+	res.Opens = len(signals)
+
+	candles, err := loadCandles(signals, cfg, tf, src)
 	if err != nil {
 		return nil, err
 	}
 
-	for _, rec := range records {
-		for _, d := range rec.Decisions {
-			if !isOpen(d.Action) {
-				continue
-			}
-			res.Opens++
-			tr, ok := simulate(rec.Timestamp, d, candles[market.Normalize(d.Symbol)], cfg)
-			if !ok {
-				res.Skipped++
-				continue
-			}
-			res.Trades = append(res.Trades, tr)
+	for _, s := range signals {
+		tr, ok := simulate(s, candles[market.Normalize(s.Symbol)], cfg)
+		if !ok {
+			res.Skipped++
+			continue
 		}
+		res.Trades = append(res.Trades, tr)
 	}
 
 	res.Metrics = summarize(res.Trades)
@@ -226,13 +326,11 @@ func isOpen(action string) bool {
 
 // loadCandles fetches (once per symbol) the candles the replay needs, extended
 // past To so holds that run to the timeout still have data.
-func loadCandles(records []*store.DecisionRecord, cfg Config, tf time.Duration, src KlineSource) (map[string][]market.Kline, error) {
+func loadCandles(signals []signal, cfg Config, tf time.Duration, src KlineSource) (map[string][]market.Kline, error) {
 	want := map[string]bool{}
-	for _, rec := range records {
-		for _, d := range rec.Decisions {
-			if isOpen(d.Action) && d.Symbol != "" {
-				want[market.Normalize(d.Symbol)] = true
-			}
+	for _, s := range signals {
+		if s.Symbol != "" {
+			want[market.Normalize(s.Symbol)] = true
 		}
 	}
 	end := cfg.To.Add(time.Duration(cfg.MaxHoldCandles) * tf)
@@ -245,114 +343,6 @@ func loadCandles(records []*store.DecisionRecord, cfg Config, tf time.Duration, 
 		out[sym] = ks
 	}
 	return out, nil
-}
-
-// simulate walks the candles forward from the decision time to a stop-loss,
-// take-profit, or the hold limit. It is the conservative directional model.
-func simulate(decidedAt time.Time, d store.DecisionAction, candles []market.Kline, cfg Config) (Trade, bool) {
-	if d.Quantity <= 0 || len(candles) == 0 {
-		return Trade{}, false
-	}
-	side := "long"
-	dir := 1.0
-	if d.Action == "open_short" {
-		side, dir = "short", -1.0
-	}
-
-	// First candle that opens strictly after the decision.
-	start := sort.Search(len(candles), func(i int) bool { return candles[i].OpenTime > decidedAt.UnixMilli() })
-	if start >= len(candles) {
-		return Trade{}, false
-	}
-	entry := candles[start].Open
-	if entry <= 0 {
-		return Trade{}, false
-	}
-
-	t := Trade{
-		Symbol: d.Symbol, Side: side, EntryTime: time.UnixMilli(candles[start].OpenTime).UTC(),
-		EntryPrice: entry, Quantity: d.Quantity, Notional: entry * d.Quantity,
-		Confidence: d.Confidence,
-	}
-	if cfg.RegimeSource != nil {
-		regime := cfg.RegimeSource(d.Symbol, decidedAt)
-		t.EntryCascade = regime.Cascade
-		t.EntryCrowdedSide = regime.CrowdedSide
-	}
-
-	// Effective protective levels: recorded, or overridden to a fixed
-	// percentage from entry (for the parameter sweep).
-	sl, tp := d.StopLoss, d.TakeProfit
-	if cfg.OverrideStopPct > 0 {
-		if side == "long" {
-			sl = entry * (1 - cfg.OverrideStopPct/100)
-		} else {
-			sl = entry * (1 + cfg.OverrideStopPct/100)
-		}
-	}
-	if cfg.OverrideTakePct > 0 {
-		if side == "long" {
-			tp = entry * (1 + cfg.OverrideTakePct/100)
-		} else {
-			tp = entry * (1 - cfg.OverrideTakePct/100)
-		}
-	}
-
-	exit, reason := 0.0, "timeout"
-	last := start + cfg.MaxHoldCandles
-	if last >= len(candles) {
-		last = len(candles) - 1
-	}
-	for i := start; i <= last; i++ {
-		c := candles[i]
-		if hitStop(c, side, sl) {
-			exit, reason = sl, "stop_loss"
-			t.HoldCandles = i - start + 1
-			t.ExitTime = time.UnixMilli(c.OpenTime).UTC()
-			break
-		}
-		if hitTarget(c, side, tp) {
-			exit, reason = tp, "take_profit"
-			t.HoldCandles = i - start + 1
-			t.ExitTime = time.UnixMilli(c.OpenTime).UTC()
-			break
-		}
-	}
-	if reason == "timeout" {
-		exit = candles[last].Close
-		t.HoldCandles = last - start + 1
-		t.ExitTime = time.UnixMilli(candles[last].OpenTime).UTC()
-	}
-
-	t.ExitPrice = exit
-	t.ExitReason = reason
-	t.GrossPnL = (exit - entry) * d.Quantity * dir
-	t.Fee = cfg.Fees.Estimate(entry*d.Quantity, false).Amount + cfg.Fees.Estimate(exit*d.Quantity, false).Amount
-	t.NetPnL = t.GrossPnL - t.Fee
-	return t, true
-}
-
-// hitStop / hitTarget check whether a candle's range touches a protective
-// level. Stop-loss is evaluated first so a candle that spans both is scored
-// as the worst case.
-func hitStop(c market.Kline, side string, sl float64) bool {
-	if sl <= 0 {
-		return false
-	}
-	if side == "long" {
-		return c.Low <= sl
-	}
-	return c.High >= sl
-}
-
-func hitTarget(c market.Kline, side string, tp float64) bool {
-	if tp <= 0 {
-		return false
-	}
-	if side == "long" {
-		return c.High >= tp
-	}
-	return c.Low <= tp
 }
 
 func summarize(trades []Trade) Metrics {
