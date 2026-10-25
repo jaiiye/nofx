@@ -12,7 +12,6 @@ interface ProtectionEditorProps {
 const DEFAULTS = {
   max_drawdown_pct: 15,
   max_drawdown_lookback_h: 168,
-  drawdown_basis: 'nav' as const,
   losing_closes_guard_count: 3,
   losing_closes_guard_lookback_h: 6,
   cooldown_minutes: 60,
@@ -34,9 +33,10 @@ const L = {
   maxDrawdown: { zh: '回撤阈值 (%)', en: 'Drawdown limit (%)' },
   lookback: { zh: '回看窗口 (小时)', en: 'Lookback (hours)' },
   basis: { zh: '回撤口径', en: 'Drawdown basis' },
-  basisNav: { zh: '净值 (现金流中性，推荐)', en: 'NAV (cash-flow neutral, recommended)' },
-  basisEquity: { zh: '权益 (含未实现盈亏，原始)', en: 'Equity (incl. unrealized, raw)' },
-  basisBalance: { zh: '余额 (仅已实现，原始)', en: 'Balance (realized only, raw)' },
+  basisNavDesc: {
+    zh: '净值 = 账户权益 ÷ 当时资金基线。含未实现盈亏，且出入金不会被误判为回撤。',
+    en: 'NAV = account equity / capital baseline in effect. Includes unrealized PnL, and a deposit or withdrawal is not read as a drawdown.',
+  },
   losing: { zh: '连续亏损熔断', en: 'Losing-streak guard' },
   losingDesc: {
     zh: '回看窗口内亏损平仓达到该次数时暂停开仓',
@@ -149,21 +149,9 @@ export function ProtectionEditor({
           <label className="block text-sm mb-2" style={{ color: '#EAECEF' }}>
             {t('basis', language)}
           </label>
-          <select
-            value={c.drawdown_basis ?? DEFAULTS.drawdown_basis}
-            onChange={(e) => updateField('drawdown_basis', e.target.value as never)}
-            disabled={disabled}
-            className="w-full px-3 py-2 rounded"
-            style={{
-              background: '#1E2329',
-              border: '1px solid #2B3139',
-              color: '#EAECEF',
-            }}
-          >
-            <option value="nav">{t('basisNav', language)}</option>
-            <option value="equity">{t('basisEquity', language)}</option>
-            <option value="balance">{t('basisBalance', language)}</option>
-          </select>
+          <p className="text-xs leading-relaxed" style={{ color: '#848E9C' }}>
+            {t('basisNavDesc', language)}
+          </p>
         </div>
       </div>
 

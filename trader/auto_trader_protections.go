@@ -7,7 +7,6 @@ import (
 
 	"nofx/logger"
 	"nofx/market"
-	"nofx/store"
 )
 
 // CheckOpenProtections exposes the code-enforced circuit breakers to callers
@@ -17,18 +16,11 @@ func (at *AutoTrader) CheckOpenProtections(symbol string) string {
 	return at.checkOpenProtections(symbol)
 }
 
-// drawdownPeakCurrent returns the peak and latest value of the curve selected
-// by the protection's DrawdownBasis: "nav" (cash-flow neutral balance/baseline
-// index), "equity" (wallet + unrealized) or "balance" (wallet only).
-func (at *AutoTrader) drawdownPeakCurrent(basis string, since time.Time) (peak, current float64, ok bool, err error) {
-	switch basis {
-	case store.DrawdownBasisBalance:
-		return at.store.Equity().PeakAndCurrentBalance(at.id, since)
-	case store.DrawdownBasisNAV:
-		return at.store.Equity().PeakAndCurrentNAV(at.id, since)
-	default:
-		return at.store.Equity().PeakAndCurrentEquity(at.id, since)
-	}
+// drawdownPeakCurrent returns the peak and latest value of the account's NAV
+// index, the only drawdown curve: mark-to-market, so a floating loss counts, and
+// cash-flow neutral, so a deposit or withdrawal does not.
+func (at *AutoTrader) drawdownPeakCurrent(since time.Time) (peak, current float64, ok bool, err error) {
+	return at.store.Equity().PeakAndCurrentNAV(at.id, since)
 }
 
 // checkOpenProtections evaluates the code-enforced circuit breakers
@@ -75,22 +67,18 @@ func (at *AutoTrader) evaluateProtections(symbol string) (string, bool) {
 	normSymbol := market.Normalize(symbol)
 	hadError := false
 
-	// 1. Max drawdown halt — curve below (peak - MaxDrawdownPct%).
+	// 1. Max drawdown halt — NAV index below (peak - MaxDrawdownPct%).
 	if p.MaxDrawdownPct > 0 {
 		since := now.Add(-time.Duration(p.MaxDrawdownLookbackH) * time.Hour)
-		peak, current, ok, err := at.drawdownPeakCurrent(p.DrawdownBasis, since)
+		peak, current, ok, err := at.drawdownPeakCurrent(since)
 		if err != nil {
 			logger.Warnf("⚠️ [protection] drawdown check failed: %v", err)
 			hadError = true
 		} else if ok && peak > 0 {
 			ddPct := (peak - current) / peak * 100
 			if ddPct > p.MaxDrawdownPct {
-				if p.DrawdownBasis == store.DrawdownBasisNAV {
-					return fmt.Sprintf("max drawdown halt (nav): index %.4f is %.1f%% below peak %.4f (limit %.1f%%)",
-						current, ddPct, peak, p.MaxDrawdownPct), hadError
-				}
-				return fmt.Sprintf("max drawdown halt (%s): %.2f is %.1f%% below peak %.2f (limit %.1f%%)",
-					p.DrawdownBasis, current, ddPct, peak, p.MaxDrawdownPct), hadError
+				return fmt.Sprintf("max drawdown halt (nav): index %.4f is %.1f%% below peak %.4f (limit %.1f%%)",
+					current, ddPct, peak, p.MaxDrawdownPct), hadError
 			}
 		}
 	}

@@ -1,34 +1,38 @@
 package store
 
 import (
+	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
 
-func TestProtectionConfigNormalizedDrawdownBasis(t *testing.T) {
-	// An unset basis migrates to NAV: the raw curves cannot distinguish a
-	// deposit from a loss.
-	if got := (ProtectionConfig{}).Normalized().DrawdownBasis; got != DrawdownBasisNAV {
-		t.Fatalf("empty basis = %q, want %q", got, DrawdownBasisNAV)
+// A stored config may still carry the retired "drawdown_basis" key; it must keep
+// loading, and the value is simply ignored because NAV is the only curve now.
+func TestProtectionConfigIgnoresLegacyDrawdownBasis(t *testing.T) {
+	var cfg ProtectionConfig
+	if err := json.Unmarshal([]byte(`{"max_drawdown_pct":10,"drawdown_basis":"balance"}`), &cfg); err != nil {
+		t.Fatalf("unmarshal legacy config: %v", err)
 	}
-	// Explicit legacy choices are preserved as an escape hatch.
-	if got := (ProtectionConfig{DrawdownBasis: DrawdownBasisBalance}).Normalized().DrawdownBasis; got != DrawdownBasisBalance {
-		t.Fatalf("balance basis = %q, want %q", got, DrawdownBasisBalance)
+	if cfg.MaxDrawdownPct != 10 {
+		t.Fatalf("max drawdown = %v, want 10", cfg.MaxDrawdownPct)
 	}
-	if got := (ProtectionConfig{DrawdownBasis: DrawdownBasisEquity}).Normalized().DrawdownBasis; got != DrawdownBasisEquity {
-		t.Fatalf("equity basis = %q, want %q", got, DrawdownBasisEquity)
+
+	// Round-tripping drops the key: there is nothing left to configure.
+	out, err := json.Marshal(cfg.Normalized())
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
 	}
-	if got := (ProtectionConfig{DrawdownBasis: "nonsense"}).Normalized().DrawdownBasis; got != DrawdownBasisNAV {
-		t.Fatalf("invalid basis = %q, want %q", got, DrawdownBasisNAV)
-	}
-	if got := DefaultProtectionConfig().DrawdownBasis; got != DrawdownBasisNAV {
-		t.Fatalf("default basis = %q, want %q", got, DrawdownBasisNAV)
+	if strings.Contains(string(out), "drawdown_basis") {
+		t.Fatalf("retired key is still written: %s", out)
 	}
 }
 
-func TestPeakAndCurrentEquityAndBalance(t *testing.T) {
-	st, err := NewWithConfig(DBConfig{Type: DBTypeSQLite, Path: filepath.Join(t.TempDir(), "protections.db")})
+// NAV is mark-to-market: a floating loss has to count, which a wallet-only curve
+// would miss until the position closed.
+func TestPeakAndCurrentNAVIncludesUnrealized(t *testing.T) {
+	st, err := NewWithConfig(DBConfig{Type: DBTypeSQLite, Path: filepath.Join(t.TempDir(), "nav-equity.db")})
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -40,42 +44,27 @@ func TestPeakAndCurrentEquityAndBalance(t *testing.T) {
 		equity  float64
 		balance float64
 	}{
-		{base, 1000, 1000},
-		{base.Add(30 * time.Minute), 1200, 1000}, // equity peaks, balance flat
-		{base.Add(60 * time.Minute), 900, 950},
+		{base, 1000, 1000},                       // flat
+		{base.Add(30 * time.Minute), 1000, 1100}, // wallet up but 100 of floating loss
 	}
 	for _, s := range snaps {
 		if err := st.Equity().Save(&EquitySnapshot{
-			TraderID:    "t1",
-			Timestamp:   s.at,
-			TotalEquity: s.equity,
-			Balance:     s.balance,
+			TraderID:       "t1",
+			Timestamp:      s.at,
+			TotalEquity:    s.equity,
+			Balance:        s.balance,
+			InitialBalance: 1000,
 		}); err != nil {
 			t.Fatalf("save snapshot: %v", err)
 		}
 	}
 
-	since := base.Add(-time.Minute)
-
-	peak, cur, ok, err := st.Equity().PeakAndCurrentEquity("t1", since)
+	peak, cur, ok, err := st.Equity().PeakAndCurrentNAV("t1", base.Add(-time.Minute))
 	if err != nil || !ok {
-		t.Fatalf("equity query ok=%v err=%v", ok, err)
+		t.Fatalf("nav query ok=%v err=%v", ok, err)
 	}
-	if peak != 1200 || cur != 900 {
-		t.Fatalf("equity peak/current = %v/%v, want 1200/900", peak, cur)
-	}
-
-	bPeak, bCur, ok, err := st.Equity().PeakAndCurrentBalance("t1", since)
-	if err != nil || !ok {
-		t.Fatalf("balance query ok=%v err=%v", ok, err)
-	}
-	if bPeak != 1000 || bCur != 950 {
-		t.Fatalf("balance peak/current = %v/%v, want 1000/950", bPeak, bCur)
-	}
-
-	// Window with no snapshots must report ok=false.
-	if _, _, ok, err := st.Equity().PeakAndCurrentEquity("t1", time.Now().UTC().Add(time.Hour)); err != nil || ok {
-		t.Fatalf("empty window ok=%v err=%v, want ok=false", ok, err)
+	if peak != 1 || cur != 1 {
+		t.Fatalf("nav = %v/%v, want 1/1 (equity based, not the 1.1 wallet)", peak, cur)
 	}
 }
 
@@ -114,13 +103,16 @@ func TestPeakAndCurrentNAVIsCashFlowNeutral(t *testing.T) {
 
 	since := base.Add(-time.Minute)
 
-	// Raw balance: the transfer pair dominates and looks like a big drawdown.
-	rawPeak, rawCur, ok, err := st.Equity().PeakAndCurrentBalance("t1", since)
-	if err != nil || !ok {
-		t.Fatalf("balance query ok=%v err=%v", ok, err)
+	// The raw curve the breaker used to watch: the transfer pair dominates and
+	// looks like a big drawdown.
+	rawPeak, rawCur := 0.0, 0.0
+	for _, s := range snaps {
+		if s.balance > rawPeak {
+			rawPeak = s.balance
+		}
+		rawCur = s.balance
 	}
-	rawDD := (rawPeak - rawCur) / rawPeak * 100
-	if rawDD < 15 {
+	if rawDD := (rawPeak - rawCur) / rawPeak * 100; rawDD < 15 {
 		t.Fatalf("raw drawdown = %.2f%%, expected the phantom ~15%%", rawDD)
 	}
 
