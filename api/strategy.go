@@ -570,6 +570,8 @@ func (s *Server) handleStrategyTestRun(c *gin.Context) {
 		PromptVariant string               `json:"prompt_variant"`
 		AIModelID     string               `json:"ai_model_id"`
 		RunRealAI     bool                 `json:"run_real_ai"`
+		// Exchange is the trader's execution venue; klines follow it.
+		Exchange string `json:"exchange"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -579,8 +581,10 @@ func (s *Server) handleStrategyTestRun(c *gin.Context) {
 
 	req.PromptVariant = resolvePromptVariant(req.PromptVariant, req.Config.TradingMode)
 
-	// Create strategy engine to build prompt
-	engine := kernel.NewStrategyEngine(&req.Config)
+	// Create strategy engine to build prompt. Preview data follows the venue
+	// the trader will execute on.
+	venue := market.VenueFromExchange(req.Exchange)
+	engine := kernel.NewStrategyEngine(&req.Config, venue)
 
 	// Get candidate coins
 	candidates, err := engine.GetCandidateCoins()
@@ -630,7 +634,7 @@ func (s *Server) handleStrategyTestRun(c *gin.Context) {
 	// Get real market data (using multiple timeframes)
 	marketDataMap := make(map[string]*market.Data)
 	for _, coin := range candidates {
-		data, err := market.GetWithTimeframesIndicators(coin.Symbol, timeframes, primaryTimeframe, klineCount, indicatorParams)
+		data, err := market.GetWithTimeframesForVenue(venue, coin.Symbol, timeframes, primaryTimeframe, klineCount, indicatorParams)
 		if err != nil {
 			// If getting data for a coin fails, log but continue
 			logger.Warnf("Failed to get market data for %s: %v", coin.Symbol, err)

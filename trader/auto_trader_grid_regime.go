@@ -20,7 +20,7 @@ func (at *AutoTrader) checkBoxBreakout() error {
 	}
 
 	// Get box data
-	box, err := market.GetBoxData(gridConfig.Symbol)
+	box, err := market.GetBoxDataForVenue(market.VenueFromExchange(at.exchange), gridConfig.Symbol)
 	if err != nil {
 		logger.Infof("Failed to get box data: %v", err)
 		return nil // Non-fatal, continue with other checks
@@ -67,7 +67,7 @@ func (at *AutoTrader) checkBoxBreakout() error {
 
 	// If direction adjustment action, determine the new direction
 	if action == BreakoutActionAdjustDirection {
-		box, _ := market.GetBoxData(gridConfig.Symbol)
+		box, _ := market.GetBoxDataForVenue(market.VenueFromExchange(at.exchange), gridConfig.Symbol)
 		newDirection := determineGridDirection(box, at.gridState.CurrentDirection, breakoutLevel, direction)
 		return at.executeDirectionAdjustment(newDirection)
 	}
@@ -190,7 +190,7 @@ func (at *AutoTrader) checkFalseBreakoutRecovery() error {
 	}
 
 	// Get current box data
-	box, err := market.GetBoxData(gridConfig.Symbol)
+	box, err := market.GetBoxDataForVenue(market.VenueFromExchange(at.exchange), gridConfig.Symbol)
 	if err != nil {
 		return nil
 	}

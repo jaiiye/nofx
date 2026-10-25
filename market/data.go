@@ -1,6 +1,7 @@
 package market
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -25,61 +26,58 @@ var (
 	frCacheTTL     = 1 * time.Hour
 )
 
-// Get retrieves market data for the specified token (uses Binance data by default)
+// Get retrieves market data for the specified token using Binance (legacy default).
 func Get(symbol string) (*Data, error) {
-	return GetWithExchange(symbol, "binance")
+	return GetForVenue(VenueBinance, symbol)
 }
 
-// GetWithExchange retrieves market data for the specified token using exchange-specific data
+// GetWithExchange keeps the old signature; the data follows the given exchange.
 func GetWithExchange(symbol, exchange string) (*Data, error) {
-	var klines3m, klines4h []Kline
-	var err error
-	// Normalize symbol
+	return GetForVenue(VenueFromExchange(exchange), symbol)
+}
+
+// GetForVenue retrieves market data using the execution venue's own candles.
+// There is no cross-venue fallback: a Binance wick is not the price path a
+// Hyperliquid stop or liquidation is evaluated against.
+func GetForVenue(venue Venue, symbol string) (*Data, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return getForVenue(ctx, venue, symbol)
+}
+
+func getForVenue(ctx context.Context, venue Venue, symbol string) (*Data, error) {
 	symbol = Normalize(symbol)
-
-	// Check if this is an xyz dex asset (use Hyperliquid API)
+	if symbol == "" {
+		return nil, fmt.Errorf("symbol is required")
+	}
 	isXyzAsset := IsXyzDexAsset(symbol)
+	if isXyzAsset {
+		venue = VenueHyperliquid
+	}
 
-	// For hyperliquid exchange, also use Hyperliquid API
-	useHyperliquidAPI := isXyzAsset || strings.ToLower(exchange) == "hyperliquid"
+	// Stock perps can be thin at 3m; crypto normally uses 3m on every venue.
+	intradayTF := "3m"
+	if isXyzAsset {
+		intradayTF = "5m"
+	}
 
-	// Get 3-minute K-line data (or 5-minute for xyz assets as 3m may not be available)
-	if useHyperliquidAPI {
-		// Use Hyperliquid API for xyz dex assets (use 5m since 3m may not be available)
-		klines3m, err = getKlinesFromHyperliquid(symbol, "5m", 100)
-		if err != nil {
-			return nil, fmt.Errorf("Failed to get 5-minute K-line from Hyperliquid: %v", err)
-		}
-	} else {
-		// Use CoinAnk for regular crypto assets with exchange-specific data
-		klines3m, err = getKlinesFromCoinAnk(symbol, "3m", exchange, 100)
-		if err != nil {
-			return nil, fmt.Errorf("Failed to get 3-minute K-line from CoinAnk (%s): %v", exchange, err)
-		}
+	klinesIntraday, err := GetKlinesForVenue(ctx, venue, symbol, intradayTF, 100)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get %s klines from %s: %w", intradayTF, venue, err)
+	}
+	if len(klinesIntraday) == 0 {
+		return nil, fmt.Errorf("%s kline data is empty", intradayTF)
 	}
 
 	// Data staleness detection: Prevent DOGEUSDT-style price freeze issues
-	if isStaleData(klines3m, symbol) {
+	if isStaleData(klinesIntraday, symbol) {
 		logger.Infof("⚠️  WARNING: %s detected stale data (consecutive price freeze), skipping symbol", symbol)
 		return nil, fmt.Errorf("%s data is stale, possible cache failure", symbol)
 	}
 
-	// Get 4-hour K-line data
-	if useHyperliquidAPI {
-		klines4h, err = getKlinesFromHyperliquid(symbol, "4h", 100)
-		if err != nil {
-			return nil, fmt.Errorf("Failed to get 4-hour K-line from Hyperliquid: %v", err)
-		}
-	} else {
-		klines4h, err = getKlinesFromCoinAnk(symbol, "4h", exchange, 100)
-		if err != nil {
-			return nil, fmt.Errorf("Failed to get 4-hour K-line from CoinAnk (%s): %v", exchange, err)
-		}
-	}
-
-	// Check if data is empty
-	if len(klines3m) == 0 {
-		return nil, fmt.Errorf("3-minute K-line data is empty")
+	klines4h, err := GetKlinesForVenue(ctx, venue, symbol, "4h", 100)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get 4h klines from %s: %w", venue, err)
 	}
 	if len(klines4h) == 0 {
 		return nil, fmt.Errorf("4-hour K-line data is empty")
@@ -87,15 +85,11 @@ func GetWithExchange(symbol, exchange string) (*Data, error) {
 
 	// Indicators must be computed on closed candles; currentPrice below keeps
 	// the forming bar so order sizing sees the live market.
-	intradayTF := "3m"
-	if useHyperliquidAPI {
-		intradayTF = "5m" // Hyperliquid has no 3m
-	}
-	closed3m := dropUnclosedCandle(klines3m, intradayTF)
+	closed3m := dropUnclosedCandle(klinesIntraday, intradayTF)
 	closed4h := dropUnclosedCandle(klines4h, "4h")
 
-	// Calculate current indicators (based on 3-minute latest data)
-	currentPrice := klines3m[len(klines3m)-1].Close
+	// Calculate current indicators (based on the intraday latest data)
+	currentPrice := klinesIntraday[len(klinesIntraday)-1].Close
 	currentEMA20 := calculateEMA(closed3m, 20)
 	currentMACD := calculateMACD(closed3m)
 	currentRSI7 := calculateRSI(closed3m, 7)
@@ -103,8 +97,8 @@ func GetWithExchange(symbol, exchange string) (*Data, error) {
 	// Calculate price change percentage
 	// 1-hour price change = price from 20 3-minute K-lines ago
 	priceChange1h := 0.0
-	if len(klines3m) >= 21 { // Need at least 21 K-lines (current + 20 previous)
-		price1hAgo := klines3m[len(klines3m)-21].Close
+	if len(klinesIntraday) >= 21 { // Need at least 21 K-lines (current + 20 previous)
+		price1hAgo := klinesIntraday[len(klinesIntraday)-21].Close
 		if price1hAgo > 0 {
 			priceChange1h = ((currentPrice - price1hAgo) / price1hAgo) * 100
 		}
@@ -119,18 +113,10 @@ func GetWithExchange(symbol, exchange string) (*Data, error) {
 		}
 	}
 
-	// Get OI data
-	oiData, err := getOpenInterestData(symbol)
-	if err != nil {
-		// OI failure doesn't affect overall result, use default values
-		oiData = &OIData{Latest: 0, Average: 0}
-	}
-
-	// Get Funding Rate
-	fundingRate, _ := getFundingRate(symbol)
+	oiData, fundingRate, premiumPct, dayNotional := marketContextForVenue(venue, symbol)
 
 	// Calculate intraday series data
-	intradayData := calculateIntradaySeries(klines3m)
+	intradayData := calculateIntradaySeries(klinesIntraday)
 
 	// Calculate longer-term data
 	longerTermData := calculateLongerTermData(closed4h)
@@ -145,6 +131,9 @@ func GetWithExchange(symbol, exchange string) (*Data, error) {
 		CurrentRSI7:       currentRSI7,
 		OpenInterest:      oiData,
 		FundingRate:       fundingRate,
+		FundingRatePerDay: fundingRate,
+		PremiumPct:        premiumPct,
+		DayNotionalVolume: dayNotional,
 		IntradaySeries:    intradayData,
 		LongerTermContext: longerTermData,
 	}, nil
@@ -162,7 +151,20 @@ func GetWithTimeframes(symbol string, timeframes []string, primaryTimeframe stri
 // indicator periods: when params is non-nil, the configured-period series
 // (real labels like "EMA(30)") are computed alongside the fixed-period
 // fields for the AI prompt.
+// GetWithTimeframesIndicators keeps the legacy Binance default.
 func GetWithTimeframesIndicators(symbol string, timeframes []string, primaryTimeframe string, count int, params *IndicatorParams) (*Data, error) {
+	return GetWithTimeframesForVenue(VenueBinance, symbol, timeframes, primaryTimeframe, count, params)
+}
+
+// GetWithTimeframesForVenue retrieves multiple timeframes from the execution
+// venue. xyz assets are always served by Hyperliquid.
+func GetWithTimeframesForVenue(venue Venue, symbol string, timeframes []string, primaryTimeframe string, count int, params *IndicatorParams) (*Data, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	defer cancel()
+	return getWithTimeframesForVenue(ctx, venue, symbol, timeframes, primaryTimeframe, count, params)
+}
+
+func getWithTimeframesForVenue(ctx context.Context, venue Venue, symbol string, timeframes []string, primaryTimeframe string, count int, params *IndicatorParams) (*Data, error) {
 	symbol = Normalize(symbol)
 
 	if len(timeframes) == 0 {
@@ -191,28 +193,13 @@ func GetWithTimeframesIndicators(symbol string, timeframes []string, primaryTime
 	var primaryKlines []Kline
 	var primaryClosed []Kline // primary series with the forming candle removed
 
-	// Check if this is an xyz dex asset (use Hyperliquid API)
-	isXyzAsset := IsXyzDexAsset(symbol)
-
-	// Get K-line data for each timeframe
+	// Get K-line data for each timeframe. The venue is the execution venue
+	// (Hyperliquid for xyz assets, which no other venue lists).
 	for _, tf := range timeframes {
-		var klines []Kline
-		var err error
-
-		if isXyzAsset {
-			// Use Hyperliquid API for xyz dex assets
-			klines, err = getKlinesFromHyperliquid(symbol, tf, 200)
-			if err != nil {
-				logger.Infof("⚠️ Failed to get %s %s K-line from Hyperliquid: %v", symbol, tf, err)
-				continue
-			}
-		} else {
-			// Use CoinAnk for regular crypto assets (default to Binance)
-			klines, err = getKlinesFromCoinAnk(symbol, tf, "binance", 200)
-			if err != nil {
-				logger.Infof("⚠️ Failed to get %s %s K-line from CoinAnk: %v", symbol, tf, err)
-				continue
-			}
+		klines, err := GetKlinesForVenue(ctx, venue, symbol, tf, 200)
+		if err != nil {
+			logger.Infof("⚠️ Failed to get %s %s K-line from %s: %v", symbol, tf, venue, err)
+			continue
 		}
 
 		if len(klines) == 0 {
@@ -254,10 +241,8 @@ func GetWithTimeframesIndicators(symbol string, timeframes []string, primaryTime
 	priceChange1h := calculatePriceChangeByBars(primaryKlines, primaryTimeframe, 60)  // 1 hour
 	priceChange4h := calculatePriceChangeByBars(primaryKlines, primaryTimeframe, 240) // 4 hours
 
-	// Market context (OI / funding / premium / 24h volume): prefer the venue's
-	// own figures, which also cover the HIP-3 dex (stocks, commodities,
-	// indices) that Binance cannot serve at all.
-	oiData, fundingRatePerDay, premiumPct, dayNotional := marketContext(symbol)
+	// Market context (OI / funding / premium / 24h volume) follows the venue.
+	oiData, fundingRatePerDay, premiumPct, dayNotional := marketContextForVenue(venue, symbol)
 
 	return &Data{
 		Symbol:            symbol,
@@ -276,19 +261,32 @@ func GetWithTimeframesIndicators(symbol string, timeframes []string, primaryTime
 	}, nil
 }
 
-// marketContext resolves OI, per-day funding, premium and 24h notional volume
-// for a symbol. The venue (Hyperliquid) is preferred: it serves every asset it
-// lists, including the HIP-3 dex, while Binance is the fallback for assets the
-// venue does not carry and for non-Hyperliquid deployments.
-func marketContext(symbol string) (oi *OIData, fundingRatePerDay, premiumPct, dayNotional float64) {
-	if ctx, ok := hyperliquidAssetCtx(symbol); ok {
-		return &OIData{Latest: ctx.OpenInterest, Average: ctx.OpenInterest},
-			ctx.Funding * 24, // the venue charges funding hourly
-			ctx.Premium * 100,
-			ctx.DayNtlVlm
+// venueContextWarned keeps the "reference feed" notice to one line per venue.
+var venueContextWarned sync.Map
+
+// marketContextForVenue resolves OI, per-day funding, premium and 24h notional
+// volume from the execution venue. Hyperliquid's own context also covers the
+// HIP-3 dex. Bybit/OKX use Binance as an explicit reference until their own
+// OI/funding adapters exist.
+func marketContextForVenue(venue Venue, symbol string) (oi *OIData, fundingRatePerDay, premiumPct, dayNotional float64) {
+	if venue == VenueHyperliquid {
+		if ctx, ok := hyperliquidAssetCtx(symbol); ok {
+			return &OIData{Latest: ctx.OpenInterest, Average: ctx.OpenInterest},
+				ctx.Funding * 24, // the venue charges funding hourly
+				ctx.Premium * 100,
+				ctx.DayNtlVlm
+		}
+		// The venue does not list this asset: omit rather than borrow Binance.
+		return &OIData{}, 0, 0, 0
 	}
 
-	// Fallback: Binance perps (funding is charged every 8 hours there).
+	if venue != VenueBinance {
+		if _, loaded := venueContextWarned.LoadOrStore(venue, true); !loaded {
+			logger.Warnf("⚠️ %s OI/funding adapter is not implemented yet; using Binance as a reference feed", venue)
+		}
+	}
+
+	// Binance perps (funding is charged every 8 hours there).
 	oiData, err := getOpenInterestData(symbol)
 	if err != nil || oiData == nil {
 		oiData = &OIData{}

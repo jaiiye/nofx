@@ -210,12 +210,27 @@ type OIDeltaData struct {
 type StrategyEngine struct {
 	config  *store.StrategyConfig
 	binance *binance.Client
+	venue   market.Venue
 }
 
 // NewStrategyEngine creates strategy execution engine. All market data comes
-// from free exchange endpoints, so no wallet or vendor key is involved.
-func NewStrategyEngine(config *store.StrategyConfig) *StrategyEngine {
-	return &StrategyEngine{config: config, binance: binance.NewClient()}
+// from free exchange endpoints, so no wallet or vendor key is involved. The
+// optional venue is the exchange the trader executes on; it decides which
+// K-lines and order book the decision context uses.
+func NewStrategyEngine(config *store.StrategyConfig, venues ...market.Venue) *StrategyEngine {
+	venue := market.VenueBinance
+	if len(venues) > 0 && venues[0] != "" {
+		venue = venues[0]
+	}
+	return &StrategyEngine{config: config, binance: binance.NewClient(), venue: venue}
+}
+
+// Venue returns the execution venue this engine reads market data from.
+func (e *StrategyEngine) Venue() market.Venue {
+	if e == nil || e.venue == "" {
+		return market.VenueBinance
+	}
+	return e.venue
 }
 
 func (e *StrategyEngine) usesHyperliquidNativeUniverse() bool {

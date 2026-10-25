@@ -3,114 +3,10 @@ package market
 import (
 	"context"
 	"fmt"
-	"nofx/logger"
-	"nofx/provider/coinank/coinank_api"
-	"nofx/provider/coinank/coinank_enum"
 	"nofx/provider/hyperliquid"
 	"strconv"
-	"strings"
 	"time"
 )
-
-// Note: Kline data now uses free/open API (coinank_api.Kline) which doesn't require authentication
-
-// getKlinesFromCoinAnk fetches kline data from CoinAnk API (replacement for WSMonitorCli)
-func getKlinesFromCoinAnk(symbol, interval, exchange string, limit int) ([]Kline, error) {
-	// Map interval string to coinank enum
-	var coinankInterval coinank_enum.Interval
-	switch interval {
-	case "1m":
-		coinankInterval = coinank_enum.Minute1
-	case "3m":
-		coinankInterval = coinank_enum.Minute3
-	case "5m":
-		coinankInterval = coinank_enum.Minute5
-	case "15m":
-		coinankInterval = coinank_enum.Minute15
-	case "30m":
-		coinankInterval = coinank_enum.Minute30
-	case "1h":
-		coinankInterval = coinank_enum.Hour1
-	case "2h":
-		coinankInterval = coinank_enum.Hour2
-	case "4h":
-		coinankInterval = coinank_enum.Hour4
-	case "6h":
-		coinankInterval = coinank_enum.Hour6
-	case "8h":
-		coinankInterval = coinank_enum.Hour8
-	case "12h":
-		coinankInterval = coinank_enum.Hour12
-	case "1d":
-		coinankInterval = coinank_enum.Day1
-	case "3d":
-		coinankInterval = coinank_enum.Day3
-	case "1w":
-		coinankInterval = coinank_enum.Week1
-	default:
-		return nil, fmt.Errorf("unsupported interval: %s", interval)
-	}
-
-	// Map exchange string to coinank enum
-	var coinankExchange coinank_enum.Exchange
-	switch strings.ToLower(exchange) {
-	case "binance":
-		coinankExchange = coinank_enum.Binance
-	case "bybit":
-		coinankExchange = coinank_enum.Bybit
-	case "okx":
-		coinankExchange = coinank_enum.Okex
-	case "bitget":
-		coinankExchange = coinank_enum.Bitget
-	case "gate":
-		coinankExchange = coinank_enum.Gate
-	case "hyperliquid":
-		coinankExchange = coinank_enum.Hyperliquid
-	case "aster":
-		coinankExchange = coinank_enum.Aster
-	default:
-		// Default to Binance for unknown exchanges
-		coinankExchange = coinank_enum.Binance
-	}
-
-	// Call CoinAnk free/open API (no authentication required)
-	ctx := context.Background()
-	ts := time.Now().UnixMilli()
-	// Use "To" side to search backward from current time (get historical klines)
-	coinankKlines, err := coinank_api.Kline(ctx, symbol, coinankExchange, ts, coinank_enum.To, limit, coinankInterval)
-	if err != nil || len(coinankKlines) == 0 {
-		// If exchange-specific data fails or returns empty, fallback to Binance
-		if coinankExchange != coinank_enum.Binance {
-			if err != nil {
-				logger.Warnf("⚠️ CoinAnk %s data failed, falling back to Binance: %v", exchange, err)
-			} else {
-				logger.Warnf("⚠️ CoinAnk %s %s data empty for %s, falling back to Binance", exchange, interval, symbol)
-			}
-			coinankKlines, err = coinank_api.Kline(ctx, symbol, coinank_enum.Binance, ts, coinank_enum.To, limit, coinankInterval)
-			if err != nil {
-				return nil, fmt.Errorf("CoinAnk API error (fallback): %w", err)
-			}
-		} else if err != nil {
-			return nil, fmt.Errorf("CoinAnk API error: %w", err)
-		}
-	}
-
-	// Convert coinank kline format to market.Kline format
-	klines := make([]Kline, len(coinankKlines))
-	for i, ck := range coinankKlines {
-		klines[i] = Kline{
-			OpenTime:  ck.StartTime,
-			Open:      ck.Open,
-			High:      ck.High,
-			Low:       ck.Low,
-			Close:     ck.Close,
-			Volume:    ck.Volume,
-			CloseTime: ck.EndTime,
-		}
-	}
-
-	return klines, nil
-}
 
 // getKlinesFromHyperliquid fetches kline data from Hyperliquid API for xyz dex assets
 func getKlinesFromHyperliquid(symbol, interval string, limit int) ([]Kline, error) {
@@ -121,6 +17,9 @@ func getKlinesFromHyperliquid(symbol, interval string, limit int) ([]Kline, erro
 	// asset and the request hit the crypto perp endpoint instead — which
 	// returns 500 for stock symbols that have no crypto perp on Hyperliquid.
 	hlInterval := hyperliquid.MapTimeframe(interval)
+	if hlInterval == "" {
+		return nil, fmt.Errorf("hyperliquid does not support timeframe %q", interval)
+	}
 
 	client := hyperliquid.NewClient()
 	ctx := context.Background()
@@ -441,24 +340,22 @@ func calculateLongerTermData(klines []Kline, params ...*IndicatorParams) *Longer
 	return data
 }
 
-// GetBoxData fetches 1h klines and calculates box data for a symbol
+// GetBoxData fetches 1h klines and calculates box data for a symbol.
+// The legacy default uses Binance; callers with a trader must pass its venue.
 func GetBoxData(symbol string) (*BoxData, error) {
+	return GetBoxDataForVenue(VenueBinance, symbol)
+}
+
+// GetBoxDataForVenue uses the execution venue's candles.
+func GetBoxDataForVenue(venue Venue, symbol string) (*BoxData, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
 	symbol = Normalize(symbol)
-
-	// Fetch 500 1h klines
-	var klines []Kline
-	var err error
-
-	if IsXyzDexAsset(symbol) {
-		klines, err = getKlinesFromHyperliquid(symbol, "1h", LongBoxPeriod)
-	} else {
-		klines, err = getKlinesFromCoinAnk(symbol, "1h", "binance", LongBoxPeriod)
-	}
-
+	klines, err := GetKlinesForVenue(ctx, venue, symbol, "1h", LongBoxPeriod)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get 1h klines: %w", err)
+		return nil, fmt.Errorf("failed to get 1h klines from %s: %w", venue, err)
 	}
-
 	if len(klines) == 0 {
 		return nil, fmt.Errorf("no kline data available")
 	}

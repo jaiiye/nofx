@@ -70,30 +70,40 @@ func NewTestnetClient() *Client {
 	}
 }
 
-// GetCandles fetches historical candlestick data for a symbol
+// GetCandles fetches historical candlestick data for a symbol.
+//
 // coin: symbol name (e.g., "BTC", "TSLA", "AAPL", "xyz:TSLA")
-// interval: "1m", "5m", "15m", "1h", "4h", "1d"
-// limit: number of candles to fetch (max 5000)
+// interval: a Hyperliquid interval (see MapTimeframe)
+// limit: number of candles to fetch (max ~5000 per request)
 func (c *Client) GetCandles(ctx context.Context, coin string, interval string, limit int) ([]Candle, error) {
-	// Format coin name for API (stock perps need xyz: prefix)
 	coin = FormatCoinForAPI(coin)
-
-	// Calculate time range based on interval and limit
-	now := time.Now()
-	endTime := now.UnixMilli()
-
-	// Calculate start time based on interval
+	if limit <= 0 {
+		limit = 200
+	}
 	intervalDuration := getIntervalDuration(interval)
-	startTime := now.Add(-intervalDuration * time.Duration(limit)).UnixMilli()
+	now := time.Now()
+	return c.getCandleSnapshot(ctx, coin, interval, now.Add(-intervalDuration*time.Duration(limit)).UnixMilli(), now.UnixMilli())
+}
 
-	// Build request
+// GetCandlesRange fetches candles in an explicit [startMs, endMs] window. The
+// venue caps one response at roughly 5000 bars and returns the newest ones in
+// the window, so callers walking a long range page backwards by endMs.
+func (c *Client) GetCandlesRange(ctx context.Context, coin, interval string, startMs, endMs int64) ([]Candle, error) {
+	coin = FormatCoinForAPI(coin)
+	if startMs <= 0 || endMs <= startMs {
+		return nil, fmt.Errorf("invalid candle range: start=%d end=%d", startMs, endMs)
+	}
+	return c.getCandleSnapshot(ctx, coin, interval, startMs, endMs)
+}
+
+func (c *Client) getCandleSnapshot(ctx context.Context, coin, interval string, startMs, endMs int64) ([]Candle, error) {
 	reqBody := CandleRequest{
 		Type: "candleSnapshot",
 		Req: CandleRequestBody{
 			Coin:      coin,
 			Interval:  interval,
-			StartTime: startTime,
-			EndTime:   endTime,
+			StartTime: startMs,
+			EndTime:   endMs,
 		},
 	}
 
@@ -341,41 +351,19 @@ func NormalizeXYZAlias(base string) string {
 	return base
 }
 
-// MapTimeframe maps common timeframe strings to Hyperliquid format
+// MapTimeframe maps common timeframe strings to Hyperliquid format. An empty
+// string means the venue does not offer that interval (6h, 3d) — callers must
+// treat it as an error rather than silently substituting another interval.
 func MapTimeframe(interval string) string {
 	switch interval {
-	case "1m":
-		return "1m"
-	case "3m":
-		return "5m" // Hyperliquid doesn't have 3m, use 5m
-	case "5m":
-		return "5m"
-	case "15m":
-		return "15m"
-	case "30m":
-		return "30m"
-	case "1h":
-		return "1h"
-	case "2h":
-		return "1h" // Hyperliquid doesn't have 2h, use 1h
-	case "4h":
-		return "4h"
-	case "6h":
-		return "4h" // Hyperliquid doesn't have 6h, use 4h
-	case "8h":
-		return "8h"
-	case "12h":
-		return "12h"
-	case "1d":
-		return "1d"
-	case "3d":
-		return "1d" // Hyperliquid doesn't have 3d, use 1d
-	case "1w":
-		return "1w"
-	case "1M":
-		return "1M"
+	case "1m", "3m", "5m", "15m", "30m":
+		return interval
+	case "1h", "2h", "4h", "8h", "12h":
+		return interval
+	case "1d", "1w", "1M":
+		return interval
 	default:
-		return "5m" // Default to 5 minutes
+		return ""
 	}
 }
 
@@ -384,6 +372,8 @@ func getIntervalDuration(interval string) time.Duration {
 	switch interval {
 	case "1m":
 		return time.Minute
+	case "3m":
+		return 3 * time.Minute
 	case "5m":
 		return 5 * time.Minute
 	case "15m":
@@ -392,6 +382,8 @@ func getIntervalDuration(interval string) time.Duration {
 		return 30 * time.Minute
 	case "1h":
 		return time.Hour
+	case "2h":
+		return 2 * time.Hour
 	case "4h":
 		return 4 * time.Hour
 	case "8h":
@@ -400,6 +392,8 @@ func getIntervalDuration(interval string) time.Duration {
 		return 12 * time.Hour
 	case "1d":
 		return 24 * time.Hour
+	case "3d":
+		return 72 * time.Hour
 	case "1w":
 		return 7 * 24 * time.Hour
 	case "1M":
@@ -463,13 +457,13 @@ func IsStockPerp(symbol string) bool {
 // IsXYZAsset checks if a symbol is on the xyz dex (stocks, forex, commodities).
 //
 // Detection is suffix-driven first, hardcoded-list second:
-//   1. `xyz:` prefix or `-USDC` suffix are unambiguous Hyperliquid signals —
-//      the only place those tokens originate is the Hyperliquid USDC board.
-//      This unblocks newly-listed stock perpetuals (QNT, ARM, ...) without
-//      requiring a code change every time Hyperliquid adds a ticker.
-//   2. Bare bases (e.g. "QNT" with no qualifying suffix) still fall back to
-//      the hardcoded StockPerpsSymbols / XYZOtherSymbols / display alias lists
-//      so callers passing pre-normalized base symbols continue to work.
+//  1. `xyz:` prefix or `-USDC` suffix are unambiguous Hyperliquid signals —
+//     the only place those tokens originate is the Hyperliquid USDC board.
+//     This unblocks newly-listed stock perpetuals (QNT, ARM, ...) without
+//     requiring a code change every time Hyperliquid adds a ticker.
+//  2. Bare bases (e.g. "QNT" with no qualifying suffix) still fall back to
+//     the hardcoded StockPerpsSymbols / XYZOtherSymbols / display alias lists
+//     so callers passing pre-normalized base symbols continue to work.
 func IsXYZAsset(symbol string) bool {
 	trimmed := strings.ToUpper(strings.TrimSpace(symbol))
 	if strings.HasPrefix(strings.ToLower(trimmed), "xyz:") || strings.HasSuffix(trimmed, "-USDC") {
@@ -524,12 +518,12 @@ func NormalizeCoinBase(symbol string) string {
 // Stock perps need xyz:SYMBOL format, crypto uses plain symbol.
 //
 // Decision order:
-//   1. `xyz:` prefix OR `-USDC` suffix on the original input ⇒ xyz asset
-//      (these tokens are Hyperliquid-specific, so the answer is unambiguous
-//      regardless of whether the base symbol appears in our hardcoded lists).
-//   2. After stripping suffixes, if the bare base matches a known xyz asset
-//      (stock perps, forex, commodities, display aliases) ⇒ also xyz.
-//   3. Otherwise crypto.
+//  1. `xyz:` prefix OR `-USDC` suffix on the original input ⇒ xyz asset
+//     (these tokens are Hyperliquid-specific, so the answer is unambiguous
+//     regardless of whether the base symbol appears in our hardcoded lists).
+//  2. After stripping suffixes, if the bare base matches a known xyz asset
+//     (stock perps, forex, commodities, display aliases) ⇒ also xyz.
+//  3. Otherwise crypto.
 func FormatCoinForAPI(symbol string) string {
 	trimmed := strings.TrimSpace(symbol)
 	upper := strings.ToUpper(trimmed)

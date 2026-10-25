@@ -92,7 +92,7 @@ func (at *AutoTrader) executeOpenLongWithRecord(ctx *kernel.Context, decision *k
 	}
 
 	// Get current price
-	marketData, err := market.GetWithExchange(decision.Symbol, at.exchange)
+	marketData, err := market.GetForVenue(market.VenueFromExchange(at.exchange), decision.Symbol)
 	if err != nil {
 		return fmt.Errorf("failed to get market data for %s: %w", decision.Symbol, err)
 	}
@@ -254,7 +254,7 @@ func (at *AutoTrader) executeOpenShortWithRecord(ctx *kernel.Context, decision *
 	}
 
 	// Get current price
-	marketData, err := market.GetWithExchange(decision.Symbol, at.exchange)
+	marketData, err := market.GetForVenue(market.VenueFromExchange(at.exchange), decision.Symbol)
 	if err != nil {
 		return fmt.Errorf("failed to get market data for %s: %w", decision.Symbol, err)
 	}
@@ -427,7 +427,7 @@ func (at *AutoTrader) executeCloseLongWithRecord(decision *kernel.Decision, acti
 	logger.Infof("  🔄 Close long: %s", decision.Symbol)
 
 	// Get current price
-	marketData, err := market.GetWithExchange(decision.Symbol, at.exchange)
+	marketData, err := market.GetForVenue(market.VenueFromExchange(at.exchange), decision.Symbol)
 	if err != nil {
 		return fmt.Errorf("failed to get market data for %s: %w", decision.Symbol, err)
 	}
@@ -498,7 +498,7 @@ func (at *AutoTrader) executeCloseShortWithRecord(decision *kernel.Decision, act
 	logger.Infof("  🔄 Close short: %s", decision.Symbol)
 
 	// Get current price
-	marketData, err := market.GetWithExchange(decision.Symbol, at.exchange)
+	marketData, err := market.GetForVenue(market.VenueFromExchange(at.exchange), decision.Symbol)
 	if err != nil {
 		return fmt.Errorf("failed to get market data for %s: %w", decision.Symbol, err)
 	}

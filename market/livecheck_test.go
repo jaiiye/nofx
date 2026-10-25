@@ -114,6 +114,34 @@ func TestLiveTakerFlowRanking(t *testing.T) {
 	}
 }
 
+func TestLiveHyperliquidKlines(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	spot, err := GetKlinesForVenue(ctx, VenueHyperliquid, "BTC", "3m", 200)
+	if err != nil {
+		t.Fatalf("hl 3m klines: %v", err)
+	}
+	if len(spot) < 100 {
+		t.Fatalf("hl 3m klines = %d, want >=100", len(spot))
+	}
+	t.Logf("HL BTC 3m: %d bars, last close=%.2f, last openTime=%s",
+		len(spot), spot[len(spot)-1].Close, time.UnixMilli(spot[len(spot)-1].OpenTime).UTC().Format(time.RFC3339))
+
+	// A range longer than one candleSnapshot page exercises the backward pager.
+	end := time.Now().UTC()
+	start := end.Add(-30 * 24 * time.Hour)
+	history, err := GetKlinesRangeForVenue(ctx, VenueHyperliquid, "BTC", "3m", start, end)
+	if err != nil {
+		t.Fatalf("hl 3m range: %v", err)
+	}
+	t.Logf("HL BTC 3m range 30d: %d bars, first=%s", len(history),
+		time.UnixMilli(history[0].OpenTime).UTC().Format(time.RFC3339))
+	if len(history) < 5000 {
+		t.Fatalf("expected the pager to cover more than one page, got %d", len(history))
+	}
+}
+
 func TestLiveVenueMetrics(t *testing.T) {
 	collector := NewVenueMetricsCollector(nil)
 	collector.SetSymbols([]string{"BTC", "ETH"})

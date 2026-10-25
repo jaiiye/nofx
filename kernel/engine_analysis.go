@@ -158,10 +158,10 @@ func GetFullDecisionWithStrategy(ctx *Context, mcpClient mcp.AIClient, engine *S
 
 // fetchMicrostructure fetches and analyzes the decision-time book for one
 // symbol. Failures degrade gracefully (nil result, the prompt omits the
-// section). Crypto symbols read the Binance book; xyz dex assets route to
-// the Hyperliquid L2 snapshot inside the market layer.
-func fetchMicrostructure(symbol string, primaryKlines []market.KlineBar) *market.MarketMicrostructure {
-	book, err := market.GetOrderBookDepth(symbol, 20)
+// section). The book follows the execution venue; xyz dex assets always route
+// to Hyperliquid.
+func fetchMicrostructure(venue market.Venue, symbol string, primaryKlines []market.KlineBar) *market.MarketMicrostructure {
+	book, err := market.GetOrderBookDepthForVenue(venue, symbol, 20)
 	if err != nil {
 		logger.Infof("⚠️ Microstructure unavailable for %s: %v", symbol, err)
 		return nil
@@ -171,7 +171,7 @@ func fetchMicrostructure(symbol string, primaryKlines []market.KlineBar) *market
 
 // loadMicrostructure fetches the decision-time book for a symbol and stores
 // the analysis in the context when successful.
-func loadMicrostructure(ctx *Context, symbol string, data *market.Data, primaryTimeframe string) {
+func loadMicrostructure(ctx *Context, venue market.Venue, symbol string, data *market.Data, primaryTimeframe string) {
 	if ctx.MicrostructureMap == nil {
 		ctx.MicrostructureMap = make(map[string]*market.MarketMicrostructure)
 	}
@@ -179,7 +179,7 @@ func loadMicrostructure(ctx *Context, symbol string, data *market.Data, primaryT
 	if tfData, ok := data.TimeframeData[primaryTimeframe]; ok {
 		primaryBars = tfData.Klines
 	}
-	if m := fetchMicrostructure(symbol, primaryBars); m != nil {
+	if m := fetchMicrostructure(venue, symbol, primaryBars); m != nil {
 		ctx.MicrostructureMap[symbol] = m
 	}
 }
@@ -285,14 +285,14 @@ func fetchMarketDataWithStrategy(ctx *Context, engine *StrategyEngine) error {
 
 	// 1. First fetch data for position coins (must fetch)
 	for _, pos := range ctx.Positions {
-		data, err := market.GetWithTimeframesIndicators(pos.Symbol, timeframes, primaryTimeframe, klineCount, indicatorParams)
+		data, err := market.GetWithTimeframesForVenue(engine.Venue(), pos.Symbol, timeframes, primaryTimeframe, klineCount, indicatorParams)
 		if err != nil {
 			logger.Infof("⚠️  Failed to fetch market data for position %s: %v", pos.Symbol, err)
 			continue
 		}
 		ctx.MarketDataMap[pos.Symbol] = data
 		if microEnabled {
-			loadMicrostructure(ctx, pos.Symbol, data, primaryTimeframe)
+			loadMicrostructure(ctx, engine.Venue(), pos.Symbol, data, primaryTimeframe)
 		}
 		if positioningEnabled {
 			loadPositioning(ctx, pos.Symbol)
@@ -318,7 +318,7 @@ func fetchMarketDataWithStrategy(ctx *Context, engine *StrategyEngine) error {
 			continue
 		}
 
-		data, err := market.GetWithTimeframesIndicators(coin.Symbol, timeframes, primaryTimeframe, klineCount, indicatorParams)
+		data, err := market.GetWithTimeframesForVenue(engine.Venue(), coin.Symbol, timeframes, primaryTimeframe, klineCount, indicatorParams)
 		if err != nil {
 			logger.Infof("⚠️  Failed to fetch market data for %s: %v", coin.Symbol, err)
 			continue
@@ -352,7 +352,7 @@ func fetchMarketDataWithStrategy(ctx *Context, engine *StrategyEngine) error {
 		// Fetch the book only for coins that survive the filter, so skipped
 		// candidates don't cost an extra REST call.
 		if microEnabled {
-			loadMicrostructure(ctx, coin.Symbol, data, primaryTimeframe)
+			loadMicrostructure(ctx, engine.Venue(), coin.Symbol, data, primaryTimeframe)
 		}
 		if positioningEnabled {
 			loadPositioning(ctx, coin.Symbol)

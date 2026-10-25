@@ -52,6 +52,16 @@ func binanceDepthLimit(depth int) int {
 	return 1000
 }
 
+// GetOrderBookDepthForVenue follows the execution venue: Hyperliquid assets
+// (crypto and xyz) read the HL L2 snapshot; other venues use the Binance book
+// until their own depth adapters are added.
+func GetOrderBookDepthForVenue(venue Venue, symbol string, depth int) (*OrderBookDepth, error) {
+	if IsXyzDexAsset(symbol) || venue == VenueHyperliquid {
+		return getHyperliquidOrderBook(symbol, depth)
+	}
+	return GetOrderBookDepth(symbol, depth)
+}
+
 // GetOrderBookDepth fetches the decision-context order book. depth is the
 // number of levels per side, capped at 100. Crypto symbols use the Binance
 // futures public endpoint (no signature); xyz dex assets route to the

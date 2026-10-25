@@ -27,7 +27,7 @@ func TestMarketContextNormalizesFundingPerDay(t *testing.T) {
 	})
 
 	// Crypto: hourly 0.0001 → 0.0024/day.
-	oi, fundingPerDay, premiumPct, dayNotional := marketContext("BTCUSDT")
+	oi, fundingPerDay, premiumPct, dayNotional := marketContextForVenue(VenueHyperliquid, "BTCUSDT")
 	if fundingPerDay < 0.00239 || fundingPerDay > 0.00241 {
 		t.Fatalf("BTC funding/day = %v, want ~0.0024 (hourly x 24)", fundingPerDay)
 	}
@@ -43,7 +43,7 @@ func TestMarketContextNormalizesFundingPerDay(t *testing.T) {
 
 	// HIP-3 asset: Binance cannot serve it at all, so the venue is the only
 	// source of OI/funding/volume for stocks, commodities and indices.
-	oi, fundingPerDay, premiumPct, dayNotional = marketContext("xyz:SILVER")
+	oi, fundingPerDay, premiumPct, dayNotional = marketContextForVenue(VenueHyperliquid, "xyz:SILVER")
 	if oi == nil || oi.Latest != 120 {
 		t.Fatalf("xyz:SILVER OI = %+v, want Latest 120", oi)
 	}
