@@ -68,7 +68,7 @@ func TestByRegimeLabelsAndOrder(t *testing.T) {
 	if len(got) != 4 {
 		t.Fatalf("regimes = %d, want 4", len(got))
 	}
-	wantOrder := []string{"cascade", "crowded_long", "crowded_short", "calm"}
+	wantOrder := []string{"cross_venue_cascade", "crowded_long", "crowded_short", "calm"}
 	for i, want := range wantOrder {
 		if got[i].Regime != want {
 			t.Fatalf("regime[%d] = %q, want %q", i, got[i].Regime, want)

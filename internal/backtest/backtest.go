@@ -464,7 +464,9 @@ func byRegime(trades []Trade) []RegimeStat {
 
 func regimeLabel(t Trade) string {
 	if t.EntryCascade {
-		return "cascade"
+		// The liquidation feed covers Binance and Bybit only; Hyperliquid has no
+		// public market-wide liquidation stream. Name the label accordingly.
+		return "cross_venue_cascade"
 	}
 	switch t.EntryCrowdedSide {
 	case "long":
@@ -478,7 +480,7 @@ func regimeLabel(t Trade) string {
 
 func regimeOrder(regime string) int {
 	switch regime {
-	case "cascade":
+	case "cross_venue_cascade":
 		return 0
 	case "crowded_long":
 		return 1

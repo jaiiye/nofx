@@ -104,6 +104,25 @@ func GetKlinesForVenue(ctx context.Context, venue Venue, symbol, timeframe strin
 	return klines, nil
 }
 
+// ValidateTimeframesForVenue rejects intervals the venue does not offer, before
+// any request is made. Hyperliquid has no 6h/3d; silently following a nearby
+// interval would change what the strategy is actually trading.
+func ValidateTimeframesForVenue(venue Venue, timeframes []string) error {
+	if venue != VenueHyperliquid {
+		return nil
+	}
+	var unsupported []string
+	for _, tf := range timeframes {
+		if hyperliquid.MapTimeframe(tf) == "" {
+			unsupported = append(unsupported, tf)
+		}
+	}
+	if len(unsupported) > 0 {
+		return fmt.Errorf("hyperliquid does not support timeframe(s): %s", strings.Join(unsupported, ", "))
+	}
+	return nil
+}
+
 // GetKlinesRangeForVenue returns closed candles in [start, end] from the
 // execution venue, paging when the venue caps one response.
 func GetKlinesRangeForVenue(ctx context.Context, venue Venue, symbol, timeframe string, start, end time.Time) ([]Kline, error) {

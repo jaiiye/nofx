@@ -31,6 +31,10 @@ const (
 // Reads are point-in-time, so a replayed decision is labelled with what was
 // known when it was taken. It returns nil for a nil store, which leaves the
 // replay unchanged.
+//
+// Note: the liquidation sum covers Binance and Bybit only (Hyperliquid has no
+// public market-wide liquidation feed), so the cascade label is explicitly
+// cross-venue rather than "the venue the trade was on".
 func StoreRegimeSource(st *store.Store) RegimeSource {
 	if st == nil {
 		return nil

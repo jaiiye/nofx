@@ -170,6 +170,9 @@ func getWithTimeframesForVenue(ctx context.Context, venue Venue, symbol string, 
 	if len(timeframes) == 0 {
 		return nil, fmt.Errorf("at least one timeframe is required")
 	}
+	if err := ValidateTimeframesForVenue(venue, timeframes); err != nil {
+		return nil, err
+	}
 
 	// If primary timeframe is not specified, use the first one
 	if primaryTimeframe == "" {

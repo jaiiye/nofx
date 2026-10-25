@@ -12,6 +12,7 @@ import (
 	_ "nofx/mcp/payment"
 	_ "nofx/mcp/provider"
 	"nofx/store"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -46,6 +47,27 @@ func validateStrategyConfig(config *store.StrategyConfig) []string {
 	// All market data now comes from free exchange endpoints, so no provider key
 	// or wallet is required.
 	return warnings
+}
+
+// previewVenue resolves which venue the prompt preview should read. An explicit
+// exchange wins; otherwise a Hyperliquid-native coin source implies HL.
+func previewVenue(config *store.StrategyConfig, exchange string) market.Venue {
+	if strings.TrimSpace(exchange) != "" {
+		return market.VenueFromExchange(exchange)
+	}
+	if config != nil {
+		source := config.CoinSource
+		if source.SourceType == "hyper_all" || source.SourceType == "hyper_main" || source.SourceType == "hyper_rank" ||
+			source.UseHyperAll || source.UseHyperMain {
+			return market.VenueHyperliquid
+		}
+		for _, symbol := range source.StaticCoins {
+			if market.IsXyzDexAsset(symbol) {
+				return market.VenueHyperliquid
+			}
+		}
+	}
+	return market.VenueBinance
 }
 
 func attachPublishConfig(config *store.StrategyConfig, strategy *store.Strategy) {
@@ -535,8 +557,8 @@ func (s *Server) handlePreviewPrompt(c *gin.Context) {
 	}
 	req.PromptVariant = resolvePromptVariant(req.PromptVariant, req.Config.TradingMode)
 
-	// Create strategy engine to build prompt
-	engine := kernel.NewStrategyEngine(&req.Config)
+	// Create strategy engine to build prompt (HL-native sources preview HL data)
+	engine := kernel.NewStrategyEngine(&req.Config, previewVenue(&req.Config, ""))
 
 	// Build system prompt (using built-in method from strategy engine)
 	systemPrompt := engine.BuildSystemPrompt(
@@ -583,7 +605,7 @@ func (s *Server) handleStrategyTestRun(c *gin.Context) {
 
 	// Create strategy engine to build prompt. Preview data follows the venue
 	// the trader will execute on.
-	venue := market.VenueFromExchange(req.Exchange)
+	venue := previewVenue(&req.Config, req.Exchange)
 	engine := kernel.NewStrategyEngine(&req.Config, venue)
 
 	// Get candidate coins

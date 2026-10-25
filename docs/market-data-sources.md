@@ -209,11 +209,15 @@ nofx evaluate --trader <id> --from 2026-01-01 [--to 2026-02-01] --regime
 
 ```text
 -- by entry regime --
-  cascade        trades=12   win= 33.3%  net=-420.10
+  cross_venue_cascade trades=12 win= 33.3%  net=-420.10
   crowded_long   trades=40   win= 55.0%  net= 180.40
   crowded_short  trades=18   win= 61.1%  net=  95.20
   calm           trades=90   win= 52.2%  net= 310.00
 ```
+
+> `cross_venue_cascade` is fed by Binance/Bybit liquidations. Hyperliquid has no
+> public market-wide liquidation stream, so the label is explicitly cross-venue,
+> not "the cascade on the traded venue".
 
 - Labels come from point-in-time reads of stored rows, so no future data leaks in.
 - Off by default; even when on it never changes entry, exit, sizing, or any PnL figure.
@@ -229,6 +233,7 @@ nofx evaluate --trader <id> --from 2026-01-01 [--to 2026-02-01] --regime
 | Hyperliquid kline retention | ~5000 bars per interval (3m ≈ 10 days, 1h ≈ 208 days); older replay needs explicit `--venue binance` |
 | Hyperliquid OI ranking | no history API; omitted during the first hour instead of borrowing Binance |
 | Cross-venue fallback | none for decisions/charts/execution; a missing series is omitted or errors |
+| Bybit/OKX OI, funding, order book | not adapted yet; Binance is used as a reference feed and warns once (klines are native) |
 | Bybit interval unavailable | 8h is assumed and recorded, the prompt marks it as assumed, and retries back off to 10 minutes |
 | Venue does not list the symbol | that venue is absent from the section; fewer than two venues omits the whole section |
 | Hyperliquid liquidations | not covered (no public market-wide feed); HL liquidation risk comes from the `position_profile` clusters |

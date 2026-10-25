@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"math"
@@ -25,13 +26,14 @@ func runTradeReport(args []string) {
 	days := fs.Int("days", 30, "window in days, ending now")
 	limit := fs.Int("limit", 500, "how many closed positions to load before filtering")
 	timeframe := fs.String("timeframe", "1h", "candle timeframe for the random baseline (1h covers ~40d)")
+	venueFlag := fs.String("venue", "binance", "execution venue for klines: binance | bybit | okx | hyperliquid")
 	runs := fs.Int("runs", 200, "random baseline runs")
 	seed := fs.Int64("seed", 1, "random baseline seed (fixed by default so a report is reproducible)")
 	dbPath := fs.String("db", "", "override the SQLite database path")
 	_ = fs.Parse(args)
 
 	if *traderID == "" {
-		fmt.Fprintln(os.Stderr, "usage: nofx trade-report --trader <id> [--days 30] [--timeframe 1h] [--runs 200] [--db path]")
+		fmt.Fprintln(os.Stderr, "usage: nofx trade-report --trader <id> [--days 30] [--timeframe 1h] [--venue binance|bybit|okx|hyperliquid] [--runs 200] [--db path]")
 		os.Exit(2)
 	}
 
@@ -128,7 +130,7 @@ func runTradeReport(args []string) {
 		printBucket(b)
 	}
 
-	printBaseline(trades, *timeframe, *runs, *seed, since, now)
+	printBaseline(trades, *timeframe, market.VenueFromExchange(*venueFlag), *runs, *seed, since, now)
 }
 
 func printSummary(label string, s report.Summary) {
@@ -170,7 +172,7 @@ func hasCloseNear(times []int64, exitMs int64) bool {
 
 // printBaseline builds a price path per traded symbol and compares the trades
 // with random entries on those paths.
-func printBaseline(trades []report.Trade, timeframe string, runs int, seed int64, since, now time.Time) {
+func printBaseline(trades []report.Trade, timeframe string, venue market.Venue, runs int, seed int64, since, now time.Time) {
 	dur, err := market.TFDuration(timeframe)
 	if err != nil {
 		fmt.Printf("\n⚠️  baseline skipped: %v\n", err)
@@ -186,7 +188,7 @@ func printBaseline(trades []report.Trade, timeframe string, runs int, seed int64
 	series := map[string]report.Series{}
 	missing := 0
 	for symbol := range symbols {
-		klines, err := market.GetKlinesRangeAuto(symbol, timeframe, from, now)
+		klines, err := market.GetKlinesRangeForVenue(context.Background(), venue, symbol, timeframe, from, now)
 		if err != nil || len(klines) < 3 {
 			missing++
 			continue

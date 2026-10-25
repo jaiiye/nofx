@@ -216,11 +216,13 @@ nofx evaluate --trader <id> --from 2026-01-01 [--to 2026-02-01] --regime
 
 ```text
 -- by entry regime --
-  cascade        trades=12   win= 33.3%  net=-420.10
+  cross_venue_cascade trades=12 win= 33.3%  net=-420.10
   crowded_long   trades=40   win= 55.0%  net= 180.40
   crowded_short  trades=18   win= 61.1%  net=  95.20
   calm           trades=90   win= 52.2%  net= 310.00
 ```
+
+> `cross_venue_cascade` 的爆仓数据来自 Binance/Bybit；HL 没有公开全量清算流，所以这个标签明确标注为跨所，而不是“本所级联”。
 
 - 标签来自落库的 point-in-time 读取，不会使用未来数据。
 - 默认不开启；开启也不改变入场、出场、仓位或任何 PnL 数字，只增加归因维度。
@@ -236,6 +238,7 @@ nofx evaluate --trader <id> --from 2026-01-01 [--to 2026-02-01] --regime
 | Hyperliquid K 线保留期 | 每周期约 5000 根（3m ≈ 10 天，1h ≈ 208 天）；更早回放需显式 `--venue binance` |
 | Hyperliquid OI 排行 | 无历史接口，冷启动 1 小时内省略，不借用 Binance |
 | 跨所回退 | 决策/图表/执行均不回退；失败即省略或报错 |
+| Bybit/OKX 的 OI、资金费、订单簿 | 尚未适配，暂用 Binance 参考并只警告一次（K 线已是原生） |
 | Bybit 结算周期取不到 | 按 8h 处理，行上记录 `funding_interval_h=8`，prompt 标注为假设值 |
 | 某个 venue 无该 symbol | 该 venue 不出现在跨所段落；少于两个 venue 时整段省略 |
 | Hyperliquid 爆仓 | 官方无全量清算频道，未覆盖；HL 的清算风险由 `position_profile` 的强平簇覆盖 |
