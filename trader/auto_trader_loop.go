@@ -743,10 +743,11 @@ func (at *AutoTrader) buildTradingContext() (*kernel.Context, error) {
 		}
 	}
 
-	// 12. Holder cost/liquidation structure (opt-in). It reads the snapshots the
-	//     background holder index already stored, so this costs one indexed query
-	//     rather than a venue call per symbol.
-	if strategyConfig.Indicators.PositionStructureEnabled() {
+	// 12. Holder cost/liquidation structure (opt-in, Hyperliquid only). It reads
+	//     the snapshots the background holder index already stored, so this costs
+	//     one indexed query rather than a venue call per symbol. The index is
+	//     HL-native, so a trader on another venue must not read it as its own.
+	if strategyConfig.Indicators.PositionStructureEnabled() && market.VenueFromExchange(at.exchange) == market.VenueHyperliquid {
 		symbolsToQuery := make(map[string]bool)
 		for _, coin := range candidateCoins {
 			symbolsToQuery[coin.Symbol] = true

@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -32,6 +33,7 @@ func runSweep(args []string) {
 	equity := fs.Float64("equity", 0, "fallback account equity when no snapshots exist (risk sizing)")
 	timeframe := fs.String("timeframe", "15m", "candle timeframe used to simulate fills")
 	exchange := fs.String("exchange", "binance", "exchange fee schedule to assume")
+	venueFlag := fs.String("venue", "binance", "execution venue for klines: binance | bybit | okx | hyperliquid")
 	dbPath := fs.String("db", "", "override the SQLite database path")
 	_ = fs.Parse(args)
 
@@ -118,8 +120,13 @@ func runSweep(args []string) {
 			len(grid.StopPcts), len(grid.TakePcts), len(records), base.SizingMode)
 	}
 
-	// Auto routes HIP-3 (xyz) symbols to Hyperliquid; Binance rejects them.
-	res, err := sweep.Run(records, base, market.GetKlinesRangeAuto, grid)
+	// The replay uses the same venue the trader executes on.
+	venue := market.VenueFromExchange(*venueFlag)
+	warnVenueRetention(venue, *timeframe, from, to)
+	klineSource := func(symbol, tf string, start, end time.Time) ([]market.Kline, error) {
+		return market.GetKlinesRangeForVenue(context.Background(), venue, symbol, tf, start, end)
+	}
+	res, err := sweep.Run(records, base, klineSource, grid)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "sweep failed: %v\n", err)
 		os.Exit(1)

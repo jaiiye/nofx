@@ -84,12 +84,16 @@ func TestPositionProfilePromptIsPurelyAdditive(t *testing.T) {
 	coins := store.DefaultHyperRankLimit
 	bars := cfg.Indicators.Klines.PrimaryCount
 
-	without := engine.BuildUserPrompt(measurementContextWithPositions(&cfg, coins, bars, 1))
+	withoutCtx := measurementContextWithPositions(&cfg, coins, bars, 1)
+	without := engine.BuildUserPrompt(withoutCtx)
 	if strings.Contains(without, "HOLDER STRUCTURE") {
 		t.Fatal("no profile was attached, so no structure block may be rendered")
 	}
 
 	ctx := measurementContextWithPositions(&cfg, coins, bars, 1)
+	// The fixture stamps CurrentTime from the wall clock; pin it to the first
+	// context so the comparison is not flaky across a second boundary.
+	ctx.CurrentTime = withoutCtx.CurrentTime
 	if len(ctx.CandidateCoins) == 0 {
 		t.Fatal("fixture must contain candidates")
 	}

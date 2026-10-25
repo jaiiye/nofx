@@ -67,6 +67,39 @@
 
 ---
 
+## 二之二、K 线来源：跟随执行所
+
+决策、图表、下单取价和回放都使用**交易员执行所的原生 K 线**，不再经过 CoinAnk 或任何第三方代理。
+
+| 场景 | 来源 |
+|------|------|
+| AI 决策/指标/网格箱体 | 执行所原生：HL → `candleSnapshot`；Binance → `/fapi/v1/klines`；Bybit → `/v5/market/kline`；OKX → `/api/v5/market/candles` |
+| 图表（加密） | 跟随当前 trader 的交易所（HL 交易员即 HL） |
+| 下单前取价 | 执行所原生，禁止跨所回退 |
+| 回放/评估 | `--venue` 指定，默认 binance |
+
+要点：
+
+- **不做跨所回退**。Binance 的一根插针不是 HL 止损/强平的触发路径；取不到就省略或报错，不静默换源。xyz 资产始终由 HL 提供。
+- **HL 周期**：支持 `1m/3m/5m/15m/30m/1h/2h/4h/8h/12h/1d/1w/1M`；**没有 6h/3d**，配置时会明确报错，不再近似成 4h/1d。
+- **HL 保留期**：每个周期约 5000 根（3m ≈ 10 天，1h ≈ 208 天），更早的历史无法翻页取得。回放窗口超过保留期时，`--venue hyperliquid` 会提示；需要更长历史请显式使用 `--venue binance` 作为参考。
+- **HL 成交量**是币本位，与 Binance `Volume` 口径一致。
+- 同一 `(venue, symbol, timeframe, limit)` 有 8 秒缓存，图表与决策周期共享同一份快照。
+
+---
+
+## 二之三、Hyperliquid 全市场数据
+
+- universe/screener 与排行在 HL 交易员下使用 `metaAndAssetCtxs`（默认 dex + xyz dex，一次覆盖约 370 个资产）。
+- 价格排行 24h 用 `prevDayPx` 立即可用；1h/4h 需要本地快照。
+- **OI 排行需要历史**：HL 没有 OI 历史接口，只能每 5 分钟快照自建；冷启动 1 小时内该段省略，不借用 Binance。
+- **Taker Flow Ranking 对 HL 不可用**：HL K 线没有主动买卖拆分；HL 交易员使用逐币的 trades 流（`hl_positioning`）中的 taker flow。
+- 持仓结构（`market_position_bins`）是 HL 原生，且只对 HL 执行所注入 prompt；其他所不会误读 HL 的持仓簇。
+- 爆仓流仍是 Binance + Bybit 的**跨所信号**，标题已明确标注“不含 Hyperliquid”；HL 的清算风险由持仓结构的强平簇承担。
+- `market_position_bins` 现在与其他市场表一起每天清理，保留 30 天。
+
+---
+
 ## 三、关键口径
 
 ### 3.1 资金费率归一化
@@ -199,7 +232,10 @@ nofx evaluate --trader <id> --from 2026-01-01 [--to 2026-02-01] --regime
 
 | 场景 | 行为 |
 |------|------|
-| Binance 地区限制（451） | 仅该所缺失，Bybit + Hyperliquid 继续工作；同一原因只记录一次日志 |
+| Binance 地区限制（451） | 仅该所缺失；决策/图表不跨所回退，按交易所分别降级 |
+| Hyperliquid K 线保留期 | 每周期约 5000 根（3m ≈ 10 天，1h ≈ 208 天）；更早回放需显式 `--venue binance` |
+| Hyperliquid OI 排行 | 无历史接口，冷启动 1 小时内省略，不借用 Binance |
+| 跨所回退 | 决策/图表/执行均不回退；失败即省略或报错 |
 | Bybit 结算周期取不到 | 按 8h 处理，行上记录 `funding_interval_h=8`，prompt 标注为假设值 |
 | 某个 venue 无该 symbol | 该 venue 不出现在跨所段落；少于两个 venue 时整段省略 |
 | Hyperliquid 爆仓 | 官方无全量清算频道，未覆盖；HL 的清算风险由 `position_profile` 的强平簇覆盖 |
@@ -213,6 +249,9 @@ nofx evaluate --trader <id> --from 2026-01-01 [--to 2026-02-01] --regime
 
 | 关注点 | 文件 |
 |--------|------|
+| K 线 venue 路由 / 缓存 | `market/venue.go` |
+| 交易所 K 线客户端 | `provider/{binance,bybit,okx,hyperliquid}` |
+| universe（HL/参考） | `market/universe.go` |
 | 表与读取 | `store/market_metrics.go` |
 | Binance 客户端 | `provider/binance/{client,market,ws}.go` |
 | Bybit 客户端 | `provider/bybit/{client,market,ws}.go` |

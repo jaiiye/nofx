@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"math"
@@ -24,6 +25,7 @@ func runEvaluate(args []string) {
 	toStr := fs.String("to", "", "end time, RFC3339 or YYYY-MM-DD (default: now)")
 	timeframe := fs.String("timeframe", "15m", "candle timeframe used to simulate fills")
 	exchange := fs.String("exchange", "binance", "exchange fee schedule to assume")
+	venueFlag := fs.String("venue", "binance", "execution venue for klines: binance | bybit | okx | hyperliquid")
 	dbPath := fs.String("db", "", "override the SQLite database path")
 	regime := fs.Bool("regime", false, "label trades with stored cascade/crowding state (attribution only)")
 	sizing := fs.String("sizing", "recorded", "position sizing: recorded | decision | risk")
@@ -36,7 +38,8 @@ func runEvaluate(args []string) {
 
 	if *traderID == "" || *fromStr == "" {
 		fmt.Fprintln(os.Stderr, "usage: nofx evaluate --trader <id> --from <date> [--to <date>] "+
-			"[--timeframe 15m] [--exchange binance] [--db path] [--regime] "+
+			"[--timeframe 15m] [--exchange binance] [--venue binance|bybit|okx|hyperliquid] "+
+			"[--db path] [--regime] "+
 			"[--sizing recorded|decision|risk] [--risk-pct 0.5] [--equity 0] "+
 			"[--exit bracket|giveback] [--arm-pct 2] [--giveback-pct 30]")
 		os.Exit(2)
@@ -67,8 +70,10 @@ func runEvaluate(args []string) {
 		fmt.Fprintf(os.Stderr, "failed to load decisions: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("📼 Replaying %d decision cycles for trader %s (%s → %s)\n",
-		len(records), *traderID, from.Format("2006-01-02"), to.Format("2006-01-02"))
+	venue := market.VenueFromExchange(*venueFlag)
+	warnVenueRetention(venue, *timeframe, from, to)
+	fmt.Printf("📼 Replaying %d decision cycles for trader %s (%s → %s, klines from %s)\n",
+		len(records), *traderID, from.Format("2006-01-02"), to.Format("2006-01-02"), venue)
 
 	cfg := backtest.Config{
 		TraderID:       *traderID,
@@ -94,9 +99,12 @@ func runEvaluate(args []string) {
 		cfg.RegimeSource = backtest.StoreRegimeSource(st)
 	}
 
-	// GetKlinesRangeAuto routes HIP-3 (xyz) assets to Hyperliquid; the Binance
-	// endpoint rejects those symbols outright.
-	res, err := backtest.Evaluate(records, cfg, market.GetKlinesRangeAuto)
+	// The replay uses the same venue the trader executes on. Hyperliquid keeps
+	// only ~5000 bars per interval, so a longer window is covered only partially.
+	klineSource := func(symbol, tf string, start, end time.Time) ([]market.Kline, error) {
+		return market.GetKlinesRangeForVenue(context.Background(), venue, symbol, tf, start, end)
+	}
+	res, err := backtest.Evaluate(records, cfg, klineSource)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "evaluation failed: %v\n", err)
 		os.Exit(1)
@@ -112,6 +120,25 @@ func parseTimeArg(s string) (time.Time, error) {
 		}
 	}
 	return time.Time{}, fmt.Errorf("unrecognized time %q (want RFC3339 or YYYY-MM-DD)", s)
+}
+
+// warnVenueRetention flags a replay window longer than the venue's candle
+// retention. Hyperliquid returns roughly 5000 bars per interval; older
+// decisions then have no candles and are skipped rather than borrowed from
+// another venue.
+func warnVenueRetention(venue market.Venue, timeframe string, from, to time.Time) {
+	if venue != market.VenueHyperliquid {
+		return
+	}
+	duration, err := market.TFDuration(timeframe)
+	if err != nil {
+		return
+	}
+	retained := 5000 * duration
+	if to.Sub(from) > retained {
+		fmt.Fprintf(os.Stderr, "⚠️ Hyperliquid retains about 5000 %s bars (≈%s); the replay window is %s, so older decisions may have no candles.\n",
+			timeframe, retained.Round(24*time.Hour), to.Sub(from).Round(24*time.Hour))
+	}
 }
 
 func printEvaluation(res *backtest.Result) {

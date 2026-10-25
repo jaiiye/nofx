@@ -67,6 +67,36 @@ One row per venue, symbol and timestamp.
 
 ---
 
+## 2.2 Klines follow the execution venue
+
+Decisions, charts, execution-time pricing and replay all use the trader's own
+venue. No CoinAnk or third-party proxy is involved.
+
+| Surface | Source |
+|---------|--------|
+| AI decision / indicators / grid box | Venue-native: HL `candleSnapshot`, Binance `/fapi/v1/klines`, Bybit `/v5/market/kline`, OKX `/api/v5/market/candles` |
+| Crypto chart | Follows the current trader's exchange (HL trader → HL) |
+| Execution-time pricing | Venue-native; no cross-venue fallback |
+| Replay / evaluate | `--venue`, default `binance` |
+
+- **No cross-venue fallback.** A Binance wick is not the price path an HL stop or liquidation follows; a missing series is omitted or errors, never silently replaced. xyz assets are always Hyperliquid.
+- **HL intervals**: `1m/3m/5m/15m/30m/1h/2h/4h/8h/12h/1d/1w/1M`; **no 6h/3d**. Unsupported intervals now error instead of being approximated.
+- **HL retention**: roughly 5000 bars per interval (3m ≈ 10 days, 1h ≈ 208 days); older history cannot be paged in. `--venue hyperliquid` warns when the replay window exceeds it; use `--venue binance` explicitly for a longer reference.
+- HL volume is base-unit, matching Binance `Volume`.
+- An 8-second cache keyed by `(venue, symbol, timeframe, limit)` lets charts and decisions share one snapshot.
+
+## 2.3 Hyperliquid-wide data
+
+- The screener and rankings use `metaAndAssetCtxs` (default dex + xyz dex, ~370 assets) for HL traders.
+- The 24h price ranking comes from `prevDayPx` and is available immediately; 1h/4h need local snapshots.
+- **OI ranking needs history**: HL exposes no OI history, so it is built from 5-minute snapshots; the first hour is omitted rather than borrowing Binance.
+- **Taker Flow Ranking is unavailable for HL**: HL candles carry no aggressor split; HL traders get per-symbol taker flow from the trades watcher (`hl_positioning`).
+- Holder structure (`market_position_bins`) is HL-native and only injected for HL execution venues; other venues never read it as their own order flow.
+- Liquidation flow remains a **cross-venue** Binance+Bybit signal, labelled as excluding Hyperliquid; HL liquidation risk stays with the holder-structure clusters.
+- `market_position_bins` is now cleaned daily with the other market tables (30-day retention).
+
+---
+
 ## 3. Conventions
 
 ### 3.1 Funding normalization
@@ -195,7 +225,10 @@ nofx evaluate --trader <id> --from 2026-01-01 [--to 2026-02-01] --regime
 
 | Scenario | Behavior |
 |----------|----------|
-| Binance region block (451) | only that venue is missing; Bybit + Hyperliquid continue; the reason is logged once |
+| Binance region block (451) | only that venue is missing; decisions/charts do not fall back across venues |
+| Hyperliquid kline retention | ~5000 bars per interval (3m ≈ 10 days, 1h ≈ 208 days); older replay needs explicit `--venue binance` |
+| Hyperliquid OI ranking | no history API; omitted during the first hour instead of borrowing Binance |
+| Cross-venue fallback | none for decisions/charts/execution; a missing series is omitted or errors |
 | Bybit interval unavailable | 8h is assumed and recorded, the prompt marks it as assumed, and retries back off to 10 minutes |
 | Venue does not list the symbol | that venue is absent from the section; fewer than two venues omits the whole section |
 | Hyperliquid liquidations | not covered (no public market-wide feed); HL liquidation risk comes from the `position_profile` clusters |
@@ -209,6 +242,9 @@ nofx evaluate --trader <id> --from 2026-01-01 [--to 2026-02-01] --regime
 
 | Concern | File |
 |---------|------|
+| Kline venue routing / cache | `market/venue.go` |
+| Venue kline clients | `provider/{binance,bybit,okx,hyperliquid}` |
+| Universe (HL / reference) | `market/universe.go` |
 | Tables and reads | `store/market_metrics.go` |
 | Binance client | `provider/binance/{client,market,ws}.go` |
 | Bybit client | `provider/bybit/{client,market,ws}.go` |

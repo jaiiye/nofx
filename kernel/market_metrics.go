@@ -49,7 +49,14 @@ func StartMarketMetrics(ctx context.Context, st *store.Store) *market.VenueMetri
 			return st.MarketMetrics().SaveVenueMetrics(rows)
 		}
 		cleanup = func(days int) (int64, error) {
-			return st.MarketMetrics().CleanOldRecords(days)
+			removed, err := st.MarketMetrics().CleanOldRecords(days)
+			if err != nil {
+				return removed, err
+			}
+			// The holder-structure table has its own retention method and no
+			// other scheduled caller; clean it alongside the market metrics.
+			structureRemoved, structureErr := st.MarketStructure().CleanOldRecords(days)
+			return removed + structureRemoved, structureErr
 		}
 	}
 

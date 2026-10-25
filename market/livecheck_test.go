@@ -114,6 +114,46 @@ func TestLiveTakerFlowRanking(t *testing.T) {
 	}
 }
 
+func TestLiveHyperliquidUniverse(t *testing.T) {
+	service := NewHyperliquidUniverseService()
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	defer cancel()
+
+	service.poll(ctx)
+	coins := service.Coins()
+	if len(coins) < 20 {
+		t.Fatalf("HL universe = %d, want a broad set", len(coins))
+	}
+	hasXYZ := false
+	for _, coin := range coins {
+		if strings.Contains(coin.Symbol, ":") {
+			hasXYZ = true
+			break
+		}
+	}
+	if !hasXYZ {
+		t.Fatal("HIP-3 assets missing from the HL universe")
+	}
+	t.Logf("HL universe: %d assets (xyz included=%v)", len(coins), hasXYZ)
+	for _, coin := range service.Screener(5) {
+		t.Logf("  %-14s score=%+.2f vol=$%.0f oi=$%.0f chg24h=%+.2f%%",
+			coin.Symbol, coin.Score, coin.Turnover24h, coin.OIUSD, coin.Change24hPct)
+	}
+
+	// 24h price ranking comes from prevDayPx and is available immediately.
+	top, low, ok := service.PriceRanking(24*time.Hour, 3)
+	if !ok {
+		t.Fatal("24h HL price ranking unavailable")
+	}
+	t.Logf("HL 24h price top: %+v", top)
+	t.Logf("HL 24h price low: %+v", low)
+
+	// OI ranking needs local snapshots; on a cold start it must be omitted.
+	if _, _, ok := service.OIRanking(time.Hour, 3); ok {
+		t.Fatal("1h OI ranking should be unavailable on a cold start")
+	}
+}
+
 func TestLiveHyperliquidKlines(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()

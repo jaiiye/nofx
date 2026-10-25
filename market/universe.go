@@ -11,6 +11,7 @@ import (
 	"nofx/logger"
 	"nofx/provider/binance"
 	"nofx/provider/bybit"
+	"nofx/provider/hyperliquid"
 )
 
 // Local market universe.
@@ -120,8 +121,10 @@ type TakerFlowRanking struct {
 type UniverseService struct {
 	mu               sync.RWMutex
 	pollMu           sync.Mutex
+	venue            Venue
 	client           *bybit.Client
 	binance          *binance.Client
+	hyperliquid      *hyperliquid.Client
 	coins            []UniverseCoin
 	bySymbol         map[string]UniverseCoin
 	history          map[string][]universeSample
@@ -137,25 +140,48 @@ type UniverseService struct {
 
 var (
 	universeMu      sync.RWMutex
-	universeService *UniverseService
+	universeService *UniverseService // reference universe (Bybit-wide)
+	universeByVenue = map[Venue]*UniverseService{}
 )
 
 func NewUniverseService() *UniverseService {
+	return newUniverseService(VenueBinance)
+}
+
+// NewHyperliquidUniverseService builds the universe from Hyperliquid's own
+// asset contexts: one request per dex covers every listed asset.
+func NewHyperliquidUniverseService() *UniverseService {
+	return newUniverseService(VenueHyperliquid)
+}
+
+func newUniverseService(venue Venue) *UniverseService {
 	return &UniverseService{
-		client:     bybit.NewClient(),
-		binance:    binance.NewClient(),
-		bySymbol:   make(map[string]UniverseCoin),
-		history:    make(map[string][]universeSample),
-		takerCache: make(map[string]*TakerFlowRanking),
-		takerAt:    make(map[string]time.Time),
+		venue:       venue,
+		client:      bybit.NewClient(),
+		binance:     binance.NewClient(),
+		hyperliquid: hyperliquid.NewClient(),
+		bySymbol:    make(map[string]UniverseCoin),
+		history:     make(map[string][]universeSample),
+		takerCache:  make(map[string]*TakerFlowRanking),
+		takerAt:     make(map[string]time.Time),
 	}
 }
 
-// StartUniverse creates and starts the process-wide universe poller.
+// StartUniverse creates and starts the process-wide reference universe.
 func StartUniverse(ctx context.Context) *UniverseService {
 	service := NewUniverseService()
 	SetUniverseService(service)
 	service.Start(ctx)
+	logger.Infof("📊 Reference market universe started (Bybit tickers, refresh every 5 minutes)")
+	return service
+}
+
+// StartHyperliquidUniverse starts the HL-native universe used by HL traders.
+func StartHyperliquidUniverse(ctx context.Context) *UniverseService {
+	service := NewHyperliquidUniverseService()
+	SetUniverseServiceForVenue(VenueHyperliquid, service)
+	service.Start(ctx)
+	logger.Infof("📊 Hyperliquid universe started (venue asset contexts, refresh every 5 minutes)")
 	return service
 }
 
@@ -165,10 +191,27 @@ func SetUniverseService(service *UniverseService) {
 	universeMu.Unlock()
 }
 
-func CurrentUniverse() *UniverseService {
+func SetUniverseServiceForVenue(venue Venue, service *UniverseService) {
+	universeMu.Lock()
+	universeByVenue[venue] = service
+	universeMu.Unlock()
+}
+
+// CurrentUniverseForVenue returns the HL-native universe for Hyperliquid and
+// the reference universe for everything else.
+func CurrentUniverseForVenue(venue Venue) *UniverseService {
 	universeMu.RLock()
 	defer universeMu.RUnlock()
+	if venue == VenueHyperliquid {
+		if service := universeByVenue[VenueHyperliquid]; service != nil {
+			return service
+		}
+	}
 	return universeService
+}
+
+func CurrentUniverse() *UniverseService {
+	return CurrentUniverseForVenue(VenueBinance)
 }
 
 func (s *UniverseService) Start(ctx context.Context) {
@@ -227,6 +270,11 @@ func (s *UniverseService) poll(ctx context.Context) {
 	s.pollMu.Lock()
 	defer s.pollMu.Unlock()
 
+	if s.venue == VenueHyperliquid {
+		s.pollHyperliquid(ctx)
+		return
+	}
+
 	callCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	tickers, err := s.client.Tickers(callCtx)
@@ -241,12 +289,62 @@ func (s *UniverseService) poll(ctx context.Context) {
 	go s.bootstrap(context.WithoutCancel(ctx))
 }
 
+// pollHyperliquid builds the universe from the venue's own asset contexts.
+// Two requests (default dex + HIP-3 dex) cover every listed asset, including
+// stocks, commodities and indices that the reference universe cannot see.
+func (s *UniverseService) pollHyperliquid(ctx context.Context) {
+	callCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+
+	now := time.Now().UTC()
+	coins := make([]UniverseCoin, 0, 256)
+	for _, dex := range []string{"", "xyz"} {
+		contexts, err := s.hyperliquid.GetAssetContexts(callCtx, dex)
+		if err != nil {
+			s.note("hyperliquid asset contexts unavailable: " + err.Error())
+			continue
+		}
+		for name, assetCtx := range contexts {
+			canonical := Normalize(name)
+			if canonical == "" {
+				continue
+			}
+			price := assetCtx.MarkPx
+			if price <= 0 {
+				price = assetCtx.MidPx
+			}
+			if price <= 0 {
+				price = assetCtx.OraclePx
+			}
+			if price <= 0 {
+				continue
+			}
+			changePct := 0.0
+			if assetCtx.PrevDayPx > 0 {
+				changePct = (price - assetCtx.PrevDayPx) / assetCtx.PrevDayPx * 100
+			}
+			coins = append(coins, UniverseCoin{
+				Symbol:       canonical,
+				VenueSymbol:  name,
+				Price:        price,
+				Change24hPct: changePct,
+				Turnover24h:  assetCtx.DayNtlVlm,
+				OIUSD:        assetCtx.OpenInterest * price,
+				At:           now,
+			})
+		}
+	}
+	if len(coins) == 0 {
+		return
+	}
+	s.clearNote()
+	s.applyCoins(coins, now)
+}
+
 // apply turns one tickers response into the current universe and appends a
 // history sample. Split from poll so ranking math is testable without network.
 func (s *UniverseService) apply(tickers map[string]bybit.Ticker, now time.Time) {
 	coins := make([]UniverseCoin, 0, len(tickers))
-	samples := make(map[string]universeSample, len(tickers))
-
 	for venueSymbol, ticker := range tickers {
 		upper := strings.ToUpper(strings.TrimSpace(venueSymbol))
 		if !strings.HasSuffix(upper, "USDT") || len(upper) <= len("USDT") {
@@ -272,9 +370,18 @@ func (s *UniverseService) apply(tickers map[string]bybit.Ticker, now time.Time) 
 			OIUSD:        ticker.OpenInterestValue,
 			At:           now,
 		})
-		samples[canonical] = universeSample{At: now, Price: price, OIUSD: ticker.OpenInterestValue}
 	}
+	s.applyCoins(coins, now)
+}
+
+// applyCoins scores a snapshot, stores it and appends one history sample per
+// symbol. Shared by the reference and Hyperliquid universes.
+func (s *UniverseService) applyCoins(coins []UniverseCoin, now time.Time) {
 	scoreUniverse(coins)
+	samples := make(map[string]universeSample, len(coins))
+	for _, coin := range coins {
+		samples[coin.Symbol] = universeSample{At: now, Price: coin.Price, OIUSD: coin.OIUSD}
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -494,6 +601,12 @@ func (s *UniverseService) PriceRanking(window time.Duration, limit int) (top, lo
 // the top of the universe and cached for a full poll interval.
 func (s *UniverseService) TakerFlowRanking(window time.Duration, limit int) (*TakerFlowRanking, bool) {
 	if s == nil || window <= 0 || window > universeHistoryWindow {
+		return nil, false
+	}
+	// Hyperliquid candles carry base volume but no aggressor split, so this
+	// ranking is only meaningful for the reference (Binance/Bybit) universe.
+	// HL traders get the per-symbol taker flow from the trades watcher instead.
+	if s.venue == VenueHyperliquid {
 		return nil, false
 	}
 	key := window.String()

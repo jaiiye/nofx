@@ -1298,7 +1298,8 @@ func (e *StrategyEngine) formatLiquidationFlow(ctx *Context, symbol string) stri
 	}
 
 	var sb strings.Builder
-	sb.WriteString(pick("**LIQUIDATION FLOW (public venue streams)**\n", "**爆仓流（交易所公开清算推送）**\n"))
+	sb.WriteString(pick("**LIQUIDATION FLOW (Binance + Bybit public streams; Hyperliquid not covered)**\n",
+		"**爆仓流（Binance + Bybit 公开清算；不含 Hyperliquid）**\n"))
 	sb.WriteString("- " + strings.Join(parts, " | ") + "\n")
 	if r.Cascade {
 		sb.WriteString(fmt.Sprintf(pick(

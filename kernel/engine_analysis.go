@@ -269,10 +269,11 @@ func fetchMarketDataWithStrategy(ctx *Context, engine *StrategyEngine) error {
 	microEnabled := config.Indicators.EnableMicrostructure == nil || *config.Indicators.EnableMicrostructure
 	ctx.MicrostructureMap = make(map[string]*market.MarketMicrostructure)
 
-	// Hyperliquid-native positioning (nil flag = enabled). It costs no request
-	// beyond the funding-history baseline, which is cached per coin.
-	positioningEnabled := config.Indicators.PositioningEnabled()
-	structureEnabled := config.Indicators.PositionStructureEnabled()
+	// Hyperliquid-native positioning and holder structure are only meaningful
+	// for a Hyperliquid execution venue; a Binance/Bybit trader must not read
+	// HL holder clusters as their own order flow.
+	positioningEnabled := config.Indicators.PositioningEnabled() && engine.Venue() == market.VenueHyperliquid
+	structureEnabled := config.Indicators.PositionStructureEnabled() && engine.Venue() == market.VenueHyperliquid
 	ctx.PositioningMap = make(map[string]*market.Positioning)
 
 	// Cross-venue positioning and the liquidation flow (both nil flags =

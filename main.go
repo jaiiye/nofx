@@ -163,6 +163,11 @@ func main() {
 	universe := market.StartUniverse(context.Background())
 	defer universe.Stop()
 
+	// Hyperliquid traders screen and rank the venue's own universe (crypto plus
+	// the HIP-3 dex); the reference universe above is not their market.
+	hlUniverse := market.StartHyperliquidUniverse(context.Background())
+	defer hlUniverse.Stop()
+
 	// Stream Hyperliquid public trades to feed the positioning taker-flow ratio.
 	// Best-effort: without it the prompt simply omits the flow clause.
 	hlFlowWatcher := market.StartHLFlow(context.Background())

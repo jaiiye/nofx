@@ -512,7 +512,7 @@ func (e *StrategyEngine) getScreenerCoins(limit int) ([]CandidateCoin, error) {
 	if limit <= 0 {
 		limit = 30
 	}
-	service := market.CurrentUniverse()
+	service := market.CurrentUniverseForVenue(e.Venue())
 	if service == nil {
 		return nil, fmt.Errorf("market universe service is not running")
 	}
@@ -554,7 +554,7 @@ func (e *StrategyEngine) getOIRankedCoins(limit int, top bool) ([]CandidateCoin,
 	if limit <= 0 {
 		limit = 10
 	}
-	service := market.CurrentUniverse()
+	service := market.CurrentUniverseForVenue(e.Venue())
 	if service == nil {
 		return nil, fmt.Errorf("market universe service is not running")
 	}
@@ -1034,7 +1034,7 @@ func (e *StrategyEngine) FetchOIRankingData() *market.OIRankingData {
 		limit = 10
 	}
 
-	service := market.CurrentUniverse()
+	service := market.CurrentUniverseForVenue(e.Venue())
 	if service == nil {
 		return nil
 	}
@@ -1076,7 +1076,7 @@ func (e *StrategyEngine) FetchTakerFlowRankingData() *market.TakerFlowRanking {
 		limit = 10
 	}
 
-	service := market.CurrentUniverse()
+	service := market.CurrentUniverseForVenue(e.Venue())
 	if service == nil {
 		return nil
 	}
@@ -1114,7 +1114,7 @@ func (e *StrategyEngine) FetchPriceRankingData() *market.PriceRankingData {
 		limit = 10
 	}
 
-	service := market.CurrentUniverse()
+	service := market.CurrentUniverseForVenue(e.Venue())
 	if service == nil {
 		return nil
 	}
