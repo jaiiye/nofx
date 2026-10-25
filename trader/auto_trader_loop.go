@@ -446,42 +446,28 @@ func canonicalUniverseSymbolForBase(ctx *kernel.Context, base string) string {
 
 // buildTradingContext builds trading context
 func (at *AutoTrader) buildTradingContext() (*kernel.Context, error) {
-	// 1. Get account information
-	balance, err := at.trader.GetBalance()
+	// 1. Get account information. The connector is the only authority on what
+	// its venue's fields mean; consumers must not re-derive equity.
+	snapshot, err := at.readAccountSnapshot()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get account balance: %w", err)
+		return nil, fmt.Errorf("failed to get account state: %w", err)
+	}
+	account := snapshot.Balance
+	positions := snapshot.Positions
+
+	if !account.Complete {
+		at.logWarnf("⚠ Account data incomplete for %s — sizing and PnL may be off", account.Venue)
+	}
+	if err := account.Validate(); err != nil {
+		at.logWarnf("⚠ %v", err)
 	}
 
-	// Get account fields
-	totalWalletBalance := 0.0
-	totalUnrealizedProfit := 0.0
-	availableBalance := 0.0
-	totalEquity := 0.0
-
-	if wallet, ok := balance["totalWalletBalance"].(float64); ok {
-		totalWalletBalance = wallet
-	}
-	if unrealized, ok := balance["totalUnrealizedProfit"].(float64); ok {
-		totalUnrealizedProfit = unrealized
-	}
-	if avail, ok := balance["availableBalance"].(float64); ok {
-		availableBalance = avail
-	}
-
-	// Use totalEquity directly if provided by trader (more accurate)
-	if eq, ok := balance["totalEquity"].(float64); ok && eq > 0 {
-		totalEquity = eq
-	} else {
-		// Fallback: Total Equity = Wallet balance + Unrealized profit
-		totalEquity = totalWalletBalance + totalUnrealizedProfit
-	}
+	totalWalletBalance := account.Wallet
+	totalUnrealizedProfit := account.UnrealizedPnL
+	availableBalance := account.AvailableMargin
+	totalEquity := account.Equity
 
 	// 2. Get position information
-	positions, err := at.trader.GetPositions()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get positions: %w", err)
-	}
-
 	// Reconcile the recorded leverage with the venue's figure: positions built
 	// from the fill stream start with a placeholder, and a wrong leverage makes
 	// every stored PnL% (net/margin) wrong by the same factor.
@@ -624,6 +610,7 @@ func (at *AutoTrader) buildTradingContext() (*kernel.Context, error) {
 		AltcoinLeverage: altcoinLeverage,
 		Account: kernel.AccountInfo{
 			TotalEquity:      totalEquity,
+			Wallet:           totalWalletBalance,
 			AvailableBalance: availableBalance,
 			UnrealizedPnL:    totalUnrealizedProfit,
 			TotalPnL:         totalPnL,
@@ -677,6 +664,15 @@ func (at *AutoTrader) buildTradingContext() (*kernel.Context, error) {
 		} else if stats.TotalTrades == 0 {
 			at.logWarnf("⚠️ GetFullStats returned 0 trades")
 		} else {
+			// The max drawdown comes from the account curve, not from a synthetic
+			// one. The old figure grew a hard-coded 10000 starting equity by each
+			// trade's net PnL, so it was independent of the account's size and
+			// ignored unrealized PnL — the model was told "0.2%" while the breaker
+			// was acting on 15%.
+			maxDrawdownPct := stats.MaxDrawdownPct
+			if dd, ddErr := at.store.Equity().MaxDrawdownNAVPct(at.id, time.Time{}); ddErr == nil {
+				maxDrawdownPct = dd
+			}
 			ctx.TradingStats = &kernel.TradingStats{
 				TotalTrades:  stats.TotalTrades,
 				WinRate:      stats.WinRate,
@@ -687,10 +683,10 @@ func (at *AutoTrader) buildTradingContext() (*kernel.Context, error) {
 				TotalPnL:       stats.NetPnL,
 				AvgWin:         stats.AvgWin,
 				AvgLoss:        stats.AvgLoss,
-				MaxDrawdownPct: stats.MaxDrawdownPct,
+				MaxDrawdownPct: maxDrawdownPct,
 			}
 			logger.Infof("📈 [%s] Trading stats: %d trades, %.1f%% win rate, PF=%.2f, Sharpe=%.2f, DD=%.1f%%",
-				at.name, stats.TotalTrades, stats.WinRate, stats.ProfitFactor, stats.SharpeRatio, stats.MaxDrawdownPct)
+				at.name, stats.TotalTrades, stats.WinRate, stats.ProfitFactor, stats.SharpeRatio, maxDrawdownPct)
 		}
 	} else {
 		at.logWarnf("⚠️ Store is nil, cannot get recent trades")

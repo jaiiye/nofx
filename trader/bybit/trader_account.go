@@ -8,20 +8,22 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
+	"nofx/logger"
 	"nofx/trader/types"
 	"strconv"
 	"time"
 )
 
-// GetBalance retrieves account balance
-func (t *BybitTrader) GetBalance() (map[string]interface{}, error) {
+// GetAccountBalance retrieves the typed account state.
+func (t *BybitTrader) GetAccountBalance() (types.AccountBalance, error) {
 	// Check cache
 	t.balanceCacheMutex.RLock()
 	if t.cachedBalance != nil && time.Since(t.balanceCacheTime) < t.cacheDuration {
-		balance := t.cachedBalance
+		cached := t.cachedBalance
 		t.balanceCacheMutex.RUnlock()
-		return balance, nil
+		return types.FromMap(cached), nil
 	}
 	t.balanceCacheMutex.RUnlock()
 
@@ -32,17 +34,17 @@ func (t *BybitTrader) GetBalance() (map[string]interface{}, error) {
 
 	result, err := t.client.NewUtaBybitServiceWithParams(params).GetAccountWallet(context.Background())
 	if err != nil {
-		return nil, fmt.Errorf("failed to get Bybit balance: %w", err)
+		return types.AccountBalance{}, fmt.Errorf("failed to get Bybit balance: %w", err)
 	}
 
 	if result.RetCode != 0 {
-		return nil, fmt.Errorf("Bybit API error: %s", result.RetMsg)
+		return types.AccountBalance{}, fmt.Errorf("Bybit API error: %s", result.RetMsg)
 	}
 
 	// Extract balance information
 	resultData, ok := result.Result.(map[string]interface{})
 	if !ok {
-		return nil, fmt.Errorf("Bybit balance return format error")
+		return types.AccountBalance{}, fmt.Errorf("Bybit balance return format error")
 	}
 
 	list, _ := resultData["list"].([]interface{})
@@ -54,48 +56,68 @@ func (t *BybitTrader) GetBalance() (map[string]interface{}, error) {
 		var parseErr error
 		if equityStr, ok := account["totalEquity"].(string); ok {
 			if totalEquity, parseErr = types.ParseFloatField("totalEquity", equityStr); parseErr != nil {
-				return nil, parseErr
+				return types.AccountBalance{}, parseErr
 			}
 		}
 		if availStr, ok := account["totalAvailableBalance"].(string); ok {
 			if availableBalance, parseErr = types.ParseFloatField("totalAvailableBalance", availStr); parseErr != nil {
-				return nil, parseErr
+				return types.AccountBalance{}, parseErr
 			}
 		}
 		// Bybit UNIFIED account wallet balance field
 		if walletStr, ok := account["totalWalletBalance"].(string); ok {
 			if totalWalletBalance, parseErr = types.ParseFloatField("totalWalletBalance", walletStr); parseErr != nil {
-				return nil, parseErr
+				return types.AccountBalance{}, parseErr
 			}
 		}
 		// Bybit perpetual contract unrealized PnL
 		if uplStr, ok := account["totalPerpUPL"].(string); ok {
 			if totalPerpUPL, parseErr = types.ParseFloatField("totalPerpUPL", uplStr); parseErr != nil {
-				return nil, parseErr
+				return types.AccountBalance{}, parseErr
 			}
 		}
 	}
 
-	// If no totalWalletBalance, use totalEquity
-	if totalWalletBalance == 0 {
-		totalWalletBalance = totalEquity
-	}
-
-	balance := map[string]interface{}{
-		"totalEquity":           totalEquity,
-		"totalWalletBalance":    totalWalletBalance,
-		"availableBalance":      availableBalance,
-		"totalUnrealizedProfit": totalPerpUPL,
-		"balance":               totalEquity, // Compatible with other exchange formats
-	}
+	// NOTE: do not fall back to totalEquity when the wallet balance is zero.
+	// That substitution breaks equity == wallet + unrealized, and
+	// reconcilePnLBaseline would then book the whole unrealized PnL as an
+	// external deposit — permanently, since it rewrites initial_balance.
+	// It already skips a zero wallet, so leaving it at zero is the safe path.
+	balance := balanceFromWalletFields(totalEquity, totalWalletBalance, availableBalance, totalPerpUPL)
 
 	// Update cache
 	t.balanceCacheMutex.Lock()
-	t.cachedBalance = balance
+	t.cachedBalance = balance.ToMap()
 	t.balanceCacheTime = time.Now()
 	t.balanceCacheMutex.Unlock()
 
 	return balance, nil
+}
+
+// GetBalance renders the compatibility map. Prefer GetAccountBalance.
+func (t *BybitTrader) GetBalance() (map[string]interface{}, error) {
+	balance, err := t.GetAccountBalance()
+	if err != nil {
+		return nil, err
+	}
+	return balance.ToMap(), nil
+}
+
+// balanceFromWalletFields is the pure mapping from Bybit's UTA wallet fields to
+// the typed account state.
+//
+// totalEquity is authoritative for the UTA: totalPerpUPL only covers perpetuals,
+// so with options or spot in the account the venue's totalWalletBalance does not
+// equal equity - totalPerpUPL. The wallet is derived from equity so the identity
+// holds; a material mismatch with the venue's own figure is logged because it
+// means the account holds PnL that this connector cannot attribute.
+func balanceFromWalletFields(totalEquity, totalWalletBalance, availableBalance, totalPerpUPL float64) types.AccountBalance {
+	balance := types.BalanceFromEquity("bybit", totalEquity, totalPerpUPL, availableBalance)
+	if totalWalletBalance > 0 && math.Abs(totalWalletBalance-balance.Wallet) > 0.01 {
+		logger.Warnf("⚠️ Bybit wallet mismatch: venue %.6f vs derived %.6f (options/spot PnL is not in totalPerpUPL)",
+			totalWalletBalance, balance.Wallet)
+	}
+	return balance
 }
 
 // GetClosedPnL retrieves closed position PnL records from Bybit via direct HTTP API

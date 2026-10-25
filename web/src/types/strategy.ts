@@ -78,7 +78,7 @@ export interface ProtectionConfig {
   max_drawdown_pct?: number;
   max_drawdown_lookback_h?: number;
   // Which curve the drawdown breaker watches: equity (wallet + unrealized) or balance (realized only).
-  drawdown_basis?: 'equity' | 'balance';
+  drawdown_basis?: 'nav' | 'equity' | 'balance';
   // Halt new opens after N losing closes within the lookback window.
   losing_closes_guard_count?: number;
   losing_closes_guard_lookback_h?: number;

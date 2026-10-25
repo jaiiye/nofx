@@ -137,19 +137,12 @@ func (at *AutoTrader) checkMaxDrawdown() (bool, float64) {
 	}
 
 	// Get current equity
-	balance, err := at.trader.GetBalance()
+	account, err := at.trader.GetAccountBalance()
 	if err != nil {
 		return false, 0
 	}
 
-	currentEquity := 0.0
-	if equity, ok := balance["total_equity"].(float64); ok {
-		currentEquity = equity
-	} else if total, ok := balance["totalWalletBalance"].(float64); ok {
-		if unrealized, ok := balance["totalUnrealizedProfit"].(float64); ok {
-			currentEquity = total + unrealized
-		}
-	}
+	currentEquity := account.Equity
 
 	if currentEquity <= 0 {
 		return false, 0
@@ -199,6 +192,18 @@ func (at *AutoTrader) checkDailyLossLimit() (bool, float64) {
 	dailyPnL := at.gridState.DailyPnL
 	at.gridState.mu.Unlock()
 
+	// Prefer the ledger: the in-memory counter only ever saw stop-losses, so a
+	// day of take-profits followed by one stop-loss read as a large loss.
+	if at.store != nil {
+		startOfDay := time.Now().UTC().Truncate(24 * time.Hour)
+		if net, err := at.store.Position().GetNetRealizedPnLSince(at.id, startOfDay.UnixMilli()); err == nil {
+			dailyPnL = net
+			at.gridState.mu.Lock()
+			at.gridState.DailyPnL = net
+			at.gridState.mu.Unlock()
+		}
+	}
+
 	// Calculate daily loss as percentage of total investment
 	dailyLossPct := 0.0
 	if gridConfig.TotalInvestment > 0 && dailyPnL < 0 {
@@ -206,14 +211,6 @@ func (at *AutoTrader) checkDailyLossLimit() (bool, float64) {
 	}
 
 	return dailyLossPct >= gridConfig.DailyLossLimitPct, dailyLossPct
-}
-
-// updateDailyPnL updates the daily PnL tracking
-func (at *AutoTrader) updateDailyPnL(realizedPnL float64) {
-	at.gridState.mu.Lock()
-	at.gridState.DailyPnL += realizedPnL
-	at.gridState.TotalProfit += realizedPnL
-	at.gridState.mu.Unlock()
 }
 
 // emergencyExit closes all positions and cancels all orders
@@ -498,18 +495,28 @@ func (at *AutoTrader) buildGridContext() (*kernel.GridContext, error) {
 	}
 	at.gridState.mu.RUnlock()
 
+	// Realized PnL comes from the positions ledger, not the in-memory counters:
+	// those only ever saw stop-losses (take-profits and AI-initiated closes
+	// never touched them), so TotalProfit was always negative and WinningTrades
+	// never moved.
+	if at.store != nil {
+		if stats, statsErr := at.store.Position().GetFullStats(at.id); statsErr == nil && stats != nil {
+			ctx.TotalProfit = stats.NetPnL
+			ctx.TotalTrades = stats.TotalTrades
+			ctx.WinningTrades = stats.WinTrades
+		}
+		startOfDay := time.Now().UTC().Truncate(24 * time.Hour)
+		if net, netErr := at.store.Position().GetNetRealizedPnLSince(at.id, startOfDay.UnixMilli()); netErr == nil {
+			ctx.DailyPnL = net
+		}
+	}
+
 	// Get account info
-	balance, err := at.trader.GetBalance()
-	if err == nil {
-		if equity, ok := balance["total_equity"].(float64); ok {
-			ctx.TotalEquity = equity
-		}
-		if available, ok := balance["availableBalance"].(float64); ok {
-			ctx.AvailableBalance = available
-		}
-		if unrealized, ok := balance["totalUnrealizedProfit"].(float64); ok {
-			ctx.UnrealizedPnL = unrealized
-		}
+	account, balanceErr := at.trader.GetAccountBalance()
+	if balanceErr == nil {
+		ctx.TotalEquity = account.Equity
+		ctx.AvailableBalance = account.AvailableMargin
+		ctx.UnrealizedPnL = account.UnrealizedPnL
 	}
 
 	// Get current position

@@ -44,8 +44,9 @@ type PositionInfo struct {
 
 // AccountInfo account information
 type AccountInfo struct {
-	TotalEquity      float64 `json:"total_equity"`      // Account equity
-	AvailableBalance float64 `json:"available_balance"` // Available balance
+	TotalEquity      float64 `json:"total_equity"`      // Account equity (wallet + unrealized)
+	Wallet           float64 `json:"wallet"`            // Cash / realized side
+	AvailableBalance float64 `json:"available_balance"` // Available margin
 	UnrealizedPnL    float64 `json:"unrealized_pnl"`    // Unrealized profit/loss
 	TotalPnL         float64 `json:"total_pnl"`         // Total profit/loss
 	TotalPnLPct      float64 `json:"total_pnl_pct"`     // Total profit/loss percentage

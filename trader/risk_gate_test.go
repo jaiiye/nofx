@@ -7,6 +7,7 @@ import (
 
 	"nofx/store"
 	"nofx/trader/connector"
+	"nofx/trader/types"
 	"time"
 )
 
@@ -159,21 +160,6 @@ func TestMarginUsagePct(t *testing.T) {
 	}
 }
 
-func TestAccountEquityAndAvailable(t *testing.T) {
-	eq, avail := accountEquityAndAvailable(map[string]interface{}{
-		"totalEquity":      1200.0,
-		"availableBalance": 800.0,
-	})
-	if eq != 1200 || avail != 800 {
-		t.Fatalf("equity/avail = %v/%v, want 1200/800", eq, avail)
-	}
-	// Fallback to wallet balance when totalEquity is absent.
-	eq, _ = accountEquityAndAvailable(map[string]interface{}{"totalWalletBalance": 500.0})
-	if eq != 500 {
-		t.Fatalf("equity fallback = %v, want 500", eq)
-	}
-}
-
 func TestNormalizePosKey(t *testing.T) {
 	if normalizePosKey("BTCUSDT", "long") != normalizePosKey("BTCUSDT", "LONG") {
 		t.Fatalf("pos key should be case-insensitive on side")
@@ -183,22 +169,24 @@ func TestNormalizePosKey(t *testing.T) {
 // The xyz dex (HIP-3) settles against its own USDC pool: sizing an xyz order
 // off the combined account equity is what let funded-account orders reach the
 // venue and get rejected for insufficient margin in the dex's own pool.
-func TestAccountEquityAndAvailableForPools(t *testing.T) {
-	balance := map[string]interface{}{
-		"totalEquity":      1500.0, // perp + spot + xyz combined
-		"availableBalance": 900.0,  // main perp pool only
-		"xyzDexBalance":    500.0,  // xyz dex equity
-		"xyzDexAvailable":  40.0,   // xyz dex free margin
+func TestAccountPoolForXyzPools(t *testing.T) {
+	balance := types.AccountBalance{
+		Equity:          1500, // perp + spot + xyz combined
+		AvailableMargin: 900,  // main perp pool only
+		XyzSeparate:     true,
+		XyzEquity:       500,
+		XyzAvailable:    40,
+		Complete:        true,
 	}
 
 	// Non-xyz symbols keep the main-pool numbers.
-	eq, avail := accountEquityAndAvailableFor(balance, "BTCUSDT")
+	eq, avail := accountPoolFor(balance, "BTCUSDT")
 	if eq != 1500.0 || avail != 900.0 {
 		t.Fatalf("crypto pool = %.2f/%.2f, want 1500/900", eq, avail)
 	}
 
 	// xyz symbols switch to the dex pool for BOTH equity and available.
-	eq, avail = accountEquityAndAvailableFor(balance, "xyz:SILVER")
+	eq, avail = accountPoolFor(balance, "xyz:SILVER")
 	if eq != 500.0 || avail != 40.0 {
 		t.Fatalf("xyz pool = %.2f/%.2f, want 500/40", eq, avail)
 	}
@@ -207,14 +195,33 @@ func TestAccountEquityAndAvailableForPools(t *testing.T) {
 // Missing xyz fields must not zero the numbers out (older venues/endpoints
 // simply do not return them), and in that case the gate falls back to the
 // main-pool figures rather than denying funding.
-func TestAccountEquityAndAvailableForMissingXyzFields(t *testing.T) {
-	balance := map[string]interface{}{
-		"totalEquity":      1000.0,
-		"availableBalance": 600.0,
-	}
-	eq, avail := accountEquityAndAvailableFor(balance, "xyz:GOLD")
+func TestAccountPoolForMissingXyzPool(t *testing.T) {
+	balance := types.AccountBalance{Equity: 1000, AvailableMargin: 600, Complete: true}
+	eq, avail := accountPoolFor(balance, "xyz:GOLD")
 	if eq != 1000.0 || avail != 600.0 {
 		t.Fatalf("fallback = %.2f/%.2f, want 1000/600", eq, avail)
+	}
+}
+
+// A unified account reports the xyz position's MARGIN in its dex state. That
+// is not a separate pool: treating it as equity collapsed the per-symbol cap to
+// the margin of the position already open (26.77 USDT in the incident that
+// prompted this), so an xyz top-up was silently sized against pennies. The
+// connector now emits xyzDexMargin instead of xyzDexBalance in that mode.
+func TestAccountPoolForUnifiedXyzMarginIsNotAPool(t *testing.T) {
+	// The connector reports the open xyz:CL margin as XyzEquity but leaves
+	// XyzSeparate false, because in unified mode that margin is already inside
+	// the shared balance.
+	balance := types.AccountBalance{
+		Equity:          146.934675,
+		AvailableMargin: 146.934675,
+		XyzEquity:       26.7664,
+		Complete:        true,
+	}
+
+	eq, avail := accountPoolFor(balance, "xyz:CL")
+	if eq != 146.934675 || avail != 146.934675 {
+		t.Fatalf("unified xyz pool = %.6f/%.6f, want 146.934675/146.934675", eq, avail)
 	}
 }
 
@@ -377,37 +384,24 @@ func TestRiskGateExplainsWhySizeIsZero(t *testing.T) {
 // be read as "no margin" — that mistake rejected a valid xyz:CL order on a
 // unified account whose 150 USDC sat in the single perps balance.
 func TestAccountPoolForXYZDexRespectsAccountMode(t *testing.T) {
-	main := map[string]interface{}{
-		"availableBalance": 150.55,
-		"totalEquity":      150.55,
-		// Unified/portfolio accounts report per-dex states as meaningless zeros.
-		"xyzDexAvailable": 0.0,
-		"xyzDexBalance":   0.0,
-	}
-	if equity, available := accountEquityAndAvailableFor(main, "xyz:CL"); equity != 150.55 || available != 150.55 {
+	// Unified/portfolio accounts have no separate per-dex pool.
+	main := types.AccountBalance{Equity: 150.55, AvailableMargin: 150.55, Complete: true}
+	if equity, available := accountPoolFor(main, "xyz:CL"); equity != 150.55 || available != 150.55 {
 		t.Fatalf("unified account: equity/available = %v/%v, want the single balance 150.55", equity, available)
 	}
 
-	// Keys absent entirely (non-Hyperliquid venues) behave the same way.
-	if _, available := accountEquityAndAvailableFor(map[string]interface{}{
-		"availableBalance": 150.55, "totalEquity": 150.55,
-	}, "xyz:CL"); available != 150.55 {
-		t.Fatalf("missing dex state: available = %v, want 150.55", available)
-	}
-
 	// Standard mode with a funded dex: the dex balance is authoritative.
-	standard := map[string]interface{}{
-		"availableBalance": 150.55,
-		"totalEquity":      150.55,
-		"xyzDexAvailable":  35.0,
-		"xyzDexBalance":    40.0,
+	standard := types.AccountBalance{
+		Equity: 150.55, AvailableMargin: 150.55,
+		XyzSeparate: true, XyzEquity: 40, XyzAvailable: 35,
+		Complete: true,
 	}
-	if equity, available := accountEquityAndAvailableFor(standard, "xyz:CL"); equity != 40 || available != 35 {
+	if equity, available := accountPoolFor(standard, "xyz:CL"); equity != 40 || available != 35 {
 		t.Fatalf("standard mode: equity/available = %v/%v, want 40/35", equity, available)
 	}
 
 	// Crypto symbols never use the dex pool.
-	if equity, available := accountEquityAndAvailableFor(standard, "BTCUSDT"); equity != 150.55 || available != 150.55 {
+	if equity, available := accountPoolFor(standard, "BTCUSDT"); equity != 150.55 || available != 150.55 {
 		t.Fatalf("crypto: equity/available = %v/%v, want the main balance", equity, available)
 	}
 }

@@ -9,15 +9,16 @@ import (
 	"time"
 )
 
-// GetBalance gets account balance (with cache)
-func (t *FuturesTrader) GetBalance() (map[string]interface{}, error) {
+// GetAccountBalance gets the typed account state (with cache).
+func (t *FuturesTrader) GetAccountBalance() (types.AccountBalance, error) {
 	// First check if cache is valid
 	t.balanceCacheMutex.RLock()
 	if t.cachedBalance != nil && time.Since(t.balanceCacheTime) < t.cacheDuration {
 		cacheAge := time.Since(t.balanceCacheTime)
+		cached := t.cachedBalance
 		t.balanceCacheMutex.RUnlock()
 		logger.Infof("✓ Using cached account balance (cache age: %.1f seconds ago)", cacheAge.Seconds())
-		return t.cachedBalance, nil
+		return types.FromMap(cached), nil
 	}
 	t.balanceCacheMutex.RUnlock()
 
@@ -26,21 +27,23 @@ func (t *FuturesTrader) GetBalance() (map[string]interface{}, error) {
 	account, err := t.client.NewGetAccountService().Do(context.Background())
 	if err != nil {
 		logger.Infof("❌ Binance API call failed: %v", err)
-		return nil, fmt.Errorf("failed to get account info: %w", err)
+		return types.AccountBalance{}, fmt.Errorf("failed to get account info: %w", err)
 	}
 
-	result := make(map[string]interface{})
-	for field, value := range map[string]string{
-		"totalWalletBalance":    account.TotalWalletBalance,
-		"availableBalance":      account.AvailableBalance,
-		"totalUnrealizedProfit": account.TotalUnrealizedProfit,
-	} {
-		parsed, parseErr := types.ParseFloatField(field, value)
-		if parseErr != nil {
-			return nil, parseErr
-		}
-		result[field] = parsed
+	wallet, err := types.ParseFloatField("totalWalletBalance", account.TotalWalletBalance)
+	if err != nil {
+		return types.AccountBalance{}, err
 	}
+	available, err := types.ParseFloatField("availableBalance", account.AvailableBalance)
+	if err != nil {
+		return types.AccountBalance{}, err
+	}
+	unrealized, err := types.ParseFloatField("totalUnrealizedProfit", account.TotalUnrealizedProfit)
+	if err != nil {
+		return types.AccountBalance{}, err
+	}
+
+	balance := types.BalanceFromWallet("binance", wallet, unrealized, available)
 
 	logger.Infof("✓ Binance API returned: total balance=%s, available=%s, unrealized PnL=%s",
 		account.TotalWalletBalance,
@@ -49,11 +52,20 @@ func (t *FuturesTrader) GetBalance() (map[string]interface{}, error) {
 
 	// Update cache
 	t.balanceCacheMutex.Lock()
-	t.cachedBalance = result
+	t.cachedBalance = balance.ToMap()
 	t.balanceCacheTime = time.Now()
 	t.balanceCacheMutex.Unlock()
 
-	return result, nil
+	return balance, nil
+}
+
+// GetBalance renders the compatibility map. Prefer GetAccountBalance.
+func (t *FuturesTrader) GetBalance() (map[string]interface{}, error) {
+	balance, err := t.GetAccountBalance()
+	if err != nil {
+		return nil, err
+	}
+	return balance.ToMap(), nil
 }
 
 // GetClosedPnL retrieves recent closing trades from Binance Futures

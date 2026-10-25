@@ -483,17 +483,15 @@ func (s *Server) handleCreateTrader(c *gin.Context) {
 			return
 		} else if tempTrader != nil {
 			// Query actual balance
-			balanceInfo, balanceErr := tempTrader.GetBalance()
+			account, balanceErr := tempTrader.GetAccountBalance()
 			if balanceErr != nil {
 				logger.Infof("⚠️ Failed to query exchange balance, using user input for initial balance: %v", balanceErr)
+			} else if account.Equity > 0 {
+				actualBalance = account.Equity
+				logger.Infof("✓ Queried exchange total equity: %.2f %s (user input: %.2f)",
+					actualBalance, accountAssetForExchange(exchangeCfg.ExchangeType), req.InitialBalance)
 			} else {
-				if extractedBalance, found := extractExchangeTotalEquity(balanceInfo); found {
-					actualBalance = extractedBalance
-					logger.Infof("✓ Queried exchange total equity: %.2f %s (user input: %.2f)",
-						actualBalance, accountAssetForExchange(exchangeCfg.ExchangeType), req.InitialBalance)
-				} else {
-					logger.Infof("⚠️ Unable to extract total equity from balance info, balanceInfo=%v, using user input for initial balance", balanceInfo)
-				}
+				logger.Infof("⚠️ Exchange reported no equity (%s), using user input for initial balance", account.Venue)
 			}
 		}
 	}

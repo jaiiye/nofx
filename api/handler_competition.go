@@ -125,9 +125,13 @@ func (s *Server) handleCompetition(c *gin.Context) {
 // PnL baseline that was in effect when it was taken (InitialBalance), so a
 // deposit or withdrawal never shows up as trading profit.
 type equityHistoryPoint struct {
-	Timestamp        string  `json:"timestamp"`
-	TotalEquity      float64 `json:"total_equity"`      // Account equity (wallet + unrealized)
-	AvailableBalance float64 `json:"available_balance"` // Wallet balance
+	Timestamp   string  `json:"timestamp"`
+	TotalEquity float64 `json:"total_equity"` // Account equity (wallet + unrealized)
+	// WalletBalance is the cash/realized side. AvailableBalance used to carry
+	// this value under a name that means "free margin" everywhere else, so two
+	// different numbers shared one key.
+	WalletBalance    float64 `json:"wallet_balance"`
+	AvailableBalance float64 `json:"available_balance"` // Deprecated: same value as wallet_balance
 	InitialBalance   float64 `json:"initial_balance"`   // PnL baseline in effect at this point
 	TotalPnL         float64 `json:"total_pnl"`         // Total PnL (cash-flow neutral)
 	TotalPnLPct      float64 `json:"total_pnl_pct"`     // Total PnL percentage
@@ -160,7 +164,8 @@ func (s *Server) equityHistoryForTrader(traderID string, limit int) ([]equityHis
 		history = append(history, equityHistoryPoint{
 			Timestamp:        snap.Timestamp.Format("2006-01-02 15:04:05"),
 			TotalEquity:      snap.TotalEquity,
-			AvailableBalance: snap.Balance,
+			WalletBalance:    snap.Balance,
+			AvailableBalance: snap.Balance, // Deprecated alias, kept for older clients
 			InitialBalance:   baseline,
 			TotalPnL:         totalPnL,
 			TotalPnLPct:      totalPnLPct,

@@ -1130,11 +1130,14 @@ func defaultTraderInitialBalanceFetcher(exchangeCfg *store.Exchange, userID stri
 	if err != nil {
 		return 0, false, err
 	}
-	balanceInfo, err := probe.GetBalance()
+	account, err := probe.GetAccountBalance()
 	if err != nil {
 		return 0, false, err
 	}
-	return extractTraderInitialBalance(balanceInfo)
+	if account.Equity <= 0 {
+		return 0, false, fmt.Errorf("initial balance not set and unable to fetch balance from exchange")
+	}
+	return account.Equity, true, nil
 }
 
 func buildTraderExchangeProbe(exchangeCfg *store.Exchange, userID string) (trader.Trader, error) {
@@ -1176,33 +1179,6 @@ func buildTraderExchangeProbe(exchangeCfg *store.Exchange, userID string) (trade
 	default:
 		return nil, fmt.Errorf("unsupported exchange type: %s", exchangeCfg.ExchangeType)
 	}
-}
-
-func extractTraderInitialBalance(balanceInfo map[string]interface{}) (float64, bool, error) {
-	for _, key := range []string{"total_equity", "totalEquity", "totalWalletBalance", "wallet_balance", "totalEq", "balance"} {
-		raw, ok := balanceInfo[key]
-		if !ok {
-			continue
-		}
-		switch v := raw.(type) {
-		case float64:
-			return v, true, nil
-		case float32:
-			return float64(v), true, nil
-		case int:
-			return float64(v), true, nil
-		case int64:
-			return float64(v), true, nil
-		case int32:
-			return float64(v), true, nil
-		case string:
-			parsed, err := strconv.ParseFloat(v, 64)
-			if err == nil {
-				return parsed, true, nil
-			}
-		}
-	}
-	return 0, false, fmt.Errorf("initial balance not set and unable to fetch balance from exchange")
 }
 
 func safeModelForTool(model *store.AIModel) safeModelToolConfig {

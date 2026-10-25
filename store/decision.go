@@ -58,6 +58,8 @@ type DecisionRecord struct {
 
 // AccountSnapshot account state snapshot
 type AccountSnapshot struct {
+	// TotalBalance holds the account EQUITY (wallet + unrealized), not a cash
+	// balance. The JSON name is kept for historical records.
 	TotalBalance          float64 `json:"total_balance"`
 	AvailableBalance      float64 `json:"available_balance"`
 	TotalUnrealizedProfit float64 `json:"total_unrealized_profit"`

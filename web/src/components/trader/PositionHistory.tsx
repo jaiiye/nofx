@@ -546,9 +546,9 @@ export function PositionHistory({ traderId }: PositionHistoryProps) {
           <StatCard
             icon="💰"
             title={t('positionHistory.totalPnL', language)}
-            value={((stats.total_pnl || 0) >= 0 ? '+' : '') + formatNumber(stats.total_pnl || 0)}
-            color={(stats.total_pnl || 0) >= 0 ? '#0ECB81' : '#F6465D'}
-            subtitle={`${t('positionHistory.fee', language)}: -${formatNumber(stats.total_fee || 0)}`}
+            value={((stats.net_pnl || 0) >= 0 ? '+' : '') + formatNumber(stats.net_pnl || 0)}
+            color={(stats.net_pnl || 0) >= 0 ? '#0ECB81' : '#F6465D'}
+            subtitle={`${t('positionHistory.fee', language)}: -${formatNumber(stats.total_fee || 0)} · funding: ${formatNumber(stats.total_funding_fee || 0)} · gross: ${formatNumber(stats.total_pnl || 0)}`}
             metricKey="total_return"
             language={language}
           />
@@ -612,8 +612,8 @@ export function PositionHistory({ traderId }: PositionHistoryProps) {
           <StatCard
             icon="💵"
             title={t('positionHistory.netPnL', language)}
-            value={((stats.total_pnl || 0) - (stats.total_fee || 0) >= 0 ? '+' : '') + formatNumber((stats.total_pnl || 0) - (stats.total_fee || 0))}
-            color={(stats.total_pnl || 0) - (stats.total_fee || 0) >= 0 ? '#0ECB81' : '#F6465D'}
+            value={((stats.net_pnl || 0) >= 0 ? '+' : '') + formatNumber(stats.net_pnl || 0)}
+            color={(stats.net_pnl || 0) >= 0 ? '#0ECB81' : '#F6465D'}
             subtitle={t('positionHistory.netPnLDesc', language)}
             language={language}
           />

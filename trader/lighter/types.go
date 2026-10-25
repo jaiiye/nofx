@@ -15,8 +15,9 @@ type SymbolPrecision struct {
 	StepSize          float64 // Quantity step size
 }
 
-// AccountBalance Account balance information (Lighter)
-type AccountBalance struct {
+// AccountDetail is Lighter's raw balance breakdown. The trader interface's
+// typed AccountBalance is built from it.
+type AccountDetail struct {
 	TotalEquity       float64 `json:"total_equity"`       // Total equity
 	AvailableBalance  float64 `json:"available_balance"`  // Available balance
 	MarginUsed        float64 `json:"margin_used"`        // Used margin
@@ -93,14 +94,14 @@ type LighterTrade struct {
 	IsMakerAsk   bool   `json:"is_maker_ask"`
 	BlockHeight  int64  `json:"block_height"`
 	Timestamp    int64  `json:"timestamp"`
-	TakerFee     int64 `json:"taker_fee,omitempty"`
-	MakerFee     int64 `json:"maker_fee,omitempty"`
+	TakerFee     int64  `json:"taker_fee,omitempty"`
+	MakerFee     int64  `json:"maker_fee,omitempty"`
 
 	// Position change information - critical for determining open/close
-	TakerPositionSizeBefore    string `json:"taker_position_size_before"`
-	TakerPositionSignChanged   bool   `json:"taker_position_sign_changed"`
-	MakerPositionSizeBefore    string `json:"maker_position_size_before"`
-	MakerPositionSignChanged   bool   `json:"maker_position_sign_changed,omitempty"`
+	TakerPositionSizeBefore  string `json:"taker_position_size_before"`
+	TakerPositionSignChanged bool   `json:"taker_position_sign_changed"`
+	MakerPositionSizeBefore  string `json:"maker_position_size_before"`
+	MakerPositionSignChanged bool   `json:"maker_position_sign_changed,omitempty"`
 }
 
 // parseFloat parses a string to float64, returns 0 for empty string

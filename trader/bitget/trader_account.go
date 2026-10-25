@@ -10,13 +10,14 @@ import (
 	"time"
 )
 
-// GetBalance gets account balance
-func (t *BitgetTrader) GetBalance() (map[string]interface{}, error) {
+// GetAccountBalance gets the typed account state.
+func (t *BitgetTrader) GetAccountBalance() (types.AccountBalance, error) {
 	// Check cache
 	t.balanceCacheMutex.RLock()
 	if t.cachedBalance != nil && time.Since(t.balanceCacheTime) < t.cacheDuration {
+		cached := t.cachedBalance
 		t.balanceCacheMutex.RUnlock()
-		return t.cachedBalance, nil
+		return types.FromMap(cached), nil
 	}
 	t.balanceCacheMutex.RUnlock()
 
@@ -26,52 +27,78 @@ func (t *BitgetTrader) GetBalance() (map[string]interface{}, error) {
 
 	data, err := t.doRequest("GET", bitgetAccountPath, params)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get account balance: %w", err)
+		return types.AccountBalance{}, fmt.Errorf("failed to get account balance: %w", err)
 	}
 
-	var accounts []struct {
-		MarginCoin    string `json:"marginCoin"`
-		Available     string `json:"available"`     // Available balance
-		AccountEquity string `json:"accountEquity"` // Total equity
-		UsdtEquity    string `json:"usdtEquity"`    // USDT equity
-		UnrealizedPL  string `json:"unrealizedPL"`  // Unrealized P&L
-	}
+	var accounts []bitgetAccount
 
 	if err := json.Unmarshal(data, &accounts); err != nil {
-		return nil, fmt.Errorf("failed to parse balance data: %w, raw: %s", err, string(data))
+		return types.AccountBalance{}, fmt.Errorf("failed to parse balance data: %w, raw: %s", err, string(data))
 	}
 
-	var totalEquity, availableBalance, unrealizedPnL float64
-	for _, acc := range accounts {
-		if acc.MarginCoin == "USDT" {
-			if totalEquity, err = types.ParseFloatField("accountEquity", acc.AccountEquity); err != nil {
-				return nil, err
-			}
-			if availableBalance, err = types.ParseFloatField("available", acc.Available); err != nil {
-				return nil, err
-			}
-			if unrealizedPnL, err = types.ParseFloatField("unrealizedPL", acc.UnrealizedPL); err != nil {
-				return nil, err
-			}
-			logger.Infof("✓ [Bitget] Balance: equity=%.2f, available=%.2f", totalEquity, availableBalance)
-			break
-		}
-	}
-
-	result := map[string]interface{}{
-		"totalWalletBalance":    totalEquity - unrealizedPnL,
-		"availableBalance":      availableBalance,
-		"totalUnrealizedProfit": unrealizedPnL,
-		"total_equity":          totalEquity,
+	balance, err := balanceFromAccounts(accounts)
+	if err != nil {
+		return types.AccountBalance{}, err
 	}
 
 	// Update cache
 	t.balanceCacheMutex.Lock()
-	t.cachedBalance = result
+	t.cachedBalance = balance.ToMap()
 	t.balanceCacheTime = time.Now()
 	t.balanceCacheMutex.Unlock()
 
-	return result, nil
+	return balance, nil
+}
+
+// GetBalance renders the compatibility map. Prefer GetAccountBalance.
+func (t *BitgetTrader) GetBalance() (map[string]interface{}, error) {
+	balance, err := t.GetAccountBalance()
+	if err != nil {
+		return nil, err
+	}
+	return balance.ToMap(), nil
+}
+
+// bitgetAccount is one entry of /api/v2/mix/account/accounts.
+type bitgetAccount struct {
+	MarginCoin    string `json:"marginCoin"`
+	Available     string `json:"available"`     // Available balance
+	AccountEquity string `json:"accountEquity"` // Total equity
+	UsdtEquity    string `json:"usdtEquity"`    // USDT equity
+	UnrealizedPL  string `json:"unrealizedPL"`  // Unrealized P&L
+}
+
+// balanceFromAccounts maps the venue's account list onto the canonical balance
+// map. Extracted so the "no USDT account" path is testable without HTTP.
+func balanceFromAccounts(accounts []bitgetAccount) (types.AccountBalance, error) {
+	var totalEquity, availableBalance, unrealizedPnL float64
+	foundUSDT := false
+	for _, acc := range accounts {
+		if acc.MarginCoin != "USDT" {
+			continue
+		}
+		foundUSDT = true
+		var err error
+		if totalEquity, err = types.ParseFloatField("accountEquity", acc.AccountEquity); err != nil {
+			return types.AccountBalance{}, err
+		}
+		if availableBalance, err = types.ParseFloatField("available", acc.Available); err != nil {
+			return types.AccountBalance{}, err
+		}
+		if unrealizedPnL, err = types.ParseFloatField("unrealizedPL", acc.UnrealizedPL); err != nil {
+			return types.AccountBalance{}, err
+		}
+		logger.Infof("✓ [Bitget] Balance: equity=%.2f, available=%.2f", totalEquity, availableBalance)
+		break
+	}
+	if !foundUSDT {
+		// Returning an all-zero map here used to zero out equity, PnL% and
+		// available margin in one go, which the UI and the risk gate read as
+		// "the account has no money" instead of "the call failed".
+		return types.AccountBalance{}, fmt.Errorf("bitget: USDT margin account not found (productType=USDT-FUTURES, accounts=%d)", len(accounts))
+	}
+
+	return types.BalanceFromEquity("bitget", totalEquity, unrealizedPnL, availableBalance), nil
 }
 
 // SetMarginMode sets margin mode

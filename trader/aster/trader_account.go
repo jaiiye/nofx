@@ -12,17 +12,17 @@ import (
 	"time"
 )
 
-// GetBalance Get account balance
-func (t *AsterTrader) GetBalance() (map[string]interface{}, error) {
+// GetAccountBalance gets the typed account state.
+func (t *AsterTrader) GetAccountBalance() (types.AccountBalance, error) {
 	params := make(map[string]interface{})
 	body, err := t.request("GET", "/fapi/v3/balance", params)
 	if err != nil {
-		return nil, err
+		return types.AccountBalance{}, err
 	}
 
 	var balances []map[string]interface{}
 	if err := json.Unmarshal(body, &balances); err != nil {
-		return nil, err
+		return types.AccountBalance{}, err
 	}
 
 	// Find USDT balance
@@ -39,17 +39,17 @@ func (t *AsterTrader) GetBalance() (map[string]interface{}, error) {
 			var parseErr error
 			if avail, ok := bal["availableBalance"].(string); ok {
 				if availableBalance, parseErr = types.ParseFloatField("availableBalance", avail); parseErr != nil {
-					return nil, parseErr
+					return types.AccountBalance{}, parseErr
 				}
 			}
 			if unpnl, ok := bal["crossUnPnl"].(string); ok {
 				if crossUnPnl, parseErr = types.ParseFloatField("crossUnPnl", unpnl); parseErr != nil {
-					return nil, parseErr
+					return types.AccountBalance{}, parseErr
 				}
 			}
 			if cwb, ok := bal["crossWalletBalance"].(string); ok {
 				if crossWalletBalance, parseErr = types.ParseFloatField("crossWalletBalance", cwb); parseErr != nil {
-					return nil, parseErr
+					return types.AccountBalance{}, parseErr
 				}
 			}
 			break
@@ -60,51 +60,60 @@ func (t *AsterTrader) GetBalance() (map[string]interface{}, error) {
 		logger.Infof("⚠️  USDT asset record not found!")
 	}
 
-	// Get positions to calculate margin used and real unrealized PnL
-	positions, err := t.GetPositions()
+	// Get positions to accumulate the real unrealized PnL. Aster's crossUnPnl
+	// field is unreliable, so it is recomputed from the positions.
+	positions, posErr := t.GetPositions()
+	if posErr != nil {
+		logger.Infof("⚠️  Failed to get position information: %v", posErr)
+	}
+	return assembleAsterBalance(availableBalance, crossWalletBalance, crossUnPnl, positions, posErr == nil), nil
+}
+
+// GetBalance renders the compatibility map. Prefer GetAccountBalance.
+func (t *AsterTrader) GetBalance() (map[string]interface{}, error) {
+	balance, err := t.GetAccountBalance()
 	if err != nil {
-		logger.Infof("⚠️  Failed to get position information: %v", err)
-		// fallback: use simple calculation when unable to get positions
-		return map[string]interface{}{
-			"totalWalletBalance":    crossWalletBalance,
-			"availableBalance":      availableBalance,
-			"totalUnrealizedProfit": crossUnPnl,
-		}, nil
+		return nil, err
+	}
+	return balance.ToMap(), nil
+}
+
+// assembleAsterBalance maps the balance fields plus the open positions onto the
+// canonical balance map.
+//
+// The previous implementation derived equity as availableBalance +
+// Σ(notional/leverage), which silently drops the margin locked by resting
+// orders and only approximates initial margin. crossWalletBalance is the venue's
+// cash wallet and already includes order margin, so equity is that plus the
+// position PnL.
+func assembleAsterBalance(available, crossWallet, crossUnPnl float64, positions []map[string]interface{}, positionsOK bool) types.AccountBalance {
+	if !positionsOK {
+		// Degraded but identity-preserving: the venue's own PnL figure. Marked
+		// incomplete so consumers can fail closed instead of sizing against it.
+		return types.BalanceFromWallet("aster", crossWallet, crossUnPnl, available).Incomplete()
 	}
 
-	// Critical fix: accumulate real unrealized PnL from positions
-	// Aster's crossUnPnl field is inaccurate, need to recalculate from position data
-	totalMarginUsed := 0.0
-	realUnrealizedPnl := 0.0
+	unrealized := 0.0
+	incomplete := false
 	for _, pos := range positions {
-		markPrice := pos["markPrice"].(float64)
-		quantity := pos["positionAmt"].(float64)
-		if quantity < 0 {
-			quantity = -quantity
+		quantity, okQty := pos["positionAmt"].(float64)
+		unrealizedPnl, okPnL := pos["unRealizedProfit"].(float64)
+		if !okQty || !okPnL {
+			// A field rename must not panic the balance call.
+			incomplete = true
+			continue
 		}
-		unrealizedPnl := pos["unRealizedProfit"].(float64)
-		realUnrealizedPnl += unrealizedPnl
-
-		leverage := 10
-		if lev, ok := pos["leverage"].(float64); ok {
-			leverage = int(lev)
+		if quantity == 0 {
+			continue // ghost entry for an already-closed position
 		}
-		marginUsed := (quantity * markPrice) / float64(leverage)
-		totalMarginUsed += marginUsed
+		unrealized += unrealizedPnl
 	}
 
-	// Aster correct calculation method:
-	// Total equity = available balance + margin used
-	// Wallet balance = total equity - unrealized PnL
-	// Unrealized PnL = calculated from accumulated positions (don't use API's crossUnPnl)
-	totalEquity := availableBalance + totalMarginUsed
-	totalWalletBalance := totalEquity - realUnrealizedPnl
-
-	return map[string]interface{}{
-		"totalWalletBalance":    totalWalletBalance, // Wallet balance (excluding unrealized PnL)
-		"availableBalance":      availableBalance,   // Available balance
-		"totalUnrealizedProfit": realUnrealizedPnl,  // Unrealized PnL (accumulated from positions)
-	}, nil
+	balance := types.BalanceFromWallet("aster", crossWallet, unrealized, available)
+	if incomplete {
+		balance = balance.Incomplete()
+	}
+	return balance
 }
 
 // GetMarketPrice Get market price

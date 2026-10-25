@@ -97,12 +97,16 @@ func (at *AutoTrader) executeOpenLongWithRecord(ctx *kernel.Context, decision *k
 		return fmt.Errorf("failed to get market data for %s: %w", decision.Symbol, err)
 	}
 
-	// Get balance (needed for the risk gate)
-	balance, err := at.trader.GetBalance()
+	// Get the typed account state (needed for the risk gate). Fail closed when a
+	// sub-query failed: sizing against a hole is worse than not trading.
+	account, err := at.trader.GetAccountBalance()
 	if err != nil {
-		return fmt.Errorf("failed to get account balance: %w", err)
+		return fmt.Errorf("failed to get account state: %w", err)
 	}
-	equity, availableBalance := accountEquityAndAvailableFor(balance, decision.Symbol)
+	if !account.Complete {
+		return fmt.Errorf("❌ [RISK GATE] account data incomplete for %s — refusing to size an order", account.Venue)
+	}
+	equity, availableBalance := accountPoolFor(account, decision.Symbol)
 
 	// [CODE ENFORCED] Unified pre-trade risk gate: protections, max positions,
 	// position-value cap, balance sufficiency, min size, max margin usage and
@@ -255,12 +259,16 @@ func (at *AutoTrader) executeOpenShortWithRecord(ctx *kernel.Context, decision *
 		return fmt.Errorf("failed to get market data for %s: %w", decision.Symbol, err)
 	}
 
-	// Get balance (needed for the risk gate)
-	balance, err := at.trader.GetBalance()
+	// Get the typed account state (needed for the risk gate). Fail closed when a
+	// sub-query failed: sizing against a hole is worse than not trading.
+	account, err := at.trader.GetAccountBalance()
 	if err != nil {
-		return fmt.Errorf("failed to get account balance: %w", err)
+		return fmt.Errorf("failed to get account state: %w", err)
 	}
-	equity, availableBalance := accountEquityAndAvailableFor(balance, decision.Symbol)
+	if !account.Complete {
+		return fmt.Errorf("❌ [RISK GATE] account data incomplete for %s — refusing to size an order", account.Venue)
+	}
+	equity, availableBalance := accountPoolFor(account, decision.Symbol)
 
 	// [CODE ENFORCED] Unified pre-trade risk gate: protections, max positions,
 	// position-value cap, balance sufficiency, min size, max margin usage and

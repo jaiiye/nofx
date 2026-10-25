@@ -12,7 +12,7 @@ interface ProtectionEditorProps {
 const DEFAULTS = {
   max_drawdown_pct: 15,
   max_drawdown_lookback_h: 168,
-  drawdown_basis: 'equity' as const,
+  drawdown_basis: 'nav' as const,
   losing_closes_guard_count: 3,
   losing_closes_guard_lookback_h: 6,
   cooldown_minutes: 60,
@@ -34,8 +34,9 @@ const L = {
   maxDrawdown: { zh: '回撤阈值 (%)', en: 'Drawdown limit (%)' },
   lookback: { zh: '回看窗口 (小时)', en: 'Lookback (hours)' },
   basis: { zh: '回撤口径', en: 'Drawdown basis' },
-  basisEquity: { zh: '权益 (含未实现盈亏)', en: 'Equity (incl. unrealized)' },
-  basisBalance: { zh: '余额 (仅已实现)', en: 'Balance (realized only)' },
+  basisNav: { zh: '净值 (现金流中性，推荐)', en: 'NAV (cash-flow neutral, recommended)' },
+  basisEquity: { zh: '权益 (含未实现盈亏，原始)', en: 'Equity (incl. unrealized, raw)' },
+  basisBalance: { zh: '余额 (仅已实现，原始)', en: 'Balance (realized only, raw)' },
   losing: { zh: '连续亏损熔断', en: 'Losing-streak guard' },
   losingDesc: {
     zh: '回看窗口内亏损平仓达到该次数时暂停开仓',
@@ -159,6 +160,7 @@ export function ProtectionEditor({
               color: '#EAECEF',
             }}
           >
+            <option value="nav">{t('basisNav', language)}</option>
             <option value="equity">{t('basisEquity', language)}</option>
             <option value="balance">{t('basisBalance', language)}</option>
           </select>

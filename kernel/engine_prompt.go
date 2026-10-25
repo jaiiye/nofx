@@ -893,11 +893,18 @@ func (e *StrategyEngine) BuildUserPrompt(ctx *Context) string {
 			btcData.CurrentPrice, btcData.PriceChange1h, btcData.PriceChange4h))
 	}
 
-	// Account information
-	sb.WriteString(fmt.Sprintf("Account: Equity %.2f | Balance %.2f (%.1f%%) | PnL %+.2f%% | Margin %.1f%% | Positions %d\n\n",
+	// Account information. "Balance" here used to mean the free margin, which
+	// collided with the wallet balance every other surface calls by that name;
+	// the prompt now names both figures for what they are.
+	availablePct := 0.0
+	if ctx.Account.TotalEquity > 0 {
+		availablePct = ctx.Account.AvailableBalance / ctx.Account.TotalEquity * 100
+	}
+	sb.WriteString(fmt.Sprintf("Account: Equity %.2f | Wallet %.2f | Available Margin %.2f (%.1f%%) | PnL %+.2f%% | Margin %.1f%% | Positions %d\n\n",
 		ctx.Account.TotalEquity,
+		ctx.Account.Wallet,
 		ctx.Account.AvailableBalance,
-		(ctx.Account.AvailableBalance/ctx.Account.TotalEquity)*100,
+		availablePct,
 		ctx.Account.TotalPnLPct,
 		ctx.Account.MarginUsedPct,
 		ctx.Account.PositionCount))

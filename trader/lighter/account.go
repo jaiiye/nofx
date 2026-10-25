@@ -71,8 +71,15 @@ func (t *LighterTraderV2) getFullAccountInfo() (*AccountInfo, error) {
 		}
 	}
 
-	// If no specific match, use the first account
+	// If no specific match, use the first account — but only when none was
+	// configured. A configured sub-account that the venue did not return must
+	// not silently fall back to the primary one: the balance and positions would
+	// then describe a different account than the one we trade.
 	if account == nil {
+		if t.accountIndex != 0 {
+			return nil, fmt.Errorf("account index %d not found among %d account(s) for wallet %s",
+				t.accountIndex, len(allAccounts), t.walletAddr)
+		}
 		account = &allAccounts[0]
 		if account.AccountIndex == 0 && account.Index != 0 {
 			account.AccountIndex = account.Index
@@ -82,31 +89,31 @@ func (t *LighterTraderV2) getFullAccountInfo() (*AccountInfo, error) {
 	return account, nil
 }
 
-// GetBalance Get account balance (implements Trader interface)
+// GetAccountBalance implements types.Trader.
+func (t *LighterTraderV2) GetAccountBalance() (types.AccountBalance, error) {
+	detail, err := t.GetAccountDetail()
+	if err != nil {
+		return types.AccountBalance{}, err
+	}
+	balance := types.BalanceFromEquity("lighter", detail.TotalEquity, detail.UnrealizedPnL, detail.AvailableBalance)
+	balance.MarginUsed = detail.MarginUsed
+	return balance, nil
+}
+
+// GetBalance renders the compatibility map. Prefer GetAccountBalance.
 func (t *LighterTraderV2) GetBalance() (map[string]interface{}, error) {
-	balance, err := t.GetAccountBalance()
+	detail, err := t.GetAccountDetail()
 	if err != nil {
 		return nil, err
 	}
-
-	// Calculate wallet balance (total equity - unrealized PnL)
-	walletBalance := balance.TotalEquity - balance.UnrealizedPnL
-
-	// Return in standard format compatible with auto_types.go
-	// (totalEquity = totalWalletBalance + totalUnrealizedProfit)
-	return map[string]interface{}{
-		"totalWalletBalance":    walletBalance,           // Wallet balance (excluding unrealized PnL)
-		"totalUnrealizedProfit": balance.UnrealizedPnL,   // Unrealized PnL
-		"availableBalance":      balance.AvailableBalance, // Available balance
-		// Keep additional fields for reference
-		"total_equity":       balance.TotalEquity,
-		"margin_used":        balance.MarginUsed,
-		"maintenance_margin": balance.MaintenanceMargin,
-	}, nil
+	balance := types.BalanceFromEquity("lighter", detail.TotalEquity, detail.UnrealizedPnL, detail.AvailableBalance)
+	m := balance.ToMap()
+	m["maintenance_margin"] = detail.MaintenanceMargin
+	return m, nil
 }
 
-// GetAccountBalance Get detailed account balance information
-func (t *LighterTraderV2) GetAccountBalance() (*AccountBalance, error) {
+// GetAccountDetail returns Lighter's raw balance breakdown.
+func (t *LighterTraderV2) GetAccountDetail() (*AccountDetail, error) {
 	// Get full account info from Lighter API
 	accountInfo, err := t.getFullAccountInfo()
 	if err != nil {
@@ -158,7 +165,7 @@ func (t *LighterTraderV2) GetAccountBalance() (*AccountBalance, error) {
 		}
 	}
 
-	balance := &AccountBalance{
+	balance := &AccountDetail{
 		TotalEquity:       totalEquity,
 		AvailableBalance:  availableBalance,
 		MarginUsed:        marginUsed,
@@ -221,7 +228,7 @@ func (t *LighterTraderV2) GetPositionsRaw(symbol string) ([]Position, error) {
 		}
 
 		// Parse fields from Lighter API response
-		size, _ := strconv.ParseFloat(lPos.Position, 64)        // API returns "position" not "size"
+		size, _ := strconv.ParseFloat(lPos.Position, 64)            // API returns "position" not "size"
 		entryPrice, _ := strconv.ParseFloat(lPos.AvgEntryPrice, 64) // API returns "avg_entry_price"
 		positionValue, _ := strconv.ParseFloat(lPos.PositionValue, 64)
 		liqPrice, _ := strconv.ParseFloat(lPos.LiquidationPrice, 64)

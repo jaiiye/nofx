@@ -11,14 +11,14 @@ import (
 	"time"
 )
 
-// GetBalance gets account balance from Indodax
-func (t *IndodaxTrader) GetBalance() (map[string]interface{}, error) {
+// GetAccountBalance gets the typed account state from Indodax.
+func (t *IndodaxTrader) GetAccountBalance() (types.AccountBalance, error) {
 	// Check cache
 	t.cacheMutex.RLock()
 	if t.cachedBalance != nil && time.Since(t.balanceCacheTime) < t.cacheDuration {
 		cached := t.cachedBalance
 		t.cacheMutex.RUnlock()
-		return cached, nil
+		return types.FromMap(cached), nil
 	}
 	t.cacheMutex.RUnlock()
 
@@ -27,7 +27,7 @@ func (t *IndodaxTrader) GetBalance() (map[string]interface{}, error) {
 
 	data, err := t.doPrivateRequest(params)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get account info: %w", err)
+		return types.AccountBalance{}, fmt.Errorf("failed to get account info: %w", err)
 	}
 
 	var result struct {
@@ -40,46 +40,90 @@ func (t *IndodaxTrader) GetBalance() (map[string]interface{}, error) {
 	}
 
 	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse balance: %w", err)
+		return types.AccountBalance{}, fmt.Errorf("failed to parse balance: %w", err)
 	}
 
 	// Calculate total balance in IDR
 	idrBalance := parseFloat(result.Balance["idr"])
 	idrHold := parseFloat(result.BalanceHold["idr"])
-	totalIDR := idrBalance + idrHold
 
-	balance := map[string]interface{}{
-		"totalWalletBalance":    totalIDR,
-		"availableBalance":      idrBalance,
-		"totalUnrealizedProfit": 0.0,
-		"totalEquity":           totalIDR,
-		"balance":               totalIDR,
-		"idr_balance":           idrBalance,
-		"idr_hold":              idrHold,
-		"currency":              "IDR",
-		"user_id":               result.UserID,
-		"server_time":           result.ServerTime,
+	// Crypto holdings are part of the account's value. Leaving them out made
+	// every spot buy look like an equal-sized loss (IDR down, equity unchanged)
+	// even though GetPositions reports the holding at market.
+	cryptoValue := 0.0
+	if positions, posErr := t.GetPositions(); posErr != nil {
+		logger.Infof("[Indodax] Unable to value crypto holdings: %v", posErr)
+	} else {
+		for _, p := range positions {
+			if v, ok := p["notionalValue"].(float64); ok {
+				cryptoValue += v
+			}
+		}
 	}
 
-	// Add individual crypto balances
+	balance := assembleIndodaxBalance(idrBalance, idrHold, cryptoValue)
+
+	// The compatibility map also carries the per-currency holdings: the
+	// close-all path sizes a sell from balance_<coin>, and that is not part of
+	// the account identity so the typed struct does not model it.
+	cached := balance.ToMap()
 	for currency, amount := range result.Balance {
 		if currency != "idr" {
-			balance["balance_"+currency] = parseFloat(amount)
+			cached["balance_"+currency] = parseFloat(amount)
 		}
 	}
 	for currency, amount := range result.BalanceHold {
 		if currency != "idr" {
-			balance["hold_"+currency] = parseFloat(amount)
+			cached["hold_"+currency] = parseFloat(amount)
 		}
 	}
 
 	// Update cache
 	t.cacheMutex.Lock()
-	t.cachedBalance = balance
+	t.cachedBalance = cached
 	t.balanceCacheTime = time.Now()
 	t.cacheMutex.Unlock()
 
 	return balance, nil
+}
+
+// GetBalance renders the compatibility map. Prefer GetAccountBalance.
+func (t *IndodaxTrader) GetBalance() (map[string]interface{}, error) {
+	t.cacheMutex.RLock()
+	cached := t.cachedBalance
+	fresh := cached != nil && time.Since(t.balanceCacheTime) < t.cacheDuration
+	t.cacheMutex.RUnlock()
+	if fresh {
+		return cached, nil
+	}
+
+	balance, err := t.GetAccountBalance()
+	if err != nil {
+		return nil, err
+	}
+	m := balance.ToMap()
+	t.cacheMutex.RLock()
+	if cached := t.cachedBalance; cached != nil {
+		for k, v := range cached {
+			if strings.HasPrefix(k, "balance_") || strings.HasPrefix(k, "hold_") {
+				m[k] = v
+			}
+		}
+	}
+	t.cacheMutex.RUnlock()
+	return m, nil
+}
+
+// assembleIndodaxBalance builds the canonical balance map from the IDR cash and
+// the mark-to-market value of the crypto holdings.
+//
+// Spot has no entry-price tracking, so the non-cash side is reported as
+// unrealized. That keeps equity == wallet + unrealized and makes the equity
+// snapshot's wallet column stay "cash" (it used to be the whole equity, so the
+// cash-flow baseline could not tell a buy from a withdrawal).
+func assembleIndodaxBalance(idrBalance, idrHold, cryptoValue float64) types.AccountBalance {
+	totalIDR := idrBalance + idrHold
+	return types.BalanceFromWallet("indodax", totalIDR, cryptoValue, idrBalance)
 }
 
 // GetPositions returns currently held crypto balances as "positions"

@@ -20,10 +20,13 @@ func (at *AutoTrader) saveEquitySnapshot(ctx *kernel.Context) {
 	}
 
 	snapshot := &store.EquitySnapshot{
-		TraderID:      at.id,
-		Timestamp:     time.Now().UTC(),
-		TotalEquity:   ctx.Account.TotalEquity,
-		Balance:       ctx.Account.TotalEquity - ctx.Account.UnrealizedPnL,
+		TraderID:    at.id,
+		Timestamp:   time.Now().UTC(),
+		TotalEquity: ctx.Account.TotalEquity,
+		// The wallet comes from the connector rather than being re-derived here:
+		// deriving it from the rounded prompt values silently moved the cash
+		// column whenever the two figures came from different sources.
+		Balance:       ctx.Account.Wallet,
 		UnrealizedPnL: ctx.Account.UnrealizedPnL,
 		PositionCount: ctx.Account.PositionCount,
 		MarginUsedPct: ctx.Account.MarginUsedPct,
@@ -98,60 +101,28 @@ func (at *AutoTrader) GetStatus() map[string]interface{} {
 	return result
 }
 
-// GetAccountInfo gets account information (for API)
+// GetAccountInfo gets account information (for API). It is read-only: unlike
+// the trading cycle it does not run reconcilePnLBaseline, so after a deposit the
+// figures stay on the stored baseline until the next cycle reconciles.
 func (at *AutoTrader) GetAccountInfo() (map[string]interface{}, error) {
-	balance, err := at.trader.GetBalance()
+	snapshot, err := at.readAccountSnapshot()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get balance: %w", err)
+		return nil, fmt.Errorf("failed to get account state: %w", err)
 	}
+	account := snapshot.Balance
+	positions := snapshot.Positions
 
-	// Get account fields
-	totalWalletBalance := 0.0
-	totalUnrealizedProfit := 0.0
-	availableBalance := 0.0
-	totalEquity := 0.0
+	totalWalletBalance := account.Wallet
+	totalUnrealizedProfit := account.UnrealizedPnL
+	availableBalance := account.AvailableMargin
+	totalEquity := account.Equity
 
-	if wallet, ok := balance["totalWalletBalance"].(float64); ok {
-		totalWalletBalance = wallet
-	}
-	if unrealized, ok := balance["totalUnrealizedProfit"].(float64); ok {
-		totalUnrealizedProfit = unrealized
-	}
-	if avail, ok := balance["availableBalance"].(float64); ok {
-		availableBalance = avail
-	}
-
-	// Use totalEquity directly if provided by trader (more accurate)
-	if eq, ok := balance["totalEquity"].(float64); ok && eq > 0 {
-		totalEquity = eq
-	} else {
-		// Fallback: Total Equity = Wallet balance + Unrealized profit
-		totalEquity = totalWalletBalance + totalUnrealizedProfit
-	}
-
-	// Get positions to calculate total margin
-	positions, err := at.trader.GetPositions()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get positions: %w", err)
-	}
-
-	totalMarginUsed := 0.0
+	totalMarginUsed := estimateMarginUsed(positions)
 	totalUnrealizedPnLCalculated := 0.0
 	for _, pos := range positions {
-		markPrice := pos["markPrice"].(float64)
-		quantity := pos["positionAmt"].(float64)
-		if quantity < 0 {
-			quantity = -quantity
+		if pnl, ok := pos["unRealizedProfit"].(float64); ok {
+			totalUnrealizedPnLCalculated += pnl
 		}
-		unrealizedPnl := pos["unRealizedProfit"].(float64)
-		totalUnrealizedPnLCalculated += unrealizedPnl
-
-		leverage := 10
-		if lev, ok := pos["leverage"].(float64); ok {
-			leverage = int(lev)
-		}
-		marginUsed := (quantity * markPrice) / float64(leverage)
-		totalMarginUsed += marginUsed
 	}
 
 	// Verify unrealized P&L consistency (API value vs calculated from positions)
@@ -177,7 +148,9 @@ func (at *AutoTrader) GetAccountInfo() (map[string]interface{}, error) {
 		"total_equity":      totalEquity,           // Account equity = wallet + unrealized
 		"wallet_balance":    totalWalletBalance,    // Wallet balance (excluding unrealized P&L)
 		"unrealized_profit": totalUnrealizedProfit, // Unrealized P&L (official value from exchange API)
-		"available_balance": availableBalance,      // Available balance
+		"available_balance": availableBalance,      // Available margin
+		"complete":          account.Complete,
+		"venue":             account.Venue,
 
 		// P&L statistics
 		"total_pnl":       totalPnL,          // Total P&L = equity - initial

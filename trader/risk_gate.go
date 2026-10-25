@@ -251,52 +251,6 @@ func (at *AutoTrader) takerFeeRate() float64 {
 	return connector.FeeModelFor(at.exchange).TakerRate()
 }
 
-// accountEquityAndAvailableFor returns the equity and available balance for the
-// margin pool that the given symbol settles against.
-//
-// HIP-3 (xyz) assets do NOT always have their own pool: it depends on the
-// account's abstraction mode (Hyperliquid docs, "Account abstraction modes"):
-//   - Unified account (the default) and Portfolio margin: one USDC balance backs
-//     validator-operated perps, XYZ perps and spot alike, and per-dex user states
-//     are explicitly "not meaningful" — the venue reports them as zero.
-//   - Manual / Standard: perp, spot and each DEX keep separate balances.
-//
-// So an empty xyz state must never be read as "no margin": only a POSITIVE dex
-// balance proves a separate pool is in use, and only then is it authoritative.
-// Otherwise the main pool's numbers stand, which is what the venue itself checks
-// for a unified account.
-func accountEquityAndAvailableFor(balance map[string]interface{}, symbol string) (equity, available float64) {
-	equity, available = accountEquityAndAvailable(balance)
-	if !market.IsXyzDexAsset(symbol) {
-		return equity, available
-	}
-	if xyzAvailable, ok := balance["xyzDexAvailable"].(float64); ok && xyzAvailable > 0 {
-		available = xyzAvailable
-	}
-	if xyzEquity, ok := balance["xyzDexBalance"].(float64); ok && xyzEquity > 0 {
-		// Position-value caps derive from equity: for a standard-mode xyz order
-		// that has to be the dex's own collateral, not the combined account.
-		equity = xyzEquity
-	}
-	return equity, available
-}
-
-// accountEquityAndAvailable extracts equity (with the same fallbacks the
-// trading context uses) and available balance from an exchange balance map.
-func accountEquityAndAvailable(balance map[string]interface{}) (equity, available float64) {
-	if avail, ok := balance["availableBalance"].(float64); ok {
-		available = avail
-	}
-	if eq, ok := balance["totalEquity"].(float64); ok && eq > 0 {
-		equity = eq
-	} else if eq, ok := balance["totalWalletBalance"].(float64); ok && eq > 0 {
-		equity = eq
-	} else {
-		equity = available
-	}
-	return equity, available
-}
-
 // hasPosition reports whether positions already contains symbol on the side
 // implied by action.
 func hasPosition(positions []map[string]interface{}, symbol, action string) bool {

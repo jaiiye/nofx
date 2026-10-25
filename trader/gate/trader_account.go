@@ -10,49 +10,65 @@ import (
 	"github.com/gateio/gateapi-go/v6"
 )
 
-// GetBalance retrieves account balance
-func (t *GateTrader) GetBalance() (map[string]interface{}, error) {
+// GetAccountBalance retrieves the typed account state.
+func (t *GateTrader) GetAccountBalance() (types.AccountBalance, error) {
 	// Check cache
 	t.balanceCacheMutex.RLock()
 	if t.cachedBalance != nil && time.Since(t.balanceCacheTime) < t.cacheDuration {
 		cached := t.cachedBalance
 		t.balanceCacheMutex.RUnlock()
-		return cached, nil
+		return types.FromMap(cached), nil
 	}
 	t.balanceCacheMutex.RUnlock()
 
 	// Fetch from API
 	accounts, _, err := t.client.FuturesApi.ListFuturesAccounts(t.ctx, "usdt")
 	if err != nil {
-		return nil, fmt.Errorf("failed to get balance: %w", err)
+		return types.AccountBalance{}, fmt.Errorf("failed to get balance: %w", err)
 	}
 
 	total, err := types.ParseFloatField("total", accounts.Total)
 	if err != nil {
-		return nil, err
+		return types.AccountBalance{}, err
 	}
 	available, err := types.ParseFloatField("available", accounts.Available)
 	if err != nil {
-		return nil, err
+		return types.AccountBalance{}, err
 	}
 	unrealizedPnl, err := types.ParseFloatField("unrealisedPnl", accounts.UnrealisedPnl)
 	if err != nil {
-		return nil, err
+		return types.AccountBalance{}, err
 	}
 
-	result := map[string]interface{}{
-		"totalWalletBalance":    total,
-		"availableBalance":      available,
-		"totalUnrealizedProfit": unrealizedPnl,
-	}
+	balance := balanceFromAccountFields(total, available, unrealizedPnl)
 
 	// Update cache
 	t.balanceCacheMutex.Lock()
-	t.cachedBalance = result
+	t.cachedBalance = balance.ToMap()
 	t.balanceCacheTime = time.Now()
 	t.balanceCacheMutex.Unlock()
 
-	return result, nil
+	return balance, nil
+}
+
+// GetBalance renders the compatibility map. Prefer GetAccountBalance.
+func (t *GateTrader) GetBalance() (map[string]interface{}, error) {
+	balance, err := t.GetAccountBalance()
+	if err != nil {
+		return nil, err
+	}
+	return balance.ToMap(), nil
+}
+
+// balanceFromAccountFields is the pure mapping from Gate's futures account
+// fields to the canonical balance map.
+func balanceFromAccountFields(total, available, unrealizedPnl float64) types.AccountBalance {
+	// Gate's `total` is the account equity (it already includes the unrealised
+	// PnL); the cash wallet is that minus the PnL. Reporting `total` as the
+	// wallet made the loop's "wallet + unrealized" fallback count the PnL twice,
+	// while the risk gate read it as equity — the two consumers disagreed on the
+	// same account.
+	return types.BalanceFromEquity("gate", total, unrealizedPnl, available)
 }
 
 // GetPositions retrieves all open positions

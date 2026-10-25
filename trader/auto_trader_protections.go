@@ -17,14 +17,18 @@ func (at *AutoTrader) CheckOpenProtections(symbol string) string {
 	return at.checkOpenProtections(symbol)
 }
 
-// drawdownPeakCurrent returns the peak and latest value of the equity
-// curve selected by the protection's DrawdownBasis ("equity" watches
-// total equity incl. unrealized PnL, "balance" watches realized balance).
+// drawdownPeakCurrent returns the peak and latest value of the curve selected
+// by the protection's DrawdownBasis: "nav" (cash-flow neutral balance/baseline
+// index), "equity" (wallet + unrealized) or "balance" (wallet only).
 func (at *AutoTrader) drawdownPeakCurrent(basis string, since time.Time) (peak, current float64, ok bool, err error) {
-	if basis == store.DrawdownBasisBalance {
+	switch basis {
+	case store.DrawdownBasisBalance:
 		return at.store.Equity().PeakAndCurrentBalance(at.id, since)
+	case store.DrawdownBasisNAV:
+		return at.store.Equity().PeakAndCurrentNAV(at.id, since)
+	default:
+		return at.store.Equity().PeakAndCurrentEquity(at.id, since)
 	}
-	return at.store.Equity().PeakAndCurrentEquity(at.id, since)
 }
 
 // checkOpenProtections evaluates the code-enforced circuit breakers
@@ -81,6 +85,10 @@ func (at *AutoTrader) evaluateProtections(symbol string) (string, bool) {
 		} else if ok && peak > 0 {
 			ddPct := (peak - current) / peak * 100
 			if ddPct > p.MaxDrawdownPct {
+				if p.DrawdownBasis == store.DrawdownBasisNAV {
+					return fmt.Sprintf("max drawdown halt (nav): index %.4f is %.1f%% below peak %.4f (limit %.1f%%)",
+						current, ddPct, peak, p.MaxDrawdownPct), hadError
+				}
 				return fmt.Sprintf("max drawdown halt (%s): %.2f is %.1f%% below peak %.2f (limit %.1f%%)",
 					p.DrawdownBasis, current, ddPct, peak, p.MaxDrawdownPct), hadError
 			}

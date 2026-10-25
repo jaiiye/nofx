@@ -344,19 +344,14 @@ func NewAutoTrader(config AutoTraderConfig, st *store.Store, userID string) (*Au
 	// Validate initial balance configuration, auto-fetch from exchange if 0
 	if config.InitialBalance <= 0 {
 		logger.Infof("📊 [%s] Initial balance not set, attempting to fetch current balance from exchange...", config.Name)
-		account, err := trader.GetBalance()
+		// Use the typed API: the old key list omitted totalEquity, so the anchor
+		// was the cash wallet on some venues and the mark-to-market equity on
+		// others — two traders on the same venue started from different bases.
+		account, err := trader.GetAccountBalance()
 		if err != nil {
 			return nil, fmt.Errorf("initial balance not set and unable to fetch balance from exchange: %w", err)
 		}
-		// Try multiple balance field names (different exchanges return different formats)
-		balanceKeys := []string{"total_equity", "totalWalletBalance", "wallet_balance", "totalEq", "balance"}
-		var foundBalance float64
-		for _, key := range balanceKeys {
-			if balance, ok := account[key].(float64); ok && balance > 0 {
-				foundBalance = balance
-				break
-			}
-		}
+		foundBalance := account.Equity
 		if foundBalance > 0 {
 			config.InitialBalance = foundBalance
 			logger.Infof("✓ [%s] Auto-fetched initial balance: %.2f USDT", config.Name, foundBalance)

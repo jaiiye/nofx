@@ -10,23 +10,51 @@ import (
 	"time"
 )
 
-// GetBalance gets account balance
-func (t *OKXTrader) GetBalance() (map[string]interface{}, error) {
+// GetAccountBalance gets the typed account state.
+func (t *OKXTrader) GetAccountBalance() (types.AccountBalance, error) {
 	// Check cache
 	t.balanceCacheMutex.RLock()
 	if t.cachedBalance != nil && time.Since(t.balanceCacheTime) < t.cacheDuration {
+		cached := t.cachedBalance
 		t.balanceCacheMutex.RUnlock()
 		logger.Infof("✓ Using cached OKX account balance")
-		return t.cachedBalance, nil
+		return types.FromMap(cached), nil
 	}
 	t.balanceCacheMutex.RUnlock()
 
 	logger.Infof("🔄 Calling OKX API to get account balance...")
 	data, err := t.doRequest("GET", okxAccountPath, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get account balance: %w", err)
+		return types.AccountBalance{}, fmt.Errorf("failed to get account balance: %w", err)
 	}
 
+	balance, err := parseAccountBalance(data)
+	if err != nil {
+		return types.AccountBalance{}, err
+	}
+
+	// Update cache
+	t.balanceCacheMutex.Lock()
+	t.cachedBalance = balance.ToMap()
+	t.balanceCacheTime = time.Now()
+	t.balanceCacheMutex.Unlock()
+
+	return balance, nil
+}
+
+// GetBalance renders the compatibility map. Prefer GetAccountBalance.
+func (t *OKXTrader) GetBalance() (map[string]interface{}, error) {
+	balance, err := t.GetAccountBalance()
+	if err != nil {
+		return nil, err
+	}
+	return balance.ToMap(), nil
+}
+
+// parseAccountBalance maps the raw /api/v5/account/balance payload onto the
+// typed account state. Extracted from GetAccountBalance so the mapping is
+// testable without HTTP.
+func parseAccountBalance(data []byte) (types.AccountBalance, error) {
 	var balances []struct {
 		TotalEq string `json:"totalEq"`
 		AdjEq   string `json:"adjEq"`
@@ -42,49 +70,59 @@ func (t *OKXTrader) GetBalance() (map[string]interface{}, error) {
 	}
 
 	if err := json.Unmarshal(data, &balances); err != nil {
-		return nil, fmt.Errorf("failed to parse balance data: %w", err)
+		return types.AccountBalance{}, fmt.Errorf("failed to parse balance data: %w", err)
 	}
 
 	if len(balances) == 0 {
-		return nil, fmt.Errorf("no balance data received")
+		return types.AccountBalance{}, fmt.Errorf("no balance data received")
 	}
 
 	balance := balances[0]
 
-	// Find USDT balance
-	var usdtAvail, usdtUPL float64
+	// Sum unrealized PnL across every currency. OKX defines totalEq = Σ eq and
+	// eq = cashBal + upl, so totalEq ALREADY includes the unrealized PnL.
+	// Reporting totalEq as the wallet made the trading loop's
+	// "wallet + unrealized" fallback count the USDT leg twice, inflating the
+	// equity the AI sized against.
+	var totalUPL, usdtUPL, usdtAvail float64
+	foundUSDT := false
 	for _, detail := range balance.Details {
-		if detail.Ccy == "USDT" {
-			if usdtAvail, err = types.ParseFloatField("availBal", detail.AvailBal); err != nil {
-				return nil, err
-			}
-			if usdtUPL, err = types.ParseFloatField("upl", detail.UPL); err != nil {
-				return nil, err
-			}
-			break
+		upl, parseErr := types.ParseFloatField("upl", detail.UPL)
+		if parseErr != nil {
+			return types.AccountBalance{}, parseErr
 		}
+		totalUPL += upl
+
+		if detail.Ccy != "USDT" {
+			continue
+		}
+		foundUSDT = true
+		avail, parseErr := types.ParseFloatField("availBal", detail.AvailBal)
+		if parseErr != nil {
+			return types.AccountBalance{}, parseErr
+		}
+		usdtAvail = avail
+		usdtUPL = upl
+	}
+	if !foundUSDT {
+		// A silent zero here used to zero out equity, PnL% and available margin
+		// at once, which reads as "no money" rather than "we could not look".
+		return types.AccountBalance{}, fmt.Errorf("okx: USDT balance detail not found (currencies seen: %d)", len(balance.Details))
 	}
 
 	totalEq, err := types.ParseFloatField("totalEq", balance.TotalEq)
 	if err != nil {
-		return nil, err
+		return types.AccountBalance{}, err
+	}
+	adjEq, err := types.ParseFloatField("adjEq", balance.AdjEq)
+	if err != nil {
+		return types.AccountBalance{}, err
 	}
 
-	result := map[string]interface{}{
-		"totalWalletBalance":    totalEq,
-		"availableBalance":      usdtAvail,
-		"totalUnrealizedProfit": usdtUPL,
-	}
+	logger.Infof("✓ OKX balance: Total equity=%.2f, Wallet=%.2f, Available(USDT)=%.2f, Unrealized PnL=%.2f (USDT leg %.2f, adjEq %.2f)",
+		totalEq, totalEq-totalUPL, usdtAvail, totalUPL, usdtUPL, adjEq)
 
-	logger.Infof("✓ OKX balance: Total equity=%.2f, Available=%.2f, Unrealized PnL=%.2f", totalEq, usdtAvail, usdtUPL)
-
-	// Update cache
-	t.balanceCacheMutex.Lock()
-	t.cachedBalance = result
-	t.balanceCacheTime = time.Now()
-	t.balanceCacheMutex.Unlock()
-
-	return result, nil
+	return types.BalanceFromEquity("okx", totalEq, totalUPL, usdtAvail), nil
 }
 
 // SetMarginMode configures the margin mode (cross/isolated) that will be applied

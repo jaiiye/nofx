@@ -66,17 +66,16 @@ func (s *Server) handleSyncBalance(c *gin.Context) {
 		return
 	}
 
-	// Query actual balance
-	balanceInfo, balanceErr := tempTrader.GetBalance()
+	// Query actual balance. The typed API is the authority on what the venue's
+	// fields mean, so the anchor is always the mark-to-market equity.
+	account, balanceErr := tempTrader.GetAccountBalance()
 	if balanceErr != nil {
 		logger.Infof("⚠️ Failed to query exchange balance: %v", balanceErr)
 		SafeInternalError(c, "Failed to query balance", balanceErr)
 		return
 	}
-
-	// Extract total equity (for P&L calculation, we need total account value, not available balance)
-	actualBalance, found := extractExchangeTotalEquity(balanceInfo)
-	if !found {
+	actualBalance := account.Equity
+	if actualBalance <= 0 {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Unable to get total equity"})
 		return
 	}
@@ -86,7 +85,10 @@ func (s *Server) handleSyncBalance(c *gin.Context) {
 	oldBalance := traderConfig.InitialBalance
 
 	// Smart balance change detection
-	changePercent := ((actualBalance - oldBalance) / oldBalance) * 100
+	changePercent := 0.0
+	if oldBalance > 0 {
+		changePercent = ((actualBalance - oldBalance) / oldBalance) * 100
+	}
 	changeType := "increase"
 	if changePercent < 0 {
 		changeType = "decrease"

@@ -211,41 +211,71 @@ func (s *SimulatedTrader) GetPositions() ([]map[string]interface{}, error) {
 	return out, nil
 }
 
-// GetBalance returns a virtual balance marked to market. Realized PnL and
-// accumulated fees flow into the wallet, and the available balance excludes
-// the margin currently backing open positions — keeping the risk gate's
+// GetAccountBalance returns a virtual balance marked to market. Realized PnL and
+// accumulated fees flow into the wallet, and the available balance excludes the
+// margin currently backing open positions — keeping the risk gate's
 // balance-sufficiency check meaningful in paper mode.
-func (s *SimulatedTrader) GetBalance() (map[string]interface{}, error) {
+//
+// The wallet and the position set are captured under one lock and marked with
+// one price snapshot, so a single call cannot mix an old wallet with new
+// positions. Margin is charged on the mark notional (what a venue actually
+// reserves), not on the entry notional, which used to overstate the available
+// balance on a position in profit.
+func (s *SimulatedTrader) GetAccountBalance() (types.AccountBalance, error) {
+	type positionSnapshot struct {
+		symbol   string
+		side     string
+		quantity float64
+		entry    float64
+		leverage int
+	}
+
 	s.mu.Lock()
-	var marginUsed float64
+	wallet := s.initial + s.realizedPnL - s.feesPaid
+	positions := make([]positionSnapshot, 0, len(s.positions))
 	for _, p := range s.positions {
+		positions = append(positions, positionSnapshot{
+			symbol: p.symbol, side: p.side, quantity: p.quantity, entry: p.entry, leverage: p.leverage,
+		})
+	}
+	s.mu.Unlock()
+
+	var unrealized, marginUsed float64
+	for _, p := range positions {
+		dir := 1.0
+		if strings.EqualFold(p.side, "SHORT") {
+			dir = -1
+		}
+		mark := p.entry
+		if price, err := s.marketPrice(p.symbol); err == nil && price > 0 {
+			mark = price
+		}
+		unrealized += (mark - p.entry) * p.quantity * dir
+
 		lev := float64(p.leverage)
 		if lev <= 0 {
 			lev = 1
 		}
-		marginUsed += p.entry * p.quantity / lev
+		marginUsed += mark * p.quantity / lev
 	}
-	wallet := s.initial + s.realizedPnL - s.feesPaid
-	s.mu.Unlock()
 
-	var unrealized float64
-	positions, _ := s.GetPositions()
-	for _, p := range positions {
-		if v, ok := p["unRealizedProfit"].(float64); ok {
-			unrealized += v
-		}
-	}
-	equity := wallet + unrealized
-	available := equity - marginUsed
+	balance := types.BalanceFromWallet("paper", wallet, unrealized, 0)
+	balance.MarginUsed = marginUsed
+	available := balance.Equity - marginUsed
 	if available < 0 {
 		available = 0
 	}
-	return map[string]interface{}{
-		"totalEquity":           equity,
-		"totalWalletBalance":    wallet,
-		"availableBalance":      available,
-		"totalUnrealizedProfit": unrealized,
-	}, nil
+	balance.AvailableMargin = available
+	return balance, nil
+}
+
+// GetBalance returns the compatibility map. Prefer GetAccountBalance.
+func (s *SimulatedTrader) GetBalance() (map[string]interface{}, error) {
+	balance, err := s.GetAccountBalance()
+	if err != nil {
+		return nil, err
+	}
+	return balance.ToMap(), nil
 }
 
 func (s *SimulatedTrader) SetLeverage(symbol string, leverage int) error {

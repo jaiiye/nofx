@@ -5,6 +5,7 @@ import (
 	"math"
 	"nofx/kernel"
 	"nofx/logger"
+	"nofx/trader/connector"
 	"time"
 )
 
@@ -405,14 +406,18 @@ func (at *AutoTrader) checkAndExecuteStopLoss() {
 				logger.Errorf("[Grid] Failed to execute stop loss for level %d: %v", i, closeErr)
 			} else {
 				level.State = "stopped"
-				realizedLoss := -lossPct * level.AllocatedUSD / 100
+				// AllocatedUSD is the level's MARGIN (see the order sizing above,
+				// which multiplies it by the leverage to reach the notional), so
+				// the percentage has to be applied to the notional, and both legs
+				// pay taker fees. The previous formula used the margin and no
+				// fees, understating the loss by roughly the leverage factor.
+				notional := level.AllocatedUSD * float64(gridConfig.Leverage)
+				feeRate := connector.FeeModelFor(at.exchange).TakerRate()
+				realizedLoss := -lossPct/100*notional - feeRate*notional*2
 				level.UnrealizedPnL = realizedLoss
 				at.gridState.TotalTrades++
-				// Update daily PnL tracking (lock already held, update directly)
-				at.gridState.DailyPnL += realizedLoss
-				at.gridState.TotalProfit += realizedLoss
-				logger.Infof("[Grid] Stop loss executed: Level %d closed at $%.2f (loss %.2f%%)",
-					i, currentPrice, lossPct)
+				logger.Infof("[Grid] Stop loss executed: Level %d closed at $%.2f (loss %.2f%%, est. %.2f USDT)",
+					i, currentPrice, lossPct, realizedLoss)
 			}
 		}
 	}

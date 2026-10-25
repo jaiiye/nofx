@@ -42,8 +42,15 @@ type TradeRecord struct {
 // Trader Unified trader interface
 // Supports multiple trading platforms (Binance, Hyperliquid, etc.)
 type Trader interface {
-	// GetBalance Get account balance
+	// GetBalance Get account balance as a compatibility map. Prefer
+	// GetAccountBalance: the map's keys are aliases and every consumer used to
+	// interpret them differently.
 	GetBalance() (map[string]interface{}, error)
+
+	// GetAccountBalance returns the typed account state. The connectors are the
+	// authority on their venue's field semantics; consumers must not re-derive
+	// equity from the map themselves. Enforces equity == wallet + unrealized.
+	GetAccountBalance() (AccountBalance, error)
 
 	// GetPositions Get all positions
 	GetPositions() ([]map[string]interface{}, error)

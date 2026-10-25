@@ -175,7 +175,10 @@ func probeExchangeAccountState(exchangeCfg *store.Exchange, userID string) Excha
 		return state
 	}
 
-	balanceInfo, err := tempTrader.GetBalance()
+	// Prefer the typed API: the map's keys are aliases, and reading a single key
+	// made the panel show a different equity from the one the AI and the risk
+	// gate use (some venues only return a cash wallet).
+	account, err := tempTrader.GetAccountBalance()
 	if err != nil {
 		status, code, message := classifyExchangeProbeError(err)
 		state.Status = status
@@ -185,38 +188,12 @@ func probeExchangeAccountState(exchangeCfg *store.Exchange, userID string) Excha
 		return state
 	}
 
-	totalEquity, totalFound := extractFirstNumeric(balanceInfo,
-		"total_equity", "totalEquity", "totalWalletBalance", "wallet_balance", "totalEq", "balance")
-	availableBalance, availableFound := extractFirstNumeric(balanceInfo,
-		"available_balance", "availableBalance", "available")
-
-	if !totalFound && availableFound {
-		totalEquity = availableBalance
-		totalFound = true
-	}
-
-	if !availableFound && totalFound {
-		availableBalance = totalEquity
-		availableFound = true
-	}
-
-	if !totalFound && !availableFound {
-		state.Status = exchangeAccountStatusUnavailable
-		state.ErrorCode = "BALANCE_NOT_FOUND"
-		state.ErrorMessage = "Connected but no balance fields were returned"
-		return state
-	}
-
 	state.Status = exchangeAccountStatusOK
-	if totalFound {
-		state.TotalEquity = totalEquity
-		state.DisplayBalance = formatDisplayBalance(totalEquity, state.Asset)
-	}
-	if availableFound {
-		state.AvailableBalance = availableBalance
-		if state.DisplayBalance == "" {
-			state.DisplayBalance = formatDisplayBalance(availableBalance, state.Asset)
-		}
+	state.TotalEquity = account.Equity
+	state.AvailableBalance = account.AvailableMargin
+	state.DisplayBalance = formatDisplayBalance(account.Equity, state.Asset)
+	if state.DisplayBalance == "" {
+		state.DisplayBalance = formatDisplayBalance(account.AvailableMargin, state.Asset)
 	}
 
 	return state
@@ -261,40 +238,6 @@ func buildExchangeProbeTrader(exchangeCfg *store.Exchange, userID string) (trade
 	default:
 		return nil, fmt.Errorf("unsupported exchange type: %s", exchangeCfg.ExchangeType)
 	}
-}
-
-func extractExchangeTotalEquity(balanceInfo map[string]interface{}) (float64, bool) {
-	return extractFirstNumeric(balanceInfo,
-		"total_equity", "totalEquity", "totalWalletBalance", "wallet_balance", "totalEq", "balance")
-}
-
-func extractFirstNumeric(values map[string]interface{}, keys ...string) (float64, bool) {
-	for _, key := range keys {
-		raw, ok := values[key]
-		if !ok {
-			continue
-		}
-
-		switch v := raw.(type) {
-		case float64:
-			return v, true
-		case float32:
-			return float64(v), true
-		case int:
-			return float64(v), true
-		case int64:
-			return float64(v), true
-		case int32:
-			return float64(v), true
-		case string:
-			parsed, err := strconv.ParseFloat(v, 64)
-			if err == nil {
-				return parsed, true
-			}
-		}
-	}
-
-	return 0, false
 }
 
 func formatDisplayBalance(value float64, asset string) string {

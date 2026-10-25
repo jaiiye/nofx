@@ -4,22 +4,60 @@ import (
 	"encoding/json"
 	"fmt"
 	"nofx/logger"
+	"nofx/trader/types"
+	"strings"
 	"time"
 )
 
-// GetBalance gets account balance
-func (t *KuCoinTrader) GetBalance() (map[string]interface{}, error) {
+// GetAccountBalance gets the typed account state.
+func (t *KuCoinTrader) GetAccountBalance() (types.AccountBalance, error) {
 	// Check cache
 	t.balanceCacheMutex.RLock()
 	if t.cachedBalance != nil && time.Since(t.balanceCacheTime) < t.cacheDuration {
+		cached := t.cachedBalance
 		t.balanceCacheMutex.RUnlock()
-		return t.cachedBalance, nil
+		return types.FromMap(cached), nil
 	}
 	t.balanceCacheMutex.RUnlock()
 
 	data, err := t.doRequest("GET", kucoinAccountPath+"?currency=USDT", nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get account balance: %w", err)
+		return types.AccountBalance{}, fmt.Errorf("failed to get account balance: %w", err)
+	}
+
+	balance, err := parseAccountBalance(data)
+	if err != nil {
+		return types.AccountBalance{}, err
+	}
+
+	// Update cache
+	t.balanceCacheMutex.Lock()
+	t.cachedBalance = balance.ToMap()
+	t.balanceCacheTime = time.Now()
+	t.balanceCacheMutex.Unlock()
+
+	return balance, nil
+}
+
+// GetBalance renders the compatibility map. Prefer GetAccountBalance.
+func (t *KuCoinTrader) GetBalance() (map[string]interface{}, error) {
+	balance, err := t.GetAccountBalance()
+	if err != nil {
+		return nil, err
+	}
+	return balance.ToMap(), nil
+}
+
+// parseAccountBalance maps the raw futures account payload onto the canonical
+// balance map. Extracted so the empty-payload guard is testable without HTTP.
+func parseAccountBalance(data []byte) (types.AccountBalance, error) {
+	// An empty payload (or a null/[] response) unmarshals into a zero-valued
+	// struct and used to be returned as a successful all-zero balance, which
+	// zeroes equity, PnL% and available margin at once. Distinguish "we could
+	// not read it" from a genuine zero balance, which comes back as a full
+	// object.
+	if trimmed := strings.TrimSpace(string(data)); trimmed == "" || trimmed == "null" || trimmed == "{}" || trimmed == "[]" {
+		return types.AccountBalance{}, fmt.Errorf("kucoin: empty balance payload")
 	}
 
 	var account struct {
@@ -34,25 +72,11 @@ func (t *KuCoinTrader) GetBalance() (map[string]interface{}, error) {
 	}
 
 	if err := json.Unmarshal(data, &account); err != nil {
-		return nil, fmt.Errorf("failed to parse balance data: %w", err)
-	}
-
-	result := map[string]interface{}{
-		"totalWalletBalance":    account.MarginBalance,        // Wallet balance (without unrealized PnL)
-		"availableBalance":      account.AvailableBalance,
-		"totalUnrealizedProfit": account.UnrealisedPNL,
-		"total_equity":          account.AccountEquity,
-		"totalEquity":           account.AccountEquity,        // For GetAccountInfo compatibility
+		return types.AccountBalance{}, fmt.Errorf("failed to parse balance data: %w", err)
 	}
 
 	logger.Infof("✓ KuCoin balance: Total equity=%.2f, Available=%.2f, Unrealized PnL=%.2f",
 		account.AccountEquity, account.AvailableBalance, account.UnrealisedPNL)
 
-	// Update cache
-	t.balanceCacheMutex.Lock()
-	t.cachedBalance = result
-	t.balanceCacheTime = time.Now()
-	t.balanceCacheMutex.Unlock()
-
-	return result, nil
+	return types.BalanceFromEquity("kucoin", account.AccountEquity, account.UnrealisedPNL, account.AvailableBalance), nil
 }

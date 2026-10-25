@@ -85,9 +85,10 @@ func (s *PositionStore) GetFullStats(traderID string) (*TraderStats, error) {
 	if len(pnls) > 1 {
 		stats.SharpeRatio = calculateSharpeRatioFromPnls(pnls)
 	}
-	if len(pnls) > 0 {
-		stats.MaxDrawdownPct = calculateMaxDrawdownFromPnls(pnls)
-	}
+	// MaxDrawdownPct is intentionally NOT computed here. A per-trade curve needs
+	// an arbitrary starting equity (it used 10000), ignores unrealized PnL and
+	// the account's size; EquityStore.MaxDrawdownNAVPct measures the real
+	// account curve instead, and the caller fills the field.
 
 	return stats, nil
 }
@@ -183,33 +184,6 @@ func calculateSharpeRatioFromPnls(pnls []float64) float64 {
 	}
 
 	return mean / stdDev
-}
-
-// calculateMaxDrawdownFromPnls calculates maximum drawdown
-func calculateMaxDrawdownFromPnls(pnls []float64) float64 {
-	if len(pnls) == 0 {
-		return 0
-	}
-
-	const startingEquity = 10000.0
-	equity := startingEquity
-	peak := startingEquity
-	var maxDD float64
-
-	for _, pnl := range pnls {
-		equity += pnl
-		if equity > peak {
-			peak = equity
-		}
-		if peak > 0 {
-			dd := (peak - equity) / peak * 100
-			if dd > maxDD {
-				maxDD = dd
-			}
-		}
-	}
-
-	return maxDD
 }
 
 // SymbolStats per-symbol trading statistics

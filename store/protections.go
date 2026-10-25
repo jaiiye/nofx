@@ -20,9 +20,14 @@ type ProtectionConfig struct {
 	MaxDrawdownLookbackH int     `json:"max_drawdown_lookback_h,omitempty"`
 
 	// DrawdownBasis picks which curve the max-drawdown breaker watches.
-	//   "equity"  — total equity (wallet + unrealized PnL), the default
-	//   "balance" — realized/wallet balance only, excluding open positions
-	// Modelled on Freqtrade's protection calculation modes.
+	//   "nav"     — balance / initial_balance, a cash-flow neutral index (default)
+	//   "equity"  — total equity (wallet + unrealized PnL), raw
+	//   "balance" — realized/wallet balance only, raw
+	//
+	// The raw curves cannot tell a deposit from a loss: a transfer in raises the
+	// peak and a transfer out crashes the current value, which the breaker reads
+	// as a drawdown. NAV divides both points by the baseline in effect at the
+	// time, so a transfer moves neither.
 	DrawdownBasis string `json:"drawdown_basis,omitempty"`
 
 	// LosingClosesGuard pauses opening while at least Count losing
@@ -45,6 +50,7 @@ type ProtectionConfig struct {
 
 // Drawdown basis values accepted by ProtectionConfig.DrawdownBasis.
 const (
+	DrawdownBasisNAV     = "nav"
 	DrawdownBasisEquity  = "equity"
 	DrawdownBasisBalance = "balance"
 )
@@ -59,7 +65,7 @@ func DefaultProtectionConfig() ProtectionConfig {
 	return ProtectionConfig{
 		MaxDrawdownPct:             15,
 		MaxDrawdownLookbackH:       168,
-		DrawdownBasis:              DrawdownBasisEquity,
+		DrawdownBasis:              DrawdownBasisNAV,
 		LosingClosesGuardCount:     3,
 		LosingClosesGuardLookbackH: 6,
 		CooldownMinutes:            60,
@@ -74,7 +80,7 @@ func DefaultProtectionConfig() ProtectionConfig {
 func (p ProtectionConfig) Normalized() ProtectionConfig {
 	d := DefaultProtectionConfig()
 	switch p.DrawdownBasis {
-	case DrawdownBasisEquity, DrawdownBasisBalance:
+	case DrawdownBasisNAV, DrawdownBasisEquity, DrawdownBasisBalance:
 	default:
 		p.DrawdownBasis = d.DrawdownBasis
 	}
@@ -167,6 +173,78 @@ func (s *EquityStore) PeakAndCurrentBalance(traderID string, since time.Time) (p
 		return 0, 0, false, err
 	}
 	return *res.Peak, latest.Balance, true, nil
+}
+
+// PeakAndCurrentNAV mirrors PeakAndCurrentEquity but watches balance /
+// initial_balance — a net-asset-value index whose denominator moves with every
+// detected deposit or withdrawal.
+//
+// This is the only basis that is cash-flow neutral: a transfer in raises the
+// numerator and the denominator together, a transfer out lowers both, so neither
+// shows up as a drawdown. Rows taken before the cash-flow ledger existed have a
+// zero baseline and are skipped.
+func (s *EquityStore) PeakAndCurrentNAV(traderID string, since time.Time) (peak, current float64, ok bool, err error) {
+	var res struct {
+		Peak *float64
+	}
+	row := s.db.Model(&EquitySnapshot{}).
+		Select("MAX(balance / NULLIF(initial_balance, 0)) AS peak").
+		Where("trader_id = ? AND timestamp >= ? AND initial_balance > 0", traderID, since).
+		Scan(&res)
+	if row.Error != nil {
+		return 0, 0, false, row.Error
+	}
+	if res.Peak == nil {
+		return 0, 0, false, nil
+	}
+
+	var latest EquitySnapshot
+	if err := s.db.Where("trader_id = ? AND timestamp >= ? AND initial_balance > 0", traderID, since).
+		Order("timestamp DESC").Limit(1).Find(&latest).Error; err != nil {
+		return 0, 0, false, err
+	}
+	if latest.InitialBalance <= 0 {
+		return 0, 0, false, nil
+	}
+
+	return *res.Peak, latest.Balance / latest.InitialBalance, true, nil
+}
+
+// MaxDrawdownNAVPct returns the deepest peak-to-trough decline of the NAV index
+// over the given window (zero time means all history).
+//
+// This replaces the synthetic curve that was built from a hard-coded 10000
+// starting equity plus per-trade realized PnL: that figure was independent of
+// the account's size, ignored unrealized PnL, and disagreed with the drawdown
+// the breaker acted on by an order of magnitude.
+func (s *EquityStore) MaxDrawdownNAVPct(traderID string, since time.Time) (float64, error) {
+	query := s.db.Model(&EquitySnapshot{}).
+		Select("timestamp, balance / NULLIF(initial_balance, 0) AS nav").
+		Where("trader_id = ? AND initial_balance > 0", traderID)
+	if !since.IsZero() {
+		query = query.Where("timestamp >= ?", since)
+	}
+
+	var rows []struct {
+		Timestamp time.Time
+		Nav       float64
+	}
+	if err := query.Order("timestamp ASC").Scan(&rows).Error; err != nil {
+		return 0, err
+	}
+
+	var peak, maxDD float64
+	for _, r := range rows {
+		if r.Nav > peak {
+			peak = r.Nav
+		}
+		if peak > 0 {
+			if dd := (peak - r.Nav) / peak * 100; dd > maxDD {
+				maxDD = dd
+			}
+		}
+	}
+	return maxDD, nil
 }
 
 // CountLosingClosesSince counts closed positions with negative net PnL

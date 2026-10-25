@@ -56,6 +56,9 @@ func runCLISubcommand(args []string) bool {
 	case "trade-report":
 		runTradeReport(args[1:])
 		return true
+	case "repair-baseline":
+		runRepairBaseline(args[1:])
+		return true
 	default:
 		return false
 	}
