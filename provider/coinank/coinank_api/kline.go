@@ -7,7 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"nofx/provider/coinank"
+
 	"nofx/provider/coinank/coinank_enum"
 	"strconv"
 	"time"
@@ -17,7 +17,7 @@ const MainApiUrl = "https://api.coinank.com"
 
 // Kline open free kline from coinank
 func Kline(ctx context.Context, symbol string, exchange coinank_enum.Exchange, ts int64, side coinank_enum.Side, size int,
-	interval coinank_enum.Interval) ([]coinank.KlineResult, error) {
+	interval coinank_enum.Interval) ([]KlineResult, error) {
 	paramsMap := make(map[string]string, 6)
 	paramsMap["symbol"] = symbol
 	paramsMap["exchange"] = string(exchange)
@@ -29,15 +29,15 @@ func Kline(ctx context.Context, symbol string, exchange coinank_enum.Exchange, t
 	if err != nil {
 		return nil, err
 	}
-	var result coinank.CoinankResponse[[][]float64]
+	var result CoinankResponse[[][]float64]
 	err = json.Unmarshal([]byte(resp), &result)
 	if err != nil {
 		return nil, err
 	}
 	if !result.Success {
-		return nil, coinank.HttpError
+		return nil, ErrAPIFailure
 	}
-	klines := make([]coinank.KlineResult, len(result.Data))
+	klines := make([]KlineResult, len(result.Data))
 	for i, k := range result.Data {
 		klines[i].StartTime = int64(k[0] + 0.001)
 		klines[i].EndTime = int64(k[1] + 0.001)
