@@ -49,6 +49,9 @@ func (at *AutoTrader) saveDecision(record *store.DecisionRecord) error {
 	at.cycleNumber++
 	record.CycleNumber = at.cycleNumber
 	record.TraderID = at.id
+	// Stamp the execution venue so replay reads the same price path instead of
+	// guessing (or defaulting to Binance for a Hyperliquid decision).
+	record.Venue = market.VenueFromExchange(at.exchange).String()
 
 	if record.Timestamp.IsZero() {
 		record.Timestamp = time.Now().UTC()

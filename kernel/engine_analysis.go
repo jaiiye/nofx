@@ -166,7 +166,7 @@ func fetchMicrostructure(venue market.Venue, symbol string, primaryKlines []mark
 		logger.Infof("⚠️ Microstructure unavailable for %s: %v", symbol, err)
 		return nil
 	}
-	return market.AnalyzeMicrostructure(book, primaryKlines)
+	return market.AnalyzeMicrostructureForVenue(venue, book, primaryKlines)
 }
 
 // loadMicrostructure fetches the decision-time book for a symbol and stores

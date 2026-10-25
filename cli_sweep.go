@@ -33,7 +33,7 @@ func runSweep(args []string) {
 	equity := fs.Float64("equity", 0, "fallback account equity when no snapshots exist (risk sizing)")
 	timeframe := fs.String("timeframe", "15m", "candle timeframe used to simulate fills")
 	exchange := fs.String("exchange", "binance", "exchange fee schedule to assume")
-	venueFlag := fs.String("venue", "binance", "execution venue for klines: binance | bybit | okx | hyperliquid")
+	venueFlag := fs.String("venue", "auto", "execution venue for klines: auto | binance | bybit | okx | hyperliquid")
 	dbPath := fs.String("db", "", "override the SQLite database path")
 	_ = fs.Parse(args)
 
@@ -120,8 +120,12 @@ func runSweep(args []string) {
 			len(grid.StopPcts), len(grid.TakePcts), len(records), base.SizingMode)
 	}
 
-	// The replay uses the same venue the trader executes on.
-	venue := market.VenueFromExchange(*venueFlag)
+	// The replay uses the venue recorded on the decisions unless overridden.
+	venue, err := resolveReplayVenue(records, *venueFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "cannot resolve replay venue: %v\n", err)
+		os.Exit(2)
+	}
 	warnVenueRetention(venue, *timeframe, from, to)
 	klineSource := func(symbol, tf string, start, end time.Time) ([]market.Kline, error) {
 		return market.GetKlinesRangeForVenue(context.Background(), venue, symbol, tf, start, end)

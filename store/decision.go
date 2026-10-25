@@ -15,9 +15,12 @@ type DecisionStore struct {
 
 // DecisionRecordDB internal GORM model for decision_records table
 type DecisionRecordDB struct {
-	ID                  int64     `gorm:"primaryKey;autoIncrement"`
-	TraderID            string    `gorm:"column:trader_id;not null;index:idx_decision_records_trader_time"`
-	CycleNumber         int       `gorm:"column:cycle_number;not null"`
+	ID          int64  `gorm:"primaryKey;autoIncrement"`
+	TraderID    string `gorm:"column:trader_id;not null;index:idx_decision_records_trader_time"`
+	CycleNumber int    `gorm:"column:cycle_number;not null"`
+	// Venue is the execution exchange the decision was taken on. K-lines and
+	// order books follow it, so replay must use the same venue.
+	Venue               string    `gorm:"column:venue;default:''"`
 	Timestamp           time.Time `gorm:"not null;index:idx_decision_records_trader_time,sort:desc;index:idx_decision_records_timestamp,sort:desc"`
 	SystemPrompt        string    `gorm:"column:system_prompt;default:''"`
 	InputPrompt         string    `gorm:"column:input_prompt;default:''"`
@@ -40,6 +43,7 @@ type DecisionRecord struct {
 	ID                  int64              `json:"id"`
 	TraderID            string             `json:"trader_id"`
 	CycleNumber         int                `json:"cycle_number"`
+	Venue               string             `json:"venue"`
 	Timestamp           time.Time          `json:"timestamp"`
 	SystemPrompt        string             `json:"system_prompt"`
 	InputPrompt         string             `json:"input_prompt"`
@@ -118,10 +122,20 @@ func (s *DecisionStore) initTables() error {
 		var tableExists int64
 		s.db.Raw(`SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'decision_records'`).Scan(&tableExists)
 		if tableExists > 0 {
-			return nil
+			// The table predates the venue column; add it explicitly because
+			// Postgres deployments never run AutoMigrate here.
+			return s.ensureVenueColumn()
 		}
 	}
-	return s.db.AutoMigrate(&DecisionRecordDB{})
+	if err := s.db.AutoMigrate(&DecisionRecordDB{}); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ensureVenueColumn adds the venue column to a table created before it existed.
+func (s *DecisionStore) ensureVenueColumn() error {
+	return s.db.Exec(`ALTER TABLE decision_records ADD COLUMN IF NOT EXISTS venue VARCHAR(32) DEFAULT ''`).Error
 }
 
 // toRecord converts DB model to API struct
@@ -130,6 +144,7 @@ func (db *DecisionRecordDB) toRecord() *DecisionRecord {
 		ID:                  db.ID,
 		TraderID:            db.TraderID,
 		CycleNumber:         db.CycleNumber,
+		Venue:               db.Venue,
 		Timestamp:           db.Timestamp,
 		SystemPrompt:        db.SystemPrompt,
 		InputPrompt:         db.InputPrompt,
@@ -162,6 +177,7 @@ func (s *DecisionStore) LogDecision(record *DecisionRecord) error {
 	dbRecord := &DecisionRecordDB{
 		TraderID:            record.TraderID,
 		CycleNumber:         record.CycleNumber,
+		Venue:               record.Venue,
 		Timestamp:           record.Timestamp,
 		SystemPrompt:        record.SystemPrompt,
 		InputPrompt:         record.InputPrompt,

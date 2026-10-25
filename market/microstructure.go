@@ -28,11 +28,18 @@ const (
 	microVWAPBars    = 30 // trailing klines used for VWAP
 )
 
-// AnalyzeMicrostructure derives the book metrics from a snapshot. klines are
-// the primary-timeframe bars already fetched for the symbol (VWAP source);
-// nil klines simply leave the VWAP fields at zero. Returns nil when the book
-// is unusable.
+// AnalyzeMicrostructure derives the book metrics using the Binance reference
+// thresholds. Venue-aware callers should use AnalyzeMicrostructureForVenue.
 func AnalyzeMicrostructure(book *OrderBookDepth, klines []KlineBar) *MarketMicrostructure {
+	return AnalyzeMicrostructureForVenue(VenueBinance, book, klines)
+}
+
+// AnalyzeMicrostructureForVenue derives the book metrics from a snapshot,
+// scoring liquidity against the execution venue's own book profile. klines are
+// the primary-timeframe bars already fetched for the symbol (VWAP source); nil
+// klines simply leave the VWAP fields at zero. Returns nil when the book is
+// unusable.
+func AnalyzeMicrostructureForVenue(venue Venue, book *OrderBookDepth, klines []KlineBar) *MarketMicrostructure {
 	if book == nil || len(book.Bids) == 0 || len(book.Asks) == 0 {
 		return nil
 	}
@@ -70,7 +77,7 @@ func AnalyzeMicrostructure(book *OrderBookDepth, klines []KlineBar) *MarketMicro
 	m.SupportLevels = topLevelsBySize(book.Bids, mid, false, 3)
 	m.ResistanceLevels = topLevelsBySize(book.Asks, mid, true, 3)
 
-	m.LiquidityScore = microLiquidityScore(m)
+	m.LiquidityScore = microLiquidityScoreForVenue(m, venue)
 
 	vwap := vwapFromKlines(klines, microVWAPBars)
 	if vwap > 0 {
@@ -109,25 +116,61 @@ func topLevelsBySize(levels []OrderBookLevel, mid float64, above bool, n int) []
 	return out
 }
 
-// microLiquidityScore composites the spread, depth and tilt penalties into a
-// 0-100 score: 100 = tight spread, deep book, no extreme tilt.
+// microThresholds describe when a book is wide or thin. They are venue-relative
+// on purpose: Hyperliquid alt books are structurally thinner and wider than
+// Binance majors, so Binance cutoffs would label a normal HL book as unusable.
+type microThresholds struct {
+	spreadSevereBps   float64
+	spreadWideBps     float64
+	spreadElevatedBps float64
+	depthSevereLow    float64
+	depthLow          float64
+	depthModerate     float64
+}
+
+var (
+	binanceMicroThresholds = microThresholds{
+		spreadSevereBps: 50, spreadWideBps: 20, spreadElevatedBps: 10,
+		depthSevereLow: 50_000, depthLow: 200_000, depthModerate: 1_000_000,
+	}
+	hyperliquidMicroThresholds = microThresholds{
+		spreadSevereBps: 80, spreadWideBps: 40, spreadElevatedBps: 20,
+		depthSevereLow: 20_000, depthLow: 80_000, depthModerate: 300_000,
+	}
+)
+
+func microThresholdsFor(venue Venue) microThresholds {
+	if venue == VenueHyperliquid {
+		return hyperliquidMicroThresholds
+	}
+	return binanceMicroThresholds
+}
+
+// microLiquidityScore is the Binance-reference form kept for existing callers.
 func microLiquidityScore(m *MarketMicrostructure) int {
+	return microLiquidityScoreForVenue(m, VenueBinance)
+}
+
+// microLiquidityScoreForVenue composites the spread, depth and tilt penalties
+// into a 0-100 score: 100 = tight spread, deep book, no extreme tilt.
+func microLiquidityScoreForVenue(m *MarketMicrostructure, venue Venue) int {
+	thresholds := microThresholdsFor(venue)
 	score := 100
 	switch {
-	case m.SpreadBps > 50:
+	case m.SpreadBps > thresholds.spreadSevereBps:
 		score -= 40
-	case m.SpreadBps > 20:
+	case m.SpreadBps > thresholds.spreadWideBps:
 		score -= 20
-	case m.SpreadBps > 10:
+	case m.SpreadBps > thresholds.spreadElevatedBps:
 		score -= 10
 	}
 	depth := m.BidDepthUSD + m.AskDepthUSD
 	switch {
-	case depth < 50_000:
+	case depth < thresholds.depthSevereLow:
 		score -= 40
-	case depth < 200_000:
+	case depth < thresholds.depthLow:
 		score -= 20
-	case depth < 1_000_000:
+	case depth < thresholds.depthModerate:
 		score -= 10
 	}
 	if math.Abs(m.Imbalance) > 0.6 {

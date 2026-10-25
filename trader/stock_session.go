@@ -85,12 +85,12 @@ func collectStockActivity(symbol string) stockActivity {
 		return activity
 	}
 
-	book, err := market.GetOrderBookDepth(symbol, 10)
+	book, err := market.GetOrderBookDepthForVenue(market.VenueHyperliquid, symbol, 10)
 	if err != nil || book == nil {
 		return activity
 	}
 	activity.hasBook = true
-	if analysis := market.AnalyzeMicrostructure(book, nil); analysis != nil {
+	if analysis := market.AnalyzeMicrostructureForVenue(market.VenueHyperliquid, book, nil); analysis != nil {
 		activity.liquidityScore = analysis.LiquidityScore
 		activity.spreadBps = analysis.SpreadBps
 	}

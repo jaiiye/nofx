@@ -586,6 +586,7 @@ func (at *AutoTrader) saveGridDecisionRecord(decision *kernel.FullDecision) {
 	record := &store.DecisionRecord{
 		TraderID:            at.id,
 		CycleNumber:         at.cycleNumber,
+		Venue:               market.VenueFromExchange(at.exchange).String(),
 		Timestamp:           time.Now().UTC(),
 		SystemPrompt:        decision.SystemPrompt,
 		InputPrompt:         decision.UserPrompt,

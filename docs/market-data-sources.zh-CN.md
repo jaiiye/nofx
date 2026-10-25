@@ -76,7 +76,7 @@
 | AI 决策/指标/网格箱体 | 执行所原生：HL → `candleSnapshot`；Binance → `/fapi/v1/klines`；Bybit → `/v5/market/kline`；OKX → `/api/v5/market/candles` |
 | 图表（加密） | 跟随当前 trader 的交易所（HL 交易员即 HL） |
 | 下单前取价 | 执行所原生，禁止跨所回退 |
-| 回放/评估 | `--venue` 指定，默认 binance |
+| 回放/评估 | `--venue`，默认 `auto`：读取决策日志中记录的执行所，旧记录缺失时才回退 binance |
 
 要点：
 
@@ -85,6 +85,8 @@
 - **HL 保留期**：每个周期约 5000 根（3m ≈ 10 天，1h ≈ 208 天），更早的历史无法翻页取得。回放窗口超过保留期时，`--venue hyperliquid` 会提示；需要更长历史请显式使用 `--venue binance` 作为参考。
 - **HL 成交量**是币本位，与 Binance `Volume` 口径一致。
 - 同一 `(venue, symbol, timeframe, limit)` 有 8 秒缓存，图表与决策周期共享同一份快照。
+- 微观结构（spread/深度）的阈值按 venue 校准：HL 山寨盘口天然更薄更宽，直接用 Binance 阈值会把正常 HL 盘口误判为“thin”。
+- 决策记录新增 `venue` 字段，回放默认读取它，避免 HL 决策被 Binance 价格路径评估；显式 `--venue` 覆盖时会警告不一致。旧 PG 表启动时自动补列。
 
 ---
 

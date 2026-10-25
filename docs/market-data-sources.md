@@ -77,13 +77,15 @@ venue. No CoinAnk or third-party proxy is involved.
 | AI decision / indicators / grid box | Venue-native: HL `candleSnapshot`, Binance `/fapi/v1/klines`, Bybit `/v5/market/kline`, OKX `/api/v5/market/candles` |
 | Crypto chart | Follows the current trader's exchange (HL trader → HL) |
 | Execution-time pricing | Venue-native; no cross-venue fallback |
-| Replay / evaluate | `--venue`, default `binance` |
+| Replay / evaluate | `--venue`, default `auto`: uses the venue recorded on each decision; older rows without one fall back to binance |
 
 - **No cross-venue fallback.** A Binance wick is not the price path an HL stop or liquidation follows; a missing series is omitted or errors, never silently replaced. xyz assets are always Hyperliquid.
 - **HL intervals**: `1m/3m/5m/15m/30m/1h/2h/4h/8h/12h/1d/1w/1M`; **no 6h/3d**. Unsupported intervals now error instead of being approximated.
 - **HL retention**: roughly 5000 bars per interval (3m ≈ 10 days, 1h ≈ 208 days); older history cannot be paged in. `--venue hyperliquid` warns when the replay window exceeds it; use `--venue binance` explicitly for a longer reference.
 - HL volume is base-unit, matching Binance `Volume`.
 - An 8-second cache keyed by `(venue, symbol, timeframe, limit)` lets charts and decisions share one snapshot.
+- Microstructure thresholds (spread/depth) are venue-calibrated: HL alt books are structurally thinner and wider, so Binance cutoffs would mislabel a normal HL book as thin.
+- Decision records now carry `venue`; replay defaults to it (`--venue auto`), so an HL decision is never scored against Binance candles. An explicit override warns when it disagrees. Old PostgreSQL tables get the column added at startup.
 
 ## 2.3 Hyperliquid-wide data
 

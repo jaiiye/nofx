@@ -104,6 +104,27 @@ func TestAnalyzeMicrostructureNilAndDegenerate(t *testing.T) {
 	}
 }
 
+func TestLiquidityScoreIsVenueRelative(t *testing.T) {
+	// Spread 30 bps and a 50k book: elevated for Binance majors, ordinary for
+	// Hyperliquid alts. The venue's thresholds must reflect that.
+	book := &MarketMicrostructure{SpreadBps: 30, BidDepthUSD: 25_000, AskDepthUSD: 25_000}
+
+	binance := microLiquidityScoreForVenue(book, VenueBinance)
+	hyperliquid := microLiquidityScoreForVenue(book, VenueHyperliquid)
+	if binance != 60 {
+		t.Fatalf("binance score = %d, want 60", binance)
+	}
+	if hyperliquid != 70 {
+		t.Fatalf("hyperliquid score = %d, want 70", hyperliquid)
+	}
+
+	// A genuinely wide/thin book is still penalized on HL.
+	wide := &MarketMicrostructure{SpreadBps: 60, BidDepthUSD: 30_000, AskDepthUSD: 30_000}
+	if score := microLiquidityScoreForVenue(wide, VenueHyperliquid); score >= 70 {
+		t.Fatalf("wide HL book score = %d, want < 70", score)
+	}
+}
+
 func TestLiquidityScoreTightDeepBook(t *testing.T) {
 	// Tight spread, deep book, mild tilt: near-perfect score.
 	levels := make([][2]float64, 10)

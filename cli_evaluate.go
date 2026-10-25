@@ -12,6 +12,7 @@ import (
 
 	"nofx/internal/backtest"
 	"nofx/market"
+	"nofx/store"
 	"nofx/trader/connector"
 )
 
@@ -25,7 +26,7 @@ func runEvaluate(args []string) {
 	toStr := fs.String("to", "", "end time, RFC3339 or YYYY-MM-DD (default: now)")
 	timeframe := fs.String("timeframe", "15m", "candle timeframe used to simulate fills")
 	exchange := fs.String("exchange", "binance", "exchange fee schedule to assume")
-	venueFlag := fs.String("venue", "binance", "execution venue for klines: binance | bybit | okx | hyperliquid")
+	venueFlag := fs.String("venue", "auto", "execution venue for klines: auto | binance | bybit | okx | hyperliquid")
 	dbPath := fs.String("db", "", "override the SQLite database path")
 	regime := fs.Bool("regime", false, "label trades with stored cascade/crowding state (attribution only)")
 	sizing := fs.String("sizing", "recorded", "position sizing: recorded | decision | risk")
@@ -38,7 +39,7 @@ func runEvaluate(args []string) {
 
 	if *traderID == "" || *fromStr == "" {
 		fmt.Fprintln(os.Stderr, "usage: nofx evaluate --trader <id> --from <date> [--to <date>] "+
-			"[--timeframe 15m] [--exchange binance] [--venue binance|bybit|okx|hyperliquid] "+
+			"[--timeframe 15m] [--exchange binance] [--venue auto|binance|bybit|okx|hyperliquid] "+
 			"[--db path] [--regime] "+
 			"[--sizing recorded|decision|risk] [--risk-pct 0.5] [--equity 0] "+
 			"[--exit bracket|giveback] [--arm-pct 2] [--giveback-pct 30]")
@@ -70,7 +71,11 @@ func runEvaluate(args []string) {
 		fmt.Fprintf(os.Stderr, "failed to load decisions: %v\n", err)
 		os.Exit(1)
 	}
-	venue := market.VenueFromExchange(*venueFlag)
+	venue, err := resolveReplayVenue(records, *venueFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "cannot resolve replay venue: %v\n", err)
+		os.Exit(2)
+	}
 	warnVenueRetention(venue, *timeframe, from, to)
 	fmt.Printf("📼 Replaying %d decision cycles for trader %s (%s → %s, klines from %s)\n",
 		len(records), *traderID, from.Format("2006-01-02"), to.Format("2006-01-02"), venue)
@@ -120,6 +125,47 @@ func parseTimeArg(s string) (time.Time, error) {
 		}
 	}
 	return time.Time{}, fmt.Errorf("unrecognized time %q (want RFC3339 or YYYY-MM-DD)", s)
+}
+
+// resolveReplayVenue picks the replay venue. "auto" (the default) reads the
+// venue stamped on the decision records, so an HL decision is never replayed
+// against Binance candles by accident. An explicit --venue overrides it and
+// warns when it disagrees with the recorded value.
+func resolveReplayVenue(records []*store.DecisionRecord, flag string) (market.Venue, error) {
+	explicit := strings.TrimSpace(flag)
+	var stored market.Venue
+	mixed := false
+	for _, record := range records {
+		if record == nil {
+			continue
+		}
+		value := strings.TrimSpace(record.Venue)
+		if value == "" {
+			continue
+		}
+		venue := market.VenueFromExchange(value)
+		if stored == "" {
+			stored = venue
+		} else if stored != venue {
+			mixed = true
+		}
+	}
+
+	if explicit != "" && !strings.EqualFold(explicit, "auto") {
+		chosen := market.VenueFromExchange(explicit)
+		if stored != "" && stored != chosen {
+			fmt.Fprintf(os.Stderr, "⚠️ --venue %s overrides the venue recorded in the decision log (%s)\n", chosen, stored)
+		}
+		return chosen, nil
+	}
+	if mixed {
+		return "", fmt.Errorf("decision log mixes venues; pass --venue explicitly")
+	}
+	if stored == "" {
+		fmt.Fprintln(os.Stderr, "⚠️ decision log has no venue; defaulting to binance (pass --venue to override)")
+		return market.VenueBinance, nil
+	}
+	return stored, nil
 }
 
 // warnVenueRetention flags a replay window longer than the venue's candle
